@@ -67,7 +67,14 @@ VÝSTUP
 
 Vyžadován Python 3.11+.
 
-Všechny systémy (Windows, macOS, Linux):
+Nejrychlejší spuštění na macOS/Linux (skript vytvoří `.venv`, doinstaluje
+závislosti a spustí aplikaci):
+
+    ./run.sh
+
+Parametry se předávají do `main.py`, např. `./run.sh --port 8090 --open`.
+
+Ruční spuštění na všech systémech (Windows, macOS, Linux):
 
     python3 -m venv .venv
     # Windows: .venv\Scripts\activate
@@ -155,6 +162,8 @@ Všechny systémy (Windows, macOS, Linux):
 
 - `main.py` – vstupní bod: CLI parametry (`--port`, `--native`, `--open`),
   registrace statických souborů, spuštění UI
+- `run.sh` – zkrácené spuštění na macOS/Linux: příprava `.venv`, instalace
+  závislostí při změně `requirements.txt` a předání parametrů do `main.py`
 - `tickview/config.py` – cesty k runtime datům, cache DB a načítání/ukládání
   konfigurace `config.yaml` (YAML v kořenu projektu)
 - `tickview/providers/base.py` – rozhraní DataProvider (search/history/stream),
