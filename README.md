@@ -117,12 +117,14 @@ Všechny systémy (Windows, macOS, Linux):
 
 ### Stav funkcí
 
-- Hotovo: vyhledání symbolů Binance, statické svíčkové grafy + objem,
-  timeframy 1m/5m/15m/1h/4h/1D/1W, tmavý a světlý motiv, crosshair s OHLC
-  legendou, cache historie v SQLite, ukládání posledního symbolu/timeframu/motivu,
-  živé svíčky Binance přes websocket (inkrementální update grafu, automatické
-  znovupřipojení, štítek „živě / zpožděno“).
-- Připravuje se (kroky 3–7): Yahoo Finance, indikátory, kreslení, watchlist, Alpaca.
+- Hotovo: vyhledání symbolů (Binance + Yahoo Finance), statické svíčkové grafy
+  + objem, timeframy 1m/5m/15m/1h/4h/1D/1W (jen co zdroj podporuje), tmavý a
+  světlý motiv, crosshair s OHLC legendou, cache historie v SQLite,
+  ukládání posledního symbolu/timeframu/motivu, živé svíčky Binance přes
+  websocket (inkrementální update grafu, automatické znovupřipojení, štítek
+  „živě / zpožděno“), akcie/ETF/indexy/forex přes Yahoo Finance s živým
+  pollingem a hlášením zavřeného trhu.
+- Připravuje se (kroky 4–7): indikátory, kreslení, watchlist, Alpaca.
 
 ## Struktura projektu
 
@@ -132,7 +134,10 @@ Všechny systémy (Windows, macOS, Linux):
 - `tickview/providers/base.py` – rozhraní DataProvider (search/history/stream),
   Candle, SymbolInfo, kanonické timeframy
 - `tickview/providers/binance.py` – zdroj Binance: vyhledání symbolů + historie
-  přes veřejný REST, omezovač dotazů, exponenciální backoff po 429
+  přes veřejný REST, živý websocket stream, omezovač dotazů, exponenciální
+  backoff po 429
+- `tickview/providers/yahoo.py` – zdroj Yahoo Finance (yfinance): akcie, ETF,
+  indexy, forex; historie v to_thread, živá aktualizace pollingem
 - `tickview/providers/__init__.py` – registr zdrojů (nový zdroj = jeden řádek)
 - `tickview/logic/cache.py` – SQLite cache svíček + nastavení; skládání historie
   z cache a sítě (ze sítě stahuje jen chybějící úseky)

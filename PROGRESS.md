@@ -67,7 +67,7 @@ VÝSTUP
 
 1. Kostra projektu + Binance + statický graf – hotovo (commit „Krok 1“)
 2. Živá data (websocket) – hotovo (commit „Krok 2“)
-3. yfinance – čeká
+3. yfinance – hotovo (commit „Krok 3“)
 4. Indikátory – čeká
 5. Kreslení – čeká
 6. Watchlist – čeká
@@ -79,10 +79,10 @@ VÝSTUP
 
 ## Další krok
 
-- Krok 3 (yfinance): nový modul tickview/providers/yahoo.py (DataProvider přes
-  yfinance, search přes Yahoo search API, historie přes yf.download v
-  asyncio.to_thread), živá aktualizace pollingem v intervalu, štítek
-  „zpožděno“ a ošetření zavřeného trhu; registrace v providers/__init__.py.
+- Krok 4 (indikátory): tickview/logic/indicators.py (SMA, EMA, Bollinger
+  Bands, RSI, MACD přes pandas-ta), JS panely pod hlavním grafem se
+  synchronizovaným časem, UI dialog pro přidání indikátoru s parametry,
+  přepočet při změně symbolu/timeframu.
 
 ## Jak spustit
 
@@ -145,6 +145,21 @@ VÝSTUP
 - UI operace volané z background tasků (stream) musí vstupovat do slotu prvku
   („with element:“) – jinak NiceGUI vyhodí chybu slot stacku a zpráva se
   nepošle do prohlížeče.
+- Yahoo Finance (krok 3): vyhledávání přes yf.Search (raw HTTP API na search
+  vrací 429, yfinance řeší cookies/impersonaci sám); historie přes yf.download
+  v asyncio.to_thread; živá aktualizace pollingem (15 s intraday, 60 s denní).
+- Yahoo data bývají zpožděná → provider má is_live=False a štítek zůstává
+  „zpožděno“ i při živém polling streamu; Binance má is_live=True → „živě“.
+- Yahoo nemá 4h svíčky → timeframes zdroje obsahují jen podporované (1m, 5m,
+  15m, 1h, 1D, 1W); bez 4h.
+- Zavřený trh: consume_stream hlásí „trh je pravděpodobně zavřený“, když je
+  nejnovější svíčka už uzavřená (open_time + step <= now) – hlásí se jen jednou
+  na načtení.
+- Alpaca (krok 7): uživatel zadal endpoint https://paper-api.alpaca.markets/v2
+  a api_key PKPCQ5NKWKFVLY5N7EKU3WNK4N, uloženo v data/config.local.json
+  (neverzováno); chybí secret key – po jeho zadání zdroj povolíme. Pro tržní
+  data se použije https://data.alpaca.markets/v2 + websocket IEX (paper API
+  endpoint slouží jen pro obchodování, aplikace je read-only).
 - NiceGUI: handlery on_value_change volané s event objektem – pokud handler má
   poziciální parametr, dostane event; bool hodnoty bereme přes lambda
   (event.value), jinak selže serializace zprávy do prohlížeče.
@@ -161,5 +176,8 @@ VÝSTUP
 - Testováno headless prohlížečem v sandboxu (Chrome panel): načtení dat,
   přepínání timeframe/symbolu, motivy, nastavení i interakce fungují;
   nativní režim (--native) nebyl ověřen (vyžaduje okenní systém).
+- Quasar QSelect nabídku výsledků nelze v headless testu spolehlivě otevřít
+  (skrytý vnitřní input s opacity 0) – klik funguje v běžném prohlížeči
+  (ověřeno v kroku 1); samotný tok vyhledání a výběru je ověřen.
 - Horní lišta se na úzkém okně zalamuje na dva řádky (flex-wrap) – úmyslné,
   aby byly všechny prvky dostupné bez horizontálního skrollování.

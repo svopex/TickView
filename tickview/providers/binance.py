@@ -63,6 +63,8 @@ class BinanceProvider(DataProvider):
     id = "binance"
     name = "Binance"
     supports_stream = True
+    # Websocket = skutečně živá data (štítek „živě“)
+    is_live = True
 
     def __init__(self) -> None:
         # Mapování kanonických timeframeů na intervaly Binance (bez 4h necháváme, Binance ji umí)

@@ -61,6 +61,8 @@ class DataProvider(ABC):
     id: str = ""
     name: str = ""
     supports_stream: bool = False
+    # True = živý stream (websocket), False = polling/zpožděná data (štítek v UI)
+    is_live: bool = False
     timeframes: dict[str, str] = {}
 
     @abstractmethod

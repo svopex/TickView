@@ -5,8 +5,9 @@ Nový zdroj stačí přidat do seznamu PROVIDERS; zbytek aplikace se nezmění.
 
 from tickview.providers.base import DataProvider
 from tickview.providers.binance import BinanceProvider
+from tickview.providers.yahoo import YahooProvider
 
-PROVIDERS: list[DataProvider] = [BinanceProvider()]
+PROVIDERS: list[DataProvider] = [BinanceProvider(), YahooProvider()]
 
 
 def get_provider(provider_id: str) -> DataProvider:

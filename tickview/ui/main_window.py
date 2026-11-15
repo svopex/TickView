@@ -132,17 +132,25 @@ async def _build_index(cache: KlineCache) -> None:
     async def consume_stream(provider, symbol: str, timeframe: str, seq: int) -> None:
         """Konzumuje živý stream zdroje a doplňuje svíčky do grafu a cache."""
         step_ms = TIMEFRAME_MS[timeframe]
+        market_closed_warned = False
         try:
             async for candle in provider.stream(symbol, timeframe):
                 if seq != state["load_seq"]:
                     # Mezitím se přepnulo zobrazení – stream ukončíme
                     return
-                set_badge(True)
+                set_badge(provider.is_live)
                 await chart.update_candle(candle)
                 # Do cache ukládáme jen uzavřené svíčky (uplynulé období);
                 # rozepsanou svíčku vrátí příště historie ze sítě v plné podobě
                 if candle.open_time + step_ms <= utc_now_ms():
                     await cache.store(provider.id, symbol, timeframe, [candle])
+                    # Nejnovější svíčka už je uzavřená a žádná nová nepřišla
+                    # → trh je pravděpodobně zavřený (hlásíme jen jednou)
+                    if not market_closed_warned:
+                        market_closed_warned = True
+                        show_status(
+                            f"{symbol}: trh je pravděpodobně zavřený – živá data nepřibývají"
+                        )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
