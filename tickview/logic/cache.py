@@ -46,6 +46,12 @@ CREATE TABLE IF NOT EXISTS watchlist (
 );
 """
 
+# Migrace pro starší databáze: sloupec color v tabulce drawings (přidaný dodatečně,
+# CREATE TABLE IF NOT EXISTS ho do existující tabulky nepřidá)
+_COLOR_MIGRATION = """
+ALTER TABLE drawings ADD COLUMN color TEXT;
+"""
+
 
 class KlineCache:
     """Ukládá svíčky a nastavení do SQLite; operace jsou serializované zámkem."""
@@ -63,6 +69,15 @@ class KlineCache:
                 sqlite3.connect, self._db_path, check_same_thread=False
             )
             await asyncio.to_thread(self._conn.executescript, _SCHEMA)
+            await asyncio.to_thread(self._migrate_sync)
+
+    def _migrate_sync(self) -> None:
+        """Spustí migrace, které musí odolat už existujícímu schématu."""
+        try:
+            self._conn.executescript(_COLOR_MIGRATION)
+        except sqlite3.OperationalError:
+            # Sloupec color už existuje – migrace se přeskočí
+            pass
 
     async def load(
         self,
@@ -189,14 +204,19 @@ class KlineCache:
             )
         # body kresby jsou uložené jako JSON (čas v sekundách UTC + cena)
         return [
-            {"id": row[0], "kind": row[1], "points": json.loads(row[2])}
+            {
+                "id": row[0],
+                "kind": row[1],
+                "points": json.loads(row[2]),
+                "color": row[3],
+            }
             for row in rows
         ]
 
     def _load_drawings_sync(self, source: str, symbol: str, timeframe: str):
         cur = self._conn.execute(
             """
-            SELECT id, kind, points FROM drawings
+            SELECT id, kind, points, color FROM drawings
             WHERE source = ? AND symbol = ? AND timeframe = ?
             ORDER BY id
             """,
@@ -205,20 +225,54 @@ class KlineCache:
         return cur.fetchall()
 
     async def add_drawing(
-        self, source: str, symbol: str, timeframe: str, kind: str, points: list[dict]
+        self,
+        source: str,
+        symbol: str,
+        timeframe: str,
+        kind: str,
+        points: list[dict],
+        color: Optional[str] = None,
     ) -> None:
-        """Uloží jednu kresbu (typ + body) k symbolu a timeframe."""
+        """Uloží jednu kresbu (typ + body + barva) k symbolu a timeframe."""
         async with self._lock:
             await asyncio.to_thread(
-                self._add_drawing_sync, source, symbol, timeframe, kind, points
+                self._add_drawing_sync, source, symbol, timeframe, kind, points, color
             )
 
     def _add_drawing_sync(
-        self, source: str, symbol: str, timeframe: str, kind: str, points: list[dict]
+        self,
+        source: str,
+        symbol: str,
+        timeframe: str,
+        kind: str,
+        points: list[dict],
+        color: Optional[str],
     ) -> None:
         self._conn.execute(
-            "INSERT INTO drawings (source, symbol, timeframe, kind, points) VALUES (?, ?, ?, ?, ?)",
-            (source, symbol, timeframe, kind, json.dumps(points)),
+            """
+            INSERT INTO drawings (source, symbol, timeframe, kind, points, color)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (source, symbol, timeframe, kind, json.dumps(points), color),
+        )
+        self._conn.commit()
+
+    async def delete_drawing(self, source: str, symbol: str, timeframe: str, drawing_id: int) -> None:
+        """Smaže jednu kresbu podle id (používá se pro mazání pravým klikem)."""
+        async with self._lock:
+            await asyncio.to_thread(
+                self._delete_drawing_sync, source, symbol, timeframe, drawing_id
+            )
+
+    def _delete_drawing_sync(
+        self, source: str, symbol: str, timeframe: str, drawing_id: int
+    ) -> None:
+        self._conn.execute(
+            """
+            DELETE FROM drawings
+            WHERE id = ? AND source = ? AND symbol = ? AND timeframe = ?
+            """,
+            (drawing_id, source, symbol, timeframe),
         )
         self._conn.commit()
 

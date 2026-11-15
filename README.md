@@ -117,7 +117,8 @@ Všechny systémy (Windows, macOS, Linux):
 
 ### Stav funkcí
 
-- Hotovo: vyhledání symbolů (Binance + Yahoo Finance), statické svíčkové grafy
+- Hotovo: vyhledání symbolů v jednom poli s autocomplete (Enter přidá do
+  watchlistu, klik na návrh načte graf), statické svíčkové grafy
   + objem, timeframy 1m/5m/15m/1h/4h/1D/1W (jen co zdroj podporuje), tmavý a
   světlý motiv, crosshair s OHLC legendou, cache historie v SQLite,
   ukládání posledního symbolu/timeframu/motivu, živé svíčky Binance přes
@@ -125,13 +126,14 @@ Všechny systémy (Windows, macOS, Linux):
   „živě / zpožděno“), akcie/ETF/indexy/forex přes Yahoo Finance s živým
   pollingem a hlášením zavřeného trhu, indikátory SMA, EMA, Bollinger Bands,
   RSI a MACD (RSI/MACD ve vlastních panelech se synchronizovaným časem,
-  nastavitelné parametry, mazání čipem), kreslení horizontální linie,
-  trendové čáry a obdélníku s ukládáním k symbolu a timeframe (přetrvává
-  restart, mazání tlačítkem), kreslicí lišta ve stylu TradingView (kurzor,
-  horizontální i svislá linie, trendová čára, polopřímka, přímka, obdélník,
-  mazání všeho), watchlist v levém panelu (přidat/odebrat,
-  klik přepne graf, poslední cena a denní změna – Binance živě po 5 s,
-  Yahoo denní změna a Alpaca snapshots s obnovou po 60/5 s).
+  nastavitelné parametry, mazání čipem), kreslení s lištou nástrojů ve stylu
+  TradingView: horizontální i svislá linie, trendová čára, polopřímka,
+  oboustranná přímka, obdélník, štětec, Fibonacci retracement (s popisky),
+  paleta barev nových kreseb, mazání kresby pravým klikem a smazání všeho;
+  kresby se ukládají k symbolu a timeframe (přetrvávají restart), watchlist
+  v levém panelu (přidat/odebrat, klik přepne graf, poslední cena a denní
+  změna – Binance živě po 5 s, Yahoo denní změna a Alpaca snapshots s obnovou
+  po 60/5 s).
 - Připravuje se: kreslení ve stylu TradingView (vertikální lišta nástrojů),
   poté volitelné vylepšení podle zpětné vazby.
 

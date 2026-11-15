@@ -18,7 +18,7 @@ DEFAULT_BARS = 600
 VISIBLE_BARS = 150
 
 # Verze statických souborů pro cache-busting v prohlížeči (při změně CSS/JS zvýšit)
-STATIC_VERSION = "0.2.6"
+STATIC_VERSION = "0.3.0"
 
 
 def register(cache: KlineCache) -> None:
@@ -67,25 +67,89 @@ async def _build_index(cache: KlineCache) -> None:
             status_label.classes(add="error" if error else "", remove="" if error else "error")
 
     async def search_symbols() -> None:
-        # Vyhledání napříč zdroji; výpadek jednoho zdroje nesmí shodit UI
-        results: dict[str, str] = {}
-        query = search_input.value or ""
+        # Vyhledání napříč zdroji; výsledky se ukazují jako návrhy pod polem
+        query = (search_input.value or "").strip()
+        state["suggestions"] = []
+        state["highlight"] = 0
+        if not query:
+            hide_suggestions()
+            return
+        results: list[dict] = []
         for provider in PROVIDERS:
             try:
                 found = await provider.search(query)
             except Exception as exc:
                 show_status(f"Zdroj {provider.name} není dostupný: {exc}", error=True)
                 continue
-            for symbol_info in found:
+            for symbol_info in found[:10]:
                 key = f"{symbol_info.provider_id}:{symbol_info.symbol}"
-                results[key] = f"{symbol_info.label} · {provider.name}"
-        symbol_select.options = results
-        symbol_select.value = None
-        symbol_select.update()
-        if results:
-            show_status(f"Nalezeno {len(results)} symbolů.")
-        else:
-            show_status("Nic nenalezeno, zkuste jiný dotaz.")
+                results.append(
+                    {
+                        "key": key,
+                        "label": f"{symbol_info.label} · {provider.name}",
+                        "symbol": symbol_info.symbol,
+                    }
+                )
+        # Přesná shoda symbolu má přednost před prefixem (MSFT před MSFTBUSDT);
+        # řazení je stabilní, takže se zachová pořadí zdrojů uvnitř skupin
+        upper = query.upper()
+
+        def relevance(result: dict) -> int:
+            symbol = result["symbol"].upper()
+            if symbol == upper:
+                return 0
+            if symbol.startswith(upper):
+                return 1
+            return 2
+
+        results.sort(key=relevance)
+        state["suggestions"] = results
+        render_suggestions()
+
+    def hide_suggestions() -> None:
+        suggestions_container.classes(add="hidden")
+
+    def render_suggestions() -> None:
+        # Přestaví nabídku pod vyhledávacím polem; zvýrazněný řádek reaguje na šipky
+        suggestions_container.clear()
+        suggestions = state.get("suggestions") or []
+        if not suggestions:
+            hide_suggestions()
+            return
+        suggestions_container.classes(remove="hidden")
+        with suggestions_container:
+            for index, suggestion in enumerate(suggestions):
+                classes = "autocomplete-item" + (" active" if index == state["highlight"] else "")
+                item = ui.label(suggestion["label"]).classes(classes)
+                item.on("click", make_load_from_search(suggestion["key"]))
+
+    def make_load_from_search(key: str):
+        # Klik na návrh načte graf (Enter přidává do watchlistu)
+        async def _handler(_event):
+            await load_symbol(key)
+            hide_suggestions()
+
+        return _handler
+
+    def move_highlight(delta: int) -> None:
+        suggestions = state.get("suggestions") or []
+        if not suggestions:
+            return
+        state["highlight"] = (state["highlight"] + delta) % len(suggestions)
+        render_suggestions()
+
+    async def add_search_to_watchlist() -> None:
+        # Enter: přidá označený (nebo první) návrh do watchlistu
+        suggestions = state.get("suggestions") or []
+        if not suggestions:
+            show_status("Nejdřív hledejte symbol, poté ho Enterem přidáte do watchlistu.")
+            return
+        suggestion = suggestions[min(state["highlight"], len(suggestions) - 1)]
+        provider_id, _, symbol = suggestion["key"].partition(":")
+        await cache.watchlist_add(provider_id, symbol)
+        await rebuild_watchlist()
+        show_status(f"{symbol} přidán do watchlistu ({provider_id}).")
+        hide_suggestions()
 
     async def load_symbol(key) -> None:
         if not key or ":" not in str(key):
@@ -227,16 +291,13 @@ async def _build_index(cache: KlineCache) -> None:
     # ---------- kreslení (krok 5 + lišta ve stylu TradingView) ----------
 
     # Druhy kresby, které backend ukládá (cursor = režim bez kreslení)
-    DRAWING_KINDS = ["hline", "vline", "trend", "ray", "extended", "rect"]
-    # Nástroje vertikální lišty: (id, tooltip, ikona)
-    DRAWING_TOOLS = [
-        ("cursor", "Kurzor", "near_me"),
-        ("hline", "Horizontální linie", "horizontal_rule"),
-        ("vline", "Svislá linie", "height"),
-        ("trend", "Trendová čára", "show_chart"),
-        ("ray", "Polopřímka", "trending_up"),
-        ("extended", "Přímka (oboustranná)", "sync_alt"),
-        ("rect", "Obdélník", "crop_square"),
+    DRAWING_KINDS = ["hline", "vline", "trend", "ray", "extended", "rect", "brush", "fib"]
+    # Nástroje vertikální lišty ve skupinách: (id, tooltip, ikona)
+    DRAWING_GROUPS = [
+        [("cursor", "Kurzor", "near_me")],
+        [("hline", "Horizontální linie", "horizontal_rule"), ("vline", "Svislá linie", "height")],
+        [("trend", "Trendová čára", "show_chart"), ("ray", "Polopřímka", "trending_up"), ("extended", "Přímka (oboustranná)", "sync_alt")],
+        [("rect", "Obdélník", "crop_square"), ("brush", "Štětec", "brush"), ("fib", "Fibonacci retracement", "align_vertical_center")],
     ]
     DRAWING_LABELS = {
         "hline": "Horizontální linie",
@@ -245,7 +306,11 @@ async def _build_index(cache: KlineCache) -> None:
         "ray": "Polopřímka",
         "extended": "Přímka",
         "rect": "Obdélník",
+        "brush": "Štětec",
+        "fib": "Fibonacci retracement",
     }
+    # Barvy nových kreseb (paleta v liště)
+    DRAWING_COLORS = ["#2962ff", "#e91e63", "#26a69a", "#ff9800", "#d1d4dc"]
 
     async def set_drawing_mode(mode: str | None) -> None:
         # Aktivní nástroj zvýrazníme; cursor = režim bez kreslení (JS mode null)
@@ -265,28 +330,40 @@ async def _build_index(cache: KlineCache) -> None:
         await chart.set_drawings(drawings)
 
     async def on_drawing_finished() -> None:
-        # Stránkový timer vyzvedne hotové kresby z grafu (fronta) a uloží je
+        # Stránkový timer vyzvedne události kreslení z grafu (fronta: přidání /
+        # smazání pravým klikem) a projeví je v databázi
         provider_id = state.get("provider_id")
         symbol = state.get("symbol")
         timeframe = state.get("timeframe")
         if not provider_id or not symbol:
             return
-        saved = 0
+        changed = False
         for _ in range(20):
             payload = await ui.run_javascript(
                 f'return window.TickViewChart.popFinishedDrawing("{chart.js_id}");'
             )
-            if not isinstance(payload, dict) or payload.get("kind") not in DRAWING_KINDS:
+            if not isinstance(payload, dict):
                 break
-            points = [
-                {"time": int(p["time"]), "price": float(p["price"])}
-                for p in (payload.get("points") or [])
-            ]
-            await cache.add_drawing(provider_id, symbol, timeframe, payload["kind"], points)
-            saved += 1
-        if saved:
+            if payload.get("type") == "delete":
+                drawing_id = payload.get("id")
+                if drawing_id:
+                    await cache.delete_drawing(provider_id, symbol, timeframe, int(drawing_id))
+                    changed = True
+                    show_status("Kresba smazána.")
+            elif payload.get("type") == "add" and payload.get("kind") in DRAWING_KINDS:
+                points = [
+                    {"time": int(p["time"]), "price": float(p["price"])}
+                    for p in (payload.get("points") or [])
+                ]
+                await cache.add_drawing(
+                    provider_id, symbol, timeframe, payload["kind"], points, payload.get("color")
+                )
+                changed = True
+                show_status(
+                    f"Kresba uložena ({DRAWING_LABELS[payload['kind']]}) k {symbol} ({timeframe})"
+                )
+        if changed:
             await reload_drawings()
-            show_status(f"Kresba uložena ({DRAWING_LABELS[payload['kind']]}) k {symbol} ({timeframe})")
 
     async def clear_drawings() -> None:
         provider_id = state.get("provider_id")
@@ -486,9 +563,11 @@ async def _build_index(cache: KlineCache) -> None:
     with ui.column().classes("page-root w-full"):
         with ui.row().classes("topbar w-full"):
             ui.label("TickView").classes("brand")
-            search_input = ui.input(placeholder="Hledat symbol…").classes("symbol-search")
-            ui.button(icon="search", on_click=search_symbols).classes("search-button")
-            symbol_select = ui.select(options={}, label="Symboly").classes("symbol-select")
+            with ui.element("div").classes("search-wrap"):
+                search_input = ui.input(placeholder="Hledat symbol (MSFT…)…").classes(
+                    "symbol-search"
+                ).props("debounce=300 outlined dense")
+                suggestions_container = ui.column().classes("autocomplete hidden")
             timeframe_toggle = ui.toggle(options=[], value=None).classes("timeframes")
             source_badge = ui.badge("—").classes("source-badge")
             theme_switch = ui.switch("Tmavý motiv", value=dark)
@@ -511,15 +590,27 @@ async def _build_index(cache: KlineCache) -> None:
                 with ui.row().classes("chart-area w-full"):
                     with ui.column().classes("drawing-toolbar"):
                         drawing_buttons = {}
-                        for kind, tooltip, icon in DRAWING_TOOLS:
-                            drawing_buttons[kind] = (
-                                ui.button(icon=icon, on_click=make_mode_handler(kind))
-                                .props("flat dense size=sm")
-                                .classes("drawing-btn")
-                                .tooltip(tooltip)
+                        for group in DRAWING_GROUPS:
+                            for kind, tooltip, icon in group:
+                                drawing_buttons[kind] = (
+                                    ui.button(icon=icon, on_click=make_mode_handler(kind))
+                                    .props("flat dense")
+                                    .classes("drawing-btn")
+                                    .tooltip(tooltip)
+                                )
+                            ui.separator().props("vertical").classes("toolbar-sep")
+                        # Paleta barev nových kreseb
+                        swatch_buttons = {}
+                        for index, hex_color in enumerate(DRAWING_COLORS):
+                            swatch_buttons[hex_color] = (
+                                ui.button(on_click=lambda _, c=hex_color: set_drawing_color(c))
+                                .props("flat dense")
+                                .classes(f"drawing-btn swatch swatch-{index}")
+                                .tooltip("Barva nových kreseb")
                             )
+                        ui.separator().props("vertical").classes("toolbar-sep")
                         ui.button(icon="delete_sweep", on_click=clear_drawings).props(
-                            "flat dense size=sm"
+                            "flat dense"
                         ).classes("drawing-btn").tooltip("Smazat všechny kresby")
                     chart = LightweightChart(dark=dark, on_ready=initial_load)
                 status_label = ui.label("").classes("statusbar w-full")
@@ -554,8 +645,12 @@ async def _build_index(cache: KlineCache) -> None:
                 ui.button("Zrušit", on_click=settings_dialog.close).props("flat")
 
     # ---------- vazby ----------
-    search_input.on("keydown.enter", search_symbols)
-    symbol_select.on_value_change(lambda event: load_symbol(event.value))
+    # Hledání: psaní hned filtruje návrhy (debounce na QInput), Enter přidá do watchlistu
+    search_input.on_value_change(lambda event: search_symbols())
+    search_input.on("keydown.enter", add_search_to_watchlist)
+    search_input.on("keydown.arrow-down", lambda _e: move_highlight(1))
+    search_input.on("keydown.arrow-up", lambda _e: move_highlight(-1))
+    search_input.on("keydown.escape", lambda _e: hide_suggestions())
     timeframe_toggle.on_value_change(lambda event: set_timeframe(event.value))
     theme_switch.on_value_change(lambda event: toggle_theme(bool(event.value)))
 

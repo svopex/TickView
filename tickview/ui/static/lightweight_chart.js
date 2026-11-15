@@ -145,6 +145,7 @@ window.TickViewChart = (function () {
         pending: null,
         previewPoint: null,
         drawings: [],
+        color: '#2962ff',
       },
       elementId: id,
       paneCanvas: null,
@@ -211,6 +212,36 @@ window.TickViewChart = (function () {
         x: event.clientX - rect.left,
         y: event.clientY - rect.top,
       };
+      // Štětec: body se při tažení přidávají do rozepsané kresby
+      if (s.overlay.mode === 'brush') {
+        const time = s.chart.timeScale().coordinateToTime(s.overlay.previewPoint.x);
+        const price = s.candleSeries.coordinateToPrice(s.overlay.previewPoint.y);
+        if (time !== null && price !== null) {
+          const points = s.overlay.pending.points;
+          const last = points[points.length - 1];
+          const lastX = s.chart.timeScale().timeToCoordinate(last.time);
+          const lastY = s.candleSeries.priceToCoordinate(last.price);
+          // Body přidáváme až po ~6 px, aby JSON kresby nebyly zbytečně velké
+          if (lastX === null || lastY === null || Math.hypot(s.overlay.previewPoint.x - lastX, s.overlay.previewPoint.y - lastY) > 6) {
+            points.push({ time: Number(time), price: Number(price) });
+          }
+        }
+      }
+      redrawOverlay(s);
+    });
+    // Pravý klik v režimu kurzoru smaže kresbu pod kurzorem
+    overlay.addEventListener('contextmenu', (event) => {
+      if (s.overlay.mode) return;
+      event.preventDefault();
+      const rect = overlay.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      const index = hitTest(s, x, y);
+      if (index < 0) return;
+      const drawing = s.overlay.drawings[index];
+      // Odstraníme lokálně a uložíme id pro smazání v backendu
+      s.overlay.drawings.splice(index, 1);
+      if (drawing.id) s.finishedQueue.push({ type: 'delete', id: drawing.id });
       redrawOverlay(s);
     });
     // Escape zruší rozepsanou kresbu
@@ -237,6 +268,12 @@ window.TickViewChart = (function () {
       redrawOverlay(s);
       return;
     }
+    // Štětec ukončí tažení dalším klikem (body se sbíraly při pohybu)
+    if (kind === 'brush' && s.overlay.pending.kind === 'brush') {
+      s.overlay.pending.points.push(point);
+      finishDrawing(s, s.overlay.pending);
+      return;
+    }
     s.overlay.pending.points.push(point);
     finishDrawing(s, s.overlay.pending);
   }
@@ -245,12 +282,75 @@ window.TickViewChart = (function () {
   function finishDrawing(s, drawing) {
     s.overlay.pending = null;
     s.overlay.previewPoint = null;
-    s.overlay.drawings.push(drawing);
+    const colored = { kind: drawing.kind, points: drawing.points, color: s.overlay.color };
+    s.overlay.drawings.push(colored);
     redrawOverlay(s);
     // Hotové kresby se hromadí ve frontě a backend si je vyzvedává stránkovým
     // timerem přes popFinishedDrawing (DOM eventy z Vue komponenty nejsou
     // spolehlivé; fronta zvládne i více kreseb mezi dvěma ticky)
-    s.finishedQueue.push({ kind: drawing.kind, points: drawing.points });
+    s.finishedQueue.push({ type: 'add', ...colored });
+  }
+
+  // Vzdálenost bodu od úsečky (pro test, zda kurzor míří na kresbu)
+  function distToSegment(px, py, x1, y1, x2, y2) {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const len2 = dx * dx + dy * dy;
+    let t = len2 ? ((px - x1) * dx + (py - y1) * dy) / len2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+  }
+
+  // Najde kresbu pod kurzorem (index v s.overlay.drawings) nebo -1
+  function hitTest(s, x, y) {
+    const timeScale = s.chart.timeScale();
+    const series = s.candleSeries;
+    const toPixel = (point) => {
+      const px = timeScale.timeToCoordinate(point.time);
+      const py = series.priceToCoordinate(point.price);
+      return px === null || py === null ? null : { x: px, y: py };
+    };
+    const threshold = 6;
+    for (let i = s.overlay.drawings.length - 1; i >= 0; i--) {
+      const drawing = s.overlay.drawings[i];
+      const points = drawing.points.map(toPixel);
+      if (points.some((p) => p === null)) continue;
+      if (drawing.kind === 'hline') {
+        if (Math.abs(y - points[0].y) <= threshold) return i;
+      } else if (drawing.kind === 'vline') {
+        if (Math.abs(x - points[0].x) <= threshold) return i;
+      } else if (drawing.kind === 'rect') {
+        const [a, b] = points;
+        const x1 = Math.min(a.x, b.x);
+        const x2 = Math.max(a.x, b.x);
+        const y1 = Math.min(a.y, b.y);
+        const y2 = Math.max(a.y, b.y);
+        // Okraje obdélníku (ne vnitřek, aby se dalo kreslit přes něj)
+        if (
+          (Math.abs(x - x1) <= threshold || Math.abs(x - x2) <= threshold) && y >= y1 - threshold && y <= y2 + threshold
+        ) return i;
+        if (
+          (Math.abs(y - y1) <= threshold || Math.abs(y - y2) <= threshold) && x >= x1 - threshold && x <= x2 + threshold
+        ) return i;
+      } else if (drawing.kind === 'fib') {
+        const [a, b] = points;
+        const x1 = Math.min(a.x, b.x);
+        const x2 = Math.max(a.x, b.x);
+        for (const level of [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1]) {
+          const yLevel = b.y + (a.y - b.y) * level;
+          if (x >= x1 - threshold && x <= x2 + threshold && Math.abs(y - yLevel) <= threshold) return i;
+        }
+      } else if (drawing.kind === 'brush') {
+        for (let k = 1; k < points.length; k++) {
+          if (distToSegment(x, y, points[k - 1].x, points[k - 1].y, points[k].x, points[k].y) <= threshold) return i;
+        }
+      } else {
+        // trend / ray / extended: vzdálenost k úsečce mezi body
+        const [a, b] = points;
+        if (distToSegment(x, y, a.x, a.y, b.x, b.y) <= threshold) return i;
+      }
+    }
+    return -1;
   }
 
   // Vyzvedne jednu dokončenou kresbu z fronty (nebo null, když je prázdná)
@@ -313,7 +413,9 @@ window.TickViewChart = (function () {
     }
 
     ctx.lineWidth = 1.5;
-    ctx.strokeStyle = drawing.preview ? 'rgba(41, 98, 255, 0.8)' : '#2962ff';
+    const color = drawing.color || '#2962ff';
+    ctx.strokeStyle = drawing.preview ? 'rgba(41, 98, 255, 0.8)' : color;
+    ctx.fillStyle = 'rgba(41, 98, 255, 0.12)';
 
     const toPixel = (point) => {
       const x = timeScale.timeToCoordinate(point.time);
@@ -382,6 +484,48 @@ window.TickViewChart = (function () {
       ctx.fillStyle = 'rgba(41, 98, 255, 0.12)';
       ctx.fillRect(x, y, w, h);
       ctx.strokeRect(x, y, w, h);
+      return;
+    }
+    if (drawing.kind === 'brush') {
+      // Štětec: kresba jako lomená čára přes všechny nasbírané body
+      if (points.length < 2) return;
+      ctx.beginPath();
+      let started = false;
+      for (const point of points) {
+        const pixel = toPixel(point);
+        if (!pixel) continue;
+        if (!started) {
+          ctx.moveTo(pixel.x, pixel.y);
+          started = true;
+        } else {
+          ctx.lineTo(pixel.x, pixel.y);
+        }
+      }
+      if (started) ctx.stroke();
+      return;
+    }
+    if (drawing.kind === 'fib') {
+      // Fibonacci retracement: úrovně mezi dvěma body, popisky vlevo
+      const levels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+      const x1 = Math.min(p1.x, p2.x);
+      const x2 = Math.max(p1.x, p2.x);
+      ctx.font = '11px sans-serif';
+      ctx.textBaseline = 'bottom';
+      for (const level of levels) {
+        // Úroveň 0 je u druhého bodu, 1 u prvního (jako v TradingView)
+        const y = p2.y + (p1.y - p2.y) * level;
+        const price = points[1].price + (points[0].price - points[1].price) * level;
+        ctx.beginPath();
+        ctx.setLineDash([4, 4]);
+        ctx.strokeStyle = drawing.preview ? 'rgba(41, 98, 255, 0.8)' : color;
+        ctx.moveTo(x1, y);
+        ctx.lineTo(x2, y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = ctx.strokeStyle;
+        ctx.fillText(level.toFixed(3).replace(/0+$/, '').replace(/\.$/, '') + ' (' + formatPrice(price) + ')', x1 + 2, y - 1);
+      }
+      return;
     }
   }
 
@@ -400,8 +544,20 @@ window.TickViewChart = (function () {
   function setDrawings(id, drawings) {
     const s = state.get(id);
     if (!s) return;
-    s.overlay.drawings = (drawings || []).map((d) => ({ kind: d.kind, points: d.points }));
+    s.overlay.drawings = (drawings || []).map((d) => ({
+      id: d.id,
+      kind: d.kind,
+      points: d.points,
+      color: d.color || '#2962ff',
+    }));
     redrawOverlay(s);
+  }
+
+  // Nastaví barvu nových kreseb (paleta v liště nástrojů)
+  function setDrawingColor(id, color) {
+    const s = state.get(id);
+    if (!s) return;
+    s.overlay.color = color || '#2962ff';
   }
 
   // Synchronizuje viditelný rozsah mezi hlavním grafem a panely indikátorů
@@ -636,6 +792,7 @@ window.TickViewChart = (function () {
     clearIndicators: clearIndicators,
     setDrawingMode: setDrawingMode,
     setDrawings: setDrawings,
+    setDrawingColor: setDrawingColor,
     popFinishedDrawing: popFinishedDrawing,
     debugState: debugState,
     _chart: _chart,

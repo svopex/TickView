@@ -176,10 +176,11 @@ VÝSTUP
   více kreseb mezi ticky). Kontejner grafu se hledá přes data-chart-id atribut –
   vlastní id prvku necháváme NiceGUI (přepis id rozbil event binding).
 - Watchlist (krok 6): tabulka watchlist (source+symbol, unique) v SQLite;
-  UI levý panel, přidání aktuálního symbolu tlačítkem, odebrání ×, klik na
-  řádek přepne graf. Ceny: Binance /ticker/24hr batch dotaz (json pole bez
-  mezer) každých 5 s; Yahoo denní svíčky s in-memory TTL 60 s na symbol
-  (throttle kvůli limitům); změna se barví zeleně/červeně.
+  UI levý panel, přidání tlačítkem + (aktuální symbol) nebo Enterem ze sloučeného
+  vyhledávání, odebrání ×, klik na řádek přepne graf. Ceny: Binance
+  /ticker/24hr batch dotaz (json pole bez mezer) každých 5 s; Yahoo denní
+  svíčky s in-memory TTL 60 s a Alpaca snapshots (latestTrade/prevDailyBar,
+  feed=iex) s TTL 5 s; změna se barví zeleně/červeně.
 - Alpaca (krok 7): market data přes https://data.alpaca.markets/v2/stocks/bars
   s feed=iex (zdarma v plánu Basic – IEX pokrývá část objemu trhu, nikoli celý
   SIP feed); seznam instrumentů z nakonfigurovaného trading endpointu (paper
