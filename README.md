@@ -59,37 +59,9 @@ Kroky v tomto pořadí; po každém musí být aplikace spustitelná:
 6. Watchlist
 7. Alpaca
 
-PROGRESS.md (povinné – práce může být kdykoli přerušena)
-Pracuješ s omezeným kreditem a můžeš být přerušen uprostřed kroku. Jiný agent
-pak musí navázat jen podle souboru PROGRESS.md v kořeni projektu a kódu,
-bez znalosti této konverzace.
-- Na začátku: pokud PROGRESS.md existuje, přečti ho celý, ověř, že aplikace
-  jde spustit, a pokračuj od sekce „Další krok“. Nezačínej znovu a nepřepisuj
-  hotové části. Pokud neexistuje, vytvoř ho jako první věc, ještě před kódem.
-- Aktualizuj ho průběžně: po každé dokončené dílčí části (ne až na konci
-  kroku) a vždy před započetím větší změny. Nejdřív zapiš, pak pokračuj.
-- Udržuj ho krátký a aktuální: přepisuj stav, nepřidávej deník.
-- Povinná struktura:
-  ## Zadání – úplná kopie tohoto zadání (zapiš jednou, neměň)
-  ## Stav kroků – seznam kroků 1–7 s označením hotovo / rozpracováno / čeká
-  ## Rozpracováno – co přesně se právě dělá, které soubory jsou dotčené,
-     co je napůl hotové a v jakém stavu
-  ## Další krok – jedna konkrétní akce, kterou má udělat ten, kdo navazuje
-  ## Jak spustit – příkazy pro instalaci a spuštění, ověřené
-  ## Struktura projektu – soubory a k čemu slouží (jedna řádka na soubor)
-  ## Rozhodnutí – technická rozhodnutí a důvod (verze knihoven, formát dat,
-     schéma databáze, odchylky od zadání)
-  ## Známé problémy – chyby, obcházení, co nefunguje
-- Po každém dokončeném kroku udělej git commit se zprávou „Krok N: popis“
-  a zapiš to do PROGRESS.md.
-- Nikdy nenechávej projekt v nespustitelném stavu bez poznámky v sekci
-  „Rozpracováno“, co je rozbité a jak to dokončit.
-- Šetři kredit: nevypisuj celé soubory, pokud měníš jen část; neprováděj
-  refaktoring hotových částí, pokud to zadání nevyžaduje.
-
 VÝSTUP
-- Kompletní zdrojový kód se strukturou složek, requirements.txt, README
-  s postupem spuštění na všech třech systémech, a aktuální PROGRESS.md.
+- Kompletní zdrojový kód se strukturou složek, requirements.txt a README
+  s postupem spuštění na všech třech systémech.
 
 ## Instalace a spuštění
 
@@ -112,8 +84,9 @@ Všechny systémy (Windows, macOS, Linux):
 
 - Cache svíček a nastavení: `data/tickview.db` (SQLite, vytvoří se samo;
   složka `data/` není verzována).
-- API klíče (volitelné, později pro Alpaca): `data/config.local.json` –
-  nikdy se necommituje.
+- Konfigurace: `config.yaml` v kořenu projektu (necommituje se – může
+  obsahovat API klíče). Šablona je `config.example.yaml` – tu udržujeme
+  aktuální a uživatel si ji kopíruje na `config.yaml`.
 
 ### Stav funkcí
 
@@ -152,25 +125,37 @@ Všechny systémy (Windows, macOS, Linux):
   IEX feed). Dvě cesty:
   1. V aplikaci: ozubené kolečko v horní liště → vložit Key a Secret → Uložit
      → restart aplikace.
-  2. Přímo: doplnit `data/config.local.json` a restartovat:
+  2. Přímo: doplnit `config.yaml` v kořenu projektu a restartovat:
 
-         {
-           "alpaca": {
-             "endpoint": "https://paper-api.alpaca.markets/v2",
-             "api_key": "PK...",
-             "secret": "..."
-           }
-         }
+         alpaca:
+           endpoint: https://paper-api.alpaca.markets/v2
+           api_key: PK...
+           secret: ...
 
 - S neplatnými klíči se zdroj chová korektně: chybu 401 zobrazí ve stavové
   liště a zůstanou funkční ostatní zdroje.
+
+### Interactive Brokers (TWS / IB Gateway)
+
+- Zdroj `IBKR` se připojuje k běžící TWS (demo) nebo IB Gateway s povoleným
+  API. Výchozí hodnoty: host `127.0.0.1`, port `7497` (demo TWS),
+  clientId `30` – lze přepsat v `config.yaml`:
+
+      ibkr:
+        host: 127.0.0.1
+        port: 7497
+        client_id: 30
+
+- Historie, vyhledávání (matching symbols) i ceny watchlistu jdou přes TWS;
+  živá data se dotazují v intervalu (15 s intraday, 60 s denní). Když TWS
+  neběží, zdroj to nahlásí a ostatní zdroje fungují dál.
 
 ## Struktura projektu
 
 - `main.py` – vstupní bod: CLI parametry (`--port`, `--native`, `--open`),
   registrace statických souborů, spuštění UI
-- `tickview/config.py` – cesty k runtime datům, cache DB a lokální konfiguraci
-  (načítání/ukládání API klíčů)
+- `tickview/config.py` – cesty k runtime datům, cache DB a načítání/ukládání
+  konfigurace `config.yaml` (YAML v kořenu projektu)
 - `tickview/providers/base.py` – rozhraní DataProvider (search/history/stream),
   Candle, SymbolInfo, kanonické timeframy
 - `tickview/providers/binance.py` – zdroj Binance: vyhledání symbolů + historie
@@ -178,6 +163,8 @@ Všechny systémy (Windows, macOS, Linux):
   backoff po 429
 - `tickview/providers/yahoo.py` – zdroj Yahoo Finance (yfinance): akcie, ETF,
   indexy, forex; historie v to_thread, živá aktualizace pollingem
+- `tickview/providers/ibkr.py` – zdroj Interactive Brokers (TWS API, ib_async):
+  americké akcie; napojení na TWS 127.0.0.1:7497, clientId 30, polling živých dat
 - `tickview/providers/alpaca.py` – volitelný zdroj Alpaca (americké akcie):
   historie feed=iex, živý websocket IEX, aktivace po zadání klíčů
 - `tickview/providers/__init__.py` – registr zdrojů (nový zdroj = jeden řádek)
@@ -195,4 +182,3 @@ Všechny systémy (Windows, macOS, Linux):
 - `tickview/ui/static/style.css` – styly UI
 - `tickview/ui/static/lightweight-charts.standalone.production.js` – vendored
   knihovna TradingView Lightweight Charts 4.2.3 (licence Apache-2.0)
-- `PROGRESS.md` – stav práce pro navázání bez znalosti konverzace

@@ -370,6 +370,16 @@
   background: rgba(128, 128, 128, 0.15);
 }
 
+/* Kód zdroje ve watchlistu */
+.watch-code {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid rgba(128, 128, 128, 0.45);
+  color: #808080;
+  white-space: nowrap;
+}
+
 .watch-symbol {
   font-size: 12px;
   cursor: pointer;

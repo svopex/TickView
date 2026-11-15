@@ -116,7 +116,7 @@ class AlpacaProvider(DataProvider):
             params={"status": "active", "asset_class": "us_equity"},
         )
         # Popisek: symbol – název (burza); třídíme podle symbolu
-        self._symbols = sorted(
+        self._assets = sorted(
             (
                 SymbolInfo(
                     provider_id=self.id,

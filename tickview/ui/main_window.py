@@ -18,7 +18,7 @@ DEFAULT_BARS = 600
 VISIBLE_BARS = 150
 
 # Verze statických souborů pro cache-busting v prohlížeči (při změně CSS/JS zvýšit)
-STATIC_VERSION = "0.4.3"
+STATIC_VERSION = "0.4.4"
 
 
 def register(cache: KlineCache) -> None:
@@ -552,6 +552,9 @@ async def _build_index(cache: KlineCache) -> None:
 
     # ---------- watchlist (krok 6) ----------
 
+    # Krátké kódy zdrojů pro watchlist (aby sloupec nebyl široký)
+    PROVIDER_CODES = {"binance": "BIN", "yahoo": "YAH", "alpaca": "ALP", "ibkr": "IBK"}
+
     # Řádky watchlistu: key -> elementy pro aktualizaci cen
     watch_rows: dict = {}
 
@@ -623,7 +626,9 @@ async def _build_index(cache: KlineCache) -> None:
         with watchlist_body:
             for item in items:
                 key = f"{item['source']}:{item['symbol']}"
+                code = PROVIDER_CODES.get(item["source"], item["source"][:3].upper())
                 with ui.row().classes("watch-row w-full"):
+                    ui.label(code).classes("watch-code").tooltip(item["source"])
                     ui.label(item["symbol"]).classes("watch-symbol").on(
                         "click", make_watch_click(key)
                     )
@@ -643,7 +648,7 @@ async def _build_index(cache: KlineCache) -> None:
     # ---------- nastavení API klíčů (krok 7 – volitelný zdroj Alpaca) ----------
 
     async def save_settings() -> None:
-        # Uloží klíče do data/config.local.json (nikdy se necommituje)
+        # Uloží klíče do config.yaml v kořenu projektu (necommituje se)
         config = load_config()
         config["alpaca"] = {
             "endpoint": "https://paper-api.alpaca.markets/v2",
@@ -653,7 +658,7 @@ async def _build_index(cache: KlineCache) -> None:
         save_config(config)
         settings_dialog.close()
         show_status(
-            "Alpaca klíče uloženy do data/config.local.json – zdroj se aktivuje po restartu aplikace."
+            "Alpaca klíče uloženy do config.yaml – zdroj se aktivuje po restartu aplikace."
         )
 
     def open_settings_dialog() -> None:
@@ -848,7 +853,7 @@ async def _build_index(cache: KlineCache) -> None:
     with ui.dialog() as settings_dialog, ui.card().classes("settings-dialog"):
         with ui.column().classes("indicator-dialog-body"):
             ui.label(
-                "API klíče Alpaca – uloží se lokálně do data/config.local.json "
+                "API klíče Alpaca – uloží se lokálně do config.yaml v kořenu projektu "
                 "(nikdy se necommitují). Po uložení restartujte aplikaci."
             ).classes("settings-note")
             settings_key = ui.input("API key").props("outlined dense type=password")

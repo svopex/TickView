@@ -8,16 +8,19 @@ Alpaca je volitelný – přidá se jen tehdy, když jsou v lokální konfigurac
 from tickview.providers.alpaca import AlpacaProvider
 from tickview.providers.base import DataProvider
 from tickview.providers.binance import BinanceProvider
+from tickview.providers.ibkr import IbkrProvider
 from tickview.providers.yahoo import YahooProvider
 
 
 def _build_providers() -> list[DataProvider]:
-    providers: list[DataProvider] = [BinanceProvider(), YahooProvider()]
-    alpaca = AlpacaProvider()
-    if alpaca.configured:
-        # Volitelný zdroj se zapne až po zadání API klíčů v nastavení
-        providers.append(alpaca)
-    return providers
+    # IBKR se připojuje lazy k TWS (127.0.0.1:7497, clientId 30); když TWS
+    # neběží, zdroj jen nahlásí chybu, ostatní zdroje fungují dál
+    return [
+        BinanceProvider(),
+        YahooProvider(),
+        IbkrProvider(),
+        AlpacaProvider(),
+    ]
 
 
 PROVIDERS: list[DataProvider] = _build_providers()
