@@ -130,13 +130,34 @@ Všechny systémy (Windows, macOS, Linux):
   restart, mazání tlačítkem), watchlist v levém panelu (přidat/odebrat,
   klik přepne graf, poslední cena a denní změna – Binance živě po 5 s,
   Yahoo denní změna s obnovou po 60 s).
-- Připravuje se (krok 7): Alpaca.
+- Připravuje se: kreslení ve stylu TradingView (vertikální lišta nástrojů),
+  poté volitelné vylepšení podle zpětné vazby.
+
+### Alpaca (volitelný zdroj živých akcií)
+
+- Zdroj se aktivuje zadáním API klíčů (plán Basic zdarma stačí – používá se
+  IEX feed). Dvě cesty:
+  1. V aplikaci: ozubené kolečko v horní liště → vložit Key a Secret → Uložit
+     → restart aplikace.
+  2. Přímo: doplnit `data/config.local.json` a restartovat:
+
+         {
+           "alpaca": {
+             "endpoint": "https://paper-api.alpaca.markets/v2",
+             "api_key": "PK...",
+             "secret": "..."
+           }
+         }
+
+- S neplatnými klíči se zdroj chová korektně: chybu 401 zobrazí ve stavové
+  liště a zůstanou funkční ostatní zdroje.
 
 ## Struktura projektu
 
 - `main.py` – vstupní bod: CLI parametry (`--port`, `--native`, `--open`),
   registrace statických souborů, spuštění UI
 - `tickview/config.py` – cesty k runtime datům, cache DB a lokální konfiguraci
+  (načítání/ukládání API klíčů)
 - `tickview/providers/base.py` – rozhraní DataProvider (search/history/stream),
   Candle, SymbolInfo, kanonické timeframy
 - `tickview/providers/binance.py` – zdroj Binance: vyhledání symbolů + historie
@@ -144,6 +165,8 @@ Všechny systémy (Windows, macOS, Linux):
   backoff po 429
 - `tickview/providers/yahoo.py` – zdroj Yahoo Finance (yfinance): akcie, ETF,
   indexy, forex; historie v to_thread, živá aktualizace pollingem
+- `tickview/providers/alpaca.py` – volitelný zdroj Alpaca (americké akcie):
+  historie feed=iex, živý websocket IEX, aktivace po zadání klíčů
 - `tickview/providers/__init__.py` – registr zdrojů (nový zdroj = jeden řádek)
 - `tickview/logic/cache.py` – SQLite cache svíček, nastavení, kreseb a
   watchlistu; skládání historie z cache a sítě (ze sítě stahuje jen chybějící

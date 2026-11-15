@@ -5,6 +5,7 @@ import uuid
 
 from nicegui import context, ui
 
+from tickview.config import load_config, save_config
 from tickview.logic.cache import KlineCache, fetch_history
 from tickview.logic.indicators import INDICATOR_DEFS, PARAM_LABELS, compute_indicators
 from tickview.providers import PROVIDERS, get_provider
@@ -17,7 +18,7 @@ DEFAULT_BARS = 600
 VISIBLE_BARS = 150
 
 # Verze statických souborů pro cache-busting v prohlížeči (při změně CSS/JS zvýšit)
-STATIC_VERSION = "0.2.2"
+STATIC_VERSION = "0.2.3"
 
 
 def register(cache: KlineCache) -> None:
@@ -368,6 +369,29 @@ async def _build_index(cache: KlineCache) -> None:
         # Po inicializaci grafu v prohlížeči obnovíme poslední zobrazený symbol
         await load_symbol(last_symbol)
 
+    # ---------- nastavení API klíčů (krok 7 – volitelný zdroj Alpaca) ----------
+
+    async def save_settings() -> None:
+        # Uloží klíče do data/config.local.json (nikdy se necommituje)
+        config = load_config()
+        config["alpaca"] = {
+            "endpoint": "https://paper-api.alpaca.markets/v2",
+            "api_key": (settings_key.value or "").strip(),
+            "secret": (settings_secret.value or "").strip(),
+        }
+        save_config(config)
+        settings_dialog.close()
+        show_status(
+            "Alpaca klíče uloženy do data/config.local.json – zdroj se aktivuje po restartu aplikace."
+        )
+
+    def open_settings_dialog() -> None:
+        # Vyplníme aktuální klíče z konfigurace pro kontrolu/přepis
+        alpaca_config = load_config().get("alpaca", {})
+        settings_key.value = alpaca_config.get("api_key", "")
+        settings_secret.value = alpaca_config.get("secret", "")
+        settings_dialog.open()
+
     # ---------- indikátory ----------
 
     async def refresh_indicators() -> None:
@@ -453,6 +477,9 @@ async def _build_index(cache: KlineCache) -> None:
             ui.button("Indikátor", icon="add_chart", on_click=open_indicator_dialog).props(
                 "flat"
             ).classes("indicator-add")
+            ui.button(icon="settings", on_click=open_settings_dialog).props("flat dense").classes(
+                "settings-button"
+            )
         with ui.row().classes("main-area w-full"):
             with ui.column().classes("watchlist-panel"):
                 with ui.row().classes("watchlist-header w-full"):
@@ -494,6 +521,19 @@ async def _build_index(cache: KlineCache) -> None:
             with ui.row().classes("dialog-actions"):
                 ui.button("Přidat", on_click=submit_indicator).props("unelevated")
                 ui.button("Zrušit", on_click=indicator_dialog.close).props("flat")
+
+    # Dialog nastavení API klíčů (volitelný zdroj Alpaca)
+    with ui.dialog() as settings_dialog, ui.card().classes("settings-dialog"):
+        with ui.column().classes("indicator-dialog-body"):
+            ui.label(
+                "API klíče Alpaca – uloží se lokálně do data/config.local.json "
+                "(nikdy se necommitují). Po uložení restartujte aplikaci."
+            ).classes("settings-note")
+            settings_key = ui.input("API key").props("outlined dense type=password")
+            settings_secret = ui.input("Secret").props("outlined dense type=password")
+            with ui.row().classes("dialog-actions"):
+                ui.button("Uložit", on_click=save_settings).props("unelevated")
+                ui.button("Zrušit", on_click=settings_dialog.close).props("flat")
 
     # ---------- vazby ----------
     search_input.on("keydown.enter", search_symbols)

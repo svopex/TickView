@@ -8,7 +8,13 @@ from typing import Any, AsyncIterator, Optional
 import httpx
 import websockets
 
-from tickview.providers.base import Candle, DataProvider, SymbolInfo, TIMEFRAME_MS
+from tickview.providers.base import (
+    Candle,
+    DataProvider,
+    RateLimiter,
+    SymbolInfo,
+    TIMEFRAME_MS,
+)
 
 REST_BASE_URL = "https://api.binance.com"
 WS_BASE_URL = "wss://stream.binance.com:9443/ws"
@@ -20,41 +26,6 @@ KLINES_PAGE_LIMIT = 1000
 MAX_KLINES_PAGES = 100
 # Horní mez čekání mezi pokusy o znovupřipojení websocketu
 WS_MAX_BACKOFF_S = 30.0
-
-
-class RateLimiter:
-    """Omezovač dotazů: minimální mezera mezi požadavky + exponenciální čekání po 429.
-
-    Parametry:
-        min_interval: minimální mezera mezi požadavky v sekundách.
-        max_backoff: horní mez exponenciálního čekání v sekundách.
-    """
-
-    def __init__(self, min_interval: float = 0.15, max_backoff: float = 60.0):
-        self._min_interval = min_interval
-        self._max_backoff = max_backoff
-        self._next_slot = 0.0
-        self._backoff = 0.0
-
-    async def acquire(self) -> None:
-        """Zablokuje, dokud není povolen další požadavek."""
-        now = time_module.monotonic()
-        # Čekáme max(minimální slot, aktuální backoff po 429)
-        wait_until = max(self._next_slot, now + self._backoff)
-        delay = wait_until - now
-        if delay > 0:
-            await asyncio.sleep(delay)
-        self._next_slot = max(time_module.monotonic() + self._min_interval, self._next_slot)
-
-    def penalize(self, retry_after: Optional[float] = None) -> None:
-        """Zvyšuje čekání po chybě 429/5xx; hlavička Retry-After má přednost."""
-        self._backoff = min(max(self._backoff * 2, 1.0), self._max_backoff)
-        if retry_after:
-            self._backoff = max(self._backoff, min(retry_after, self._max_backoff))
-
-    def clear_backoff(self) -> None:
-        """Po úspěšném dotazu vrátí backoff na nulu."""
-        self._backoff = 0.0
 
 
 class BinanceProvider(DataProvider):

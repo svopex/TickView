@@ -71,20 +71,19 @@ VÝSTUP
 4. Indikátory – hotovo (commit „Krok 4“)
 5. Kreslení – hotovo (commit „Krok 5“)
 6. Watchlist – hotovo (commit „Krok 6“)
-7. Alpaca – rozpracováno (klíče zadány, modul se píše)
+7. Alpaca – hotovo (implementace, commit „Krok 7“); živá data čekají na platné API klíče
 
 ## Rozpracováno
 
-- Nic – krok 1 je dokončen a odevzdán; aplikace je spustitelná.
+- Nic – krok 7 implementován; blokuje jen neplatné API klíče Alpaca (viz Známé problémy).
 
 ## Další krok
 
-- Krok 7 (Alpaca): modul tickview/providers/alpaca.py – REST data API
-  https://data.alpaca.markets/v2/stocks/bars (hlavičky APCA-API-KEY-ID/
-  APCA-API-SECRET z data/config.local.json), search přes /v2/assets,
-  websocket živých dat wss://stream.data.alpaca.markets/v2/iex (auth +
-  subscribe bars, automatické znovupřipojení); provider se přidá do seznamu
-  jen když konfigurace obsahuje klíče; ověřit autentizaci a grafy AAPL.
+- Zadat platné klíče Alpaca: v dashboardu Alpaca (Paper Trading → API Keys →
+  Regenerate), poté v aplikaci přes ozubené kolečko (Nastavení) do
+  data/config.local.json, restart aplikace a ověřit živá data AAPL.
+- Podle zpětné vazby doladit kreslení ve stylu TradingView (viz další
+  požadavek uživatele: vertikální lišta nástrojů jako na tradingview.com/chart).
 
 ## Jak spustit
 
@@ -180,6 +179,14 @@ VÝSTUP
   řádek přepne graf. Ceny: Binance /ticker/24hr batch dotaz (json pole bez
   mezer) každých 5 s; Yahoo denní svíčky s in-memory TTL 60 s na symbol
   (throttle kvůli limitům); změna se barví zeleně/červeně.
+- Alpaca (krok 7): market data přes https://data.alpaca.markets/v2/stocks/bars
+  s feed=iex (zdarma v plánu Basic – IEX pokrývá část objemu trhu, nikoli celý
+  SIP feed); seznam instrumentů přes https://api.alpaca.markets/v2/assets;
+  živá data wss://stream.data.alpaca.markets/v2/iex (auth + subscribe bars,
+  automatické znovupřipojení). Provider se do seznamu přidá jen když má klíče
+  (configured). Klíče se zadávají v UI přes ozubené kolečko → ukládají se do
+  data/config.local.json; aktivace až po restartu aplikace. Historie se
+  stránkuje přes next_page_token.
 - Alpaca (krok 7): uživatel zadal endpoint https://paper-api.alpaca.markets/v2
   a api_key PKPCQ5NKWKFVLY5N7EKU3WNK4N, uloženo v data/config.local.json
   (neverzováno); chybí secret key – po jeho zadání zdroj povolíme. Pro tržní
@@ -198,6 +205,10 @@ VÝSTUP
 
 ## Známé problémy
 
+- Alpaca: API odmítá obě zatím zadané generace klíčů („unauthorized“ na
+  /v2/account i na data endpoints) – přepis/zadání klíčů je patrně vadné;
+  čeká se na platné klíče (Regenerate v dashboardu a zadání přes Nastavení
+  v aplikaci). Kód je hotový a chyba 401 se v UI korektně zobrazí.
 - Testováno headless prohlížečem v sandboxu (Chrome panel): načtení dat,
   přepínání timeframe/symbolu, motivy, nastavení i interakce fungují;
   nativní režim (--native) nebyl ověřen (vyžaduje okenní systém).

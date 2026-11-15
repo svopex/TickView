@@ -180,6 +180,21 @@
   min-width: 320px;
 }
 
+/* Dialog nastavení API klíčů */
+.settings-dialog {
+  min-width: 360px;
+}
+
+.settings-note {
+  font-size: 12px;
+  color: #808080;
+  max-width: 320px;
+}
+
+.indicator-dialog-body {
+  gap: 10px !important;
+}
+
 /* Lišta kreslicích nástrojů */
 .drawing-bar {
   min-height: 0;
