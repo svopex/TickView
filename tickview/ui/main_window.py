@@ -18,7 +18,7 @@ DEFAULT_BARS = 600
 VISIBLE_BARS = 150
 
 # Verze statických souborů pro cache-busting v prohlížeči (při změně CSS/JS zvýšit)
-STATIC_VERSION = "0.4.4"
+STATIC_VERSION = "0.4.6"
 
 
 def register(cache: KlineCache) -> None:
@@ -176,6 +176,7 @@ async def _build_index(cache: KlineCache) -> None:
         state["provider_id"] = provider_id
         state["provider"] = provider
         state["symbol"] = symbol
+        refresh_watchlist_active()
         # Nabídneme jen timeframy, které zdroj podporuje; dosavadní výběr případně nahradíme
         timeframes = list(provider.timeframes.keys())
         if state["timeframe"] not in timeframes:
@@ -627,7 +628,7 @@ async def _build_index(cache: KlineCache) -> None:
             for item in items:
                 key = f"{item['source']}:{item['symbol']}"
                 code = PROVIDER_CODES.get(item["source"], item["source"][:3].upper())
-                with ui.row().classes("watch-row w-full"):
+                with ui.row().classes("watch-row w-full") as watch_row_element:
                     ui.label(code).classes("watch-code").tooltip(item["source"])
                     ui.label(item["symbol"]).classes("watch-symbol").on(
                         "click", make_watch_click(key)
@@ -637,8 +638,21 @@ async def _build_index(cache: KlineCache) -> None:
                     ui.button(
                         icon="close", on_click=make_watch_remove(key)
                     ).props("flat dense size=sm").classes("watch-remove")
-                watch_rows[key] = {"price": price_label, "change": change_label}
+                watch_rows[key] = {"row": watch_row_element, "price": price_label, "change": change_label}
+        refresh_watchlist_active()
         await refresh_watchlist_prices()
+
+    def refresh_watchlist_active() -> None:
+        # Zvýrazní řádek aktuálně zobrazeného tickeru (jako v TradingView)
+        current = (state.get("provider_id"), state.get("symbol"))
+        for key, row in watch_rows.items():
+            provider_id, _, symbol = key.partition(":")
+            active = (provider_id, symbol) == current
+            element = row["row"]
+            element.classes(
+                add="watch-row-active" if active else "",
+                remove="" if active else "watch-row-active",
+            )
 
     async def initial_load() -> None:
         # Po inicializaci grafu obnovíme poslední symbol a výchozí režim kurzoru

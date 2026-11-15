@@ -380,6 +380,16 @@
   white-space: nowrap;
 }
 
+/* Zvýrazněný řádek aktuálně zobrazeného tickeru */
+.watch-row-active {
+  background: rgba(41, 98, 255, 0.15);
+}
+
+.watch-row-active .watch-symbol {
+  color: #2962ff;
+  font-weight: 600;
+}
+
 .watch-symbol {
   font-size: 12px;
   cursor: pointer;

@@ -112,7 +112,8 @@ Všechny systémy (Windows, macOS, Linux):
   OHLC, tužka (nástroj zůstává aktivní), zámek a skrytí kreseb; paleta barev
   nových kreseb; kresby se ukládají k symbolu a timeframe (přetrvávají restart).
   Watchlist
-  v levém panelu (přidat/odebrat, klik přepne graf, poslední cena a denní
+  v levém panelu (přidat/odebrat, klik přepne graf a řádek se zvýrazní jako
+  aktuální, poslední cena a denní
   změna – Binance živě po 5 s, Yahoo denní změna a Alpaca snapshots s obnovou
   po 60/5 s).
 - Do hotových funkcí patří i kreslení ve stylu TradingView (viz výše) —
