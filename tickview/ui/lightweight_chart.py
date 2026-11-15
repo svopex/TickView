@@ -84,11 +84,54 @@ class LightweightChart(ui.element):
             )
 
     async def set_drawing_mode(self, mode: str | None) -> None:
-        """Zapne/vypne kreslicí mód (hline/trend/rect/None)."""
+        """Zapne/vypne kreslicí mód (hline/trend/rect/brush/fib/text/measure/None)."""
         with self:
             ui.run_javascript(
                 f'window.TickViewChart.setDrawingMode("{self._js_id}", {json.dumps(mode)});'
             )
+
+    async def set_drawing_color(self, color: str) -> None:
+        """Nastaví barvu nových kreseb."""
+        with self:
+            ui.run_javascript(
+                f'window.TickViewChart.setDrawingColor("{self._js_id}", {json.dumps(color)});'
+            )
+
+    async def set_magnet(self, enabled: bool) -> None:
+        """Zapne/vypne magnet (přichytávání k OHLC svíček)."""
+        with self:
+            ui.run_javascript(
+                f'window.TickViewChart.setMagnet("{self._js_id}", {str(enabled).lower()});'
+            )
+
+    async def set_drawings_hidden(self, hidden: bool) -> None:
+        """Skryje/zobrazí všechny kresby."""
+        with self:
+            ui.run_javascript(
+                f'window.TickViewChart.setDrawingsHidden("{self._js_id}", {str(hidden).lower()});'
+            )
+
+    async def add_text(self, time_s: int, price: float, text: str) -> None:
+        """Přidá textovou kresbu (po potvrzení dialogu)."""
+        with self:
+            ui.run_javascript(
+                f'window.TickViewChart.addText("{self._js_id}", {int(time_s)}, {float(price)}, {json.dumps(text)});'
+            )
+
+    async def update_text(self, drawing_id: int, text: str) -> None:
+        """Aktualizuje text existující textové kresby."""
+        with self:
+            ui.run_javascript(
+                f'window.TickViewChart.updateText("{self._js_id}", {int(drawing_id)}, {json.dumps(text)});'
+            )
+
+    async def trash_drawings(self) -> int:
+        """Smaže označenou kresbu (nebo všechny) – vrací počet smazaných."""
+        with self:
+            removed = await ui.run_javascript(
+                f'return window.TickViewChart.trashDrawings("{self._js_id}");'
+            )
+        return int(removed or 0)
 
     async def set_drawings(self, drawings: list[dict]) -> None:
         """Nahradí zobrazené kresby (načtené z cache)."""

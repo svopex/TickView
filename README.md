@@ -127,10 +127,13 @@ Všechny systémy (Windows, macOS, Linux):
   pollingem a hlášením zavřeného trhu, indikátory SMA, EMA, Bollinger Bands,
   RSI a MACD (RSI/MACD ve vlastních panelech se synchronizovaným časem,
   nastavitelné parametry, mazání čipem), kreslení s lištou nástrojů ve stylu
-  TradingView: horizontální i svislá linie, trendová čára, polopřímka,
-  oboustranná přímka, obdélník, štětec, Fibonacci retracement (s popisky),
-  paleta barev nových kreseb, mazání kresby pravým klikem a smazání všeho;
-  kresby se ukládají k symbolu a timeframe (přetrvávají restart), watchlist
+  TradingView: kurzor s výběrem kreseb (klik = označit, tažení za úchopy nebo
+  za celou kresbu, Del/koš = smazat, pravý klik = smazat pod kurzorem),
+  horizontální i svislá linie, trendová čára, polopřímka, oboustranná přímka,
+  obdélník, štětec, Fibonacci retracement (s popisky), text s editací
+  dvojklikem, měřič (Δcena, %, počet barů), magnet na OHLC svíček a skrytí
+  kreseb (oko); paleta barev nových kreseb; kresby se ukládají k symbolu a
+  timeframe (přetrvávají restart), watchlist
   v levém panelu (přidat/odebrat, klik přepne graf, poslední cena a denní
   změna – Binance živě po 5 s, Yahoo denní změna a Alpaca snapshots s obnovou
   po 60/5 s).

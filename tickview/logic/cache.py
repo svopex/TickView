@@ -46,10 +46,11 @@ CREATE TABLE IF NOT EXISTS watchlist (
 );
 """
 
-# Migrace pro starší databáze: sloupec color v tabulce drawings (přidaný dodatečně,
-# CREATE TABLE IF NOT EXISTS ho do existující tabulky nepřidá)
-_COLOR_MIGRATION = """
+# Migrace pro starší databáze: sloupce color a text v tabulce drawings (přidané
+# dodatečně, CREATE TABLE IF NOT EXISTS je do existující tabulky nepřidá)
+_MIGRATIONS = """
 ALTER TABLE drawings ADD COLUMN color TEXT;
+ALTER TABLE drawings ADD COLUMN text TEXT;
 """
 
 
@@ -73,11 +74,15 @@ class KlineCache:
 
     def _migrate_sync(self) -> None:
         """Spustí migrace, které musí odolat už existujícímu schématu."""
-        try:
-            self._conn.executescript(_COLOR_MIGRATION)
-        except sqlite3.OperationalError:
-            # Sloupec color už existuje – migrace se přeskočí
-            pass
+        # Každý ALTER zvlášť – už existující sloupec nesmí přeskočit zbytek
+        for statement in _MIGRATIONS.strip().split(";"):
+            if not statement.strip():
+                continue
+            try:
+                self._conn.execute(statement)
+            except sqlite3.OperationalError:
+                # Sloupce už existují – migrace se přeskočí
+                pass
 
     async def load(
         self,
@@ -209,6 +214,7 @@ class KlineCache:
                 "kind": row[1],
                 "points": json.loads(row[2]),
                 "color": row[3],
+                "text": row[4],
             }
             for row in rows
         ]
@@ -216,7 +222,7 @@ class KlineCache:
     def _load_drawings_sync(self, source: str, symbol: str, timeframe: str):
         cur = self._conn.execute(
             """
-            SELECT id, kind, points, color FROM drawings
+            SELECT id, kind, points, color, text FROM drawings
             WHERE source = ? AND symbol = ? AND timeframe = ?
             ORDER BY id
             """,
@@ -232,11 +238,12 @@ class KlineCache:
         kind: str,
         points: list[dict],
         color: Optional[str] = None,
+        text: Optional[str] = None,
     ) -> None:
-        """Uloží jednu kresbu (typ + body + barva) k symbolu a timeframe."""
+        """Uloží jednu kresbu (typ + body + barva + volitelný text)."""
         async with self._lock:
             await asyncio.to_thread(
-                self._add_drawing_sync, source, symbol, timeframe, kind, points, color
+                self._add_drawing_sync, source, symbol, timeframe, kind, points, color, text
             )
 
     def _add_drawing_sync(
@@ -247,13 +254,47 @@ class KlineCache:
         kind: str,
         points: list[dict],
         color: Optional[str],
+        text: Optional[str],
     ) -> None:
         self._conn.execute(
             """
-            INSERT INTO drawings (source, symbol, timeframe, kind, points, color)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO drawings (source, symbol, timeframe, kind, points, color, text)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (source, symbol, timeframe, kind, json.dumps(points), color),
+            (source, symbol, timeframe, kind, json.dumps(points), color, text),
+        )
+        self._conn.commit()
+
+    async def update_drawing(
+        self,
+        source: str,
+        symbol: str,
+        timeframe: str,
+        drawing_id: int,
+        points: list[dict],
+        text: Optional[str] = None,
+    ) -> None:
+        """Aktualizuje body (a volitelně text) existující kresby po jejím tažení."""
+        async with self._lock:
+            await asyncio.to_thread(
+                self._update_drawing_sync, source, symbol, timeframe, drawing_id, points, text
+            )
+
+    def _update_drawing_sync(
+        self,
+        source: str,
+        symbol: str,
+        timeframe: str,
+        drawing_id: int,
+        points: list[dict],
+        text: Optional[str],
+    ) -> None:
+        self._conn.execute(
+            """
+            UPDATE drawings SET points = ?, text = ?
+            WHERE id = ? AND source = ? AND symbol = ? AND timeframe = ?
+            """,
+            (json.dumps(points), text, drawing_id, source, symbol, timeframe),
         )
         self._conn.commit()
 

@@ -18,7 +18,7 @@ DEFAULT_BARS = 600
 VISIBLE_BARS = 150
 
 # Verze statických souborů pro cache-busting v prohlížeči (při změně CSS/JS zvýšit)
-STATIC_VERSION = "0.3.0"
+STATIC_VERSION = "0.3.2"
 
 
 def register(cache: KlineCache) -> None:
@@ -290,14 +290,15 @@ async def _build_index(cache: KlineCache) -> None:
 
     # ---------- kreslení (krok 5 + lišta ve stylu TradingView) ----------
 
-    # Druhy kresby, které backend ukládá (cursor = režim bez kreslení)
-    DRAWING_KINDS = ["hline", "vline", "trend", "ray", "extended", "rect", "brush", "fib"]
+    # Druhy kresby, které backend ukládá (cursor/measure = režimy bez ukládání)
+    DRAWING_KINDS = ["hline", "vline", "trend", "ray", "extended", "rect", "brush", "fib", "text"]
     # Nástroje vertikální lišty ve skupinách: (id, tooltip, ikona)
     DRAWING_GROUPS = [
-        [("cursor", "Kurzor", "near_me")],
+        [("cursor", "Kurzor (výběr a tažení kreseb)", "near_me")],
         [("hline", "Horizontální linie", "horizontal_rule"), ("vline", "Svislá linie", "height")],
         [("trend", "Trendová čára", "show_chart"), ("ray", "Polopřímka", "trending_up"), ("extended", "Přímka (oboustranná)", "sync_alt")],
         [("rect", "Obdélník", "crop_square"), ("brush", "Štětec", "brush"), ("fib", "Fibonacci retracement", "align_vertical_center")],
+        [("text", "Text", "title"), ("measure", "Měřič (vzdálenost a %)", "straighten")],
     ]
     DRAWING_LABELS = {
         "hline": "Horizontální linie",
@@ -318,6 +319,56 @@ async def _build_index(cache: KlineCache) -> None:
         for kind, button in drawing_buttons.items():
             button.classes(add="drawing-btn-active" if kind == mode else "", remove="" if kind == mode else "drawing-btn-active")
         await chart.set_drawing_mode(None if mode in (None, "cursor") else mode)
+
+    async def set_drawing_color(color: str) -> None:
+        # Barva nových kreseb; aktivní paletu zvýrazníme
+        state["drawing_color"] = color
+        for hex_color, button in swatch_buttons.items():
+            button.classes(add="swatch-active" if hex_color == color else "", remove="" if hex_color == color else "swatch-active")
+        await chart.set_drawing_color(color)
+
+    async def set_magnet() -> None:
+        # Magnet: přichytávání nových bodů k OHLC nejbližší svíčky
+        state["magnet"] = not state.get("magnet", False)
+        magnet_button.classes(add="drawing-btn-active" if state["magnet"] else "", remove="" if state["magnet"] else "drawing-btn-active")
+        await chart.set_magnet(state["magnet"])
+        show_status(f"Magnet {'zapnut' if state['magnet'] else 'vypnut'}.")
+
+    async def toggle_hide_drawings() -> None:
+        # Skrytí/zobrazení všech kreseb (ikona oka)
+        state["hidden"] = not state.get("hidden", False)
+        hide_button.props(f'icon={"visibility_off" if state["hidden"] else "visibility"}')
+        hide_button.classes(add="drawing-btn-active" if state["hidden"] else "", remove="" if state["hidden"] else "drawing-btn-active")
+        await chart.set_drawings_hidden(state["hidden"])
+
+    async def trash_drawings() -> None:
+        # Koš: smaže označenou kresbu, jinak všechny
+        removed = await chart.trash_drawings()
+        if removed:
+            await reload_drawings()
+            show_status(f"Smazáno kreseb: {removed}.")
+
+    # ---------- textové kresby ----------
+
+    async def open_text_dialog(time_s: int, price: float, edit_id=None, current: str = "") -> None:
+        # Dialog pro vložení/editaci textu na plátně (anchora v čase a ceně)
+        state["text_pending"] = {"time": int(time_s), "price": float(price), "edit_id": edit_id}
+        text_input.value = current
+        text_dialog.open()
+
+    async def save_text() -> None:
+        pending = state.get("text_pending")
+        value = (text_input.value or "").strip()
+        text_dialog.close()
+        if not pending or not value:
+            return
+        if pending["edit_id"]:
+            await chart.update_text(int(pending["edit_id"]), value)
+            show_status("Text upraven.")
+        else:
+            await chart.add_text(pending["time"], pending["price"], value)
+            show_status("Text přidán a uložen.")
+        state["text_pending"] = None
 
     async def reload_drawings() -> None:
         """Načte kresby pro aktuální symbol z cache a pošle je do grafu."""
@@ -350,13 +401,34 @@ async def _build_index(cache: KlineCache) -> None:
                     await cache.delete_drawing(provider_id, symbol, timeframe, int(drawing_id))
                     changed = True
                     show_status("Kresba smazána.")
+            elif payload.get("type") == "update":
+                drawing_id = payload.get("id")
+                if drawing_id:
+                    points = [
+                        {"time": int(p["time"]), "price": float(p["price"])}
+                        for p in (payload.get("points") or [])
+                    ]
+                    await cache.update_drawing(
+                        provider_id, symbol, timeframe, int(drawing_id), points, payload.get("text")
+                    )
+                    changed = True
+            elif payload.get("type") == "text_request":
+                await open_text_dialog(payload.get("time"), payload.get("price"))
+            elif payload.get("type") == "text_edit":
+                await open_text_dialog(0, 0.0, edit_id=payload.get("id"), current=payload.get("text") or "")
             elif payload.get("type") == "add" and payload.get("kind") in DRAWING_KINDS:
                 points = [
                     {"time": int(p["time"]), "price": float(p["price"])}
                     for p in (payload.get("points") or [])
                 ]
                 await cache.add_drawing(
-                    provider_id, symbol, timeframe, payload["kind"], points, payload.get("color")
+                    provider_id,
+                    symbol,
+                    timeframe,
+                    payload["kind"],
+                    points,
+                    payload.get("color"),
+                    payload.get("text"),
                 )
                 changed = True
                 show_status(
@@ -609,11 +681,33 @@ async def _build_index(cache: KlineCache) -> None:
                                 .tooltip("Barva nových kreseb")
                             )
                         ui.separator().props("vertical").classes("toolbar-sep")
-                        ui.button(icon="delete_sweep", on_click=clear_drawings).props(
+                        magnet_button = (
+                            ui.button(icon="push_pin", on_click=set_magnet)
+                            .props("flat dense")
+                            .classes("drawing-btn")
+                            .tooltip("Magnet (přichytávání k OHLC)")
+                        )
+                        hide_button = (
+                            ui.button(icon="visibility", on_click=toggle_hide_drawings)
+                            .props("flat dense")
+                            .classes("drawing-btn")
+                            .tooltip("Skrýt/zobrazit kresby")
+                        )
+                        ui.separator().props("vertical").classes("toolbar-sep")
+                        ui.button(icon="delete_sweep", on_click=trash_drawings).props(
                             "flat dense"
-                        ).classes("drawing-btn").tooltip("Smazat všechny kresby")
+                        ).classes("drawing-btn").tooltip("Smazat označenou / všechny kresby")
                     chart = LightweightChart(dark=dark, on_ready=initial_load)
                 status_label = ui.label("").classes("statusbar w-full")
+
+    # Dialog pro textové kresby (textový nástroj + dvojklik na existující text)
+    with ui.dialog() as text_dialog, ui.card().classes("settings-dialog"):
+        with ui.column().classes("indicator-dialog-body"):
+            ui.label("Text na graf").classes("settings-note")
+            text_input = ui.input("Text").props("outlined dense autofocus")
+            with ui.row().classes("dialog-actions"):
+                ui.button("Uložit", on_click=save_text).props("unelevated")
+                ui.button("Zrušit", on_click=text_dialog.close).props("flat")
 
     # Dialog pro přidání indikátoru; pole parametrů se přestavují podle typu
     dialog_state = {"kind": "sma"}
