@@ -127,7 +127,9 @@ Všechny systémy (Windows, macOS, Linux):
   RSI a MACD (RSI/MACD ve vlastních panelech se synchronizovaným časem,
   nastavitelné parametry, mazání čipem), kreslení horizontální linie,
   trendové čáry a obdélníku s ukládáním k symbolu a timeframe (přetrvává
-  restart, mazání tlačítkem), watchlist v levém panelu (přidat/odebrat,
+  restart, mazání tlačítkem), kreslicí lišta ve stylu TradingView (kurzor,
+  horizontální i svislá linie, trendová čára, polopřímka, přímka, obdélník,
+  mazání všeho), watchlist v levém panelu (přidat/odebrat,
   klik přepne graf, poslední cena a denní změna – Binance živě po 5 s,
   Yahoo denní změna s obnovou po 60 s).
 - Připravuje se: kreslení ve stylu TradingView (vertikální lišta nástrojů),

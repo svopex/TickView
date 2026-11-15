@@ -18,7 +18,7 @@ DEFAULT_BARS = 600
 VISIBLE_BARS = 150
 
 # Verze statických souborů pro cache-busting v prohlížeči (při změně CSS/JS zvýšit)
-STATIC_VERSION = "0.2.3"
+STATIC_VERSION = "0.2.6"
 
 
 def register(cache: KlineCache) -> None:
@@ -224,17 +224,35 @@ async def _build_index(cache: KlineCache) -> None:
         await chart.set_theme(value)
         await cache.set_setting("theme", "dark" if value else "light")
 
-    # ---------- kreslení (krok 5) ----------
+    # ---------- kreslení (krok 5 + lišta ve stylu TradingView) ----------
 
-    DRAWING_KINDS = ["hline", "trend", "rect"]
-    DRAWING_LABELS = {"hline": "Horizontální linie", "trend": "Trendová čára", "rect": "Obdélník"}
+    # Druhy kresby, které backend ukládá (cursor = režim bez kreslení)
+    DRAWING_KINDS = ["hline", "vline", "trend", "ray", "extended", "rect"]
+    # Nástroje vertikální lišty: (id, tooltip, ikona)
+    DRAWING_TOOLS = [
+        ("cursor", "Kurzor", "near_me"),
+        ("hline", "Horizontální linie", "horizontal_rule"),
+        ("vline", "Svislá linie", "height"),
+        ("trend", "Trendová čára", "show_chart"),
+        ("ray", "Polopřímka", "trending_up"),
+        ("extended", "Přímka (oboustranná)", "sync_alt"),
+        ("rect", "Obdélník", "crop_square"),
+    ]
+    DRAWING_LABELS = {
+        "hline": "Horizontální linie",
+        "vline": "Svislá linie",
+        "trend": "Trendová čára",
+        "ray": "Polopřímka",
+        "extended": "Přímka",
+        "rect": "Obdélník",
+    }
 
     async def set_drawing_mode(mode: str | None) -> None:
-        # Aktivní nástroj zvýrazníme a přepneme mód v grafu
+        # Aktivní nástroj zvýrazníme; cursor = režim bez kreslení (JS mode null)
         state["drawing_mode"] = mode
         for kind, button in drawing_buttons.items():
             button.classes(add="drawing-btn-active" if kind == mode else "", remove="" if kind == mode else "drawing-btn-active")
-        await chart.set_drawing_mode(mode)
+        await chart.set_drawing_mode(None if mode in (None, "cursor") else mode)
 
     async def reload_drawings() -> None:
         """Načte kresby pro aktuální symbol z cache a pošle je do grafu."""
@@ -490,20 +508,20 @@ async def _build_index(cache: KlineCache) -> None:
                 watchlist_body = ui.column().classes("watchlist-body w-full")
             with ui.column().classes("content-col"):
                 indicator_bar = ui.row().classes("indicator-bar w-full hidden")
-                with ui.row().classes("drawing-bar w-full"):
-                    ui.label("Kreslení:").classes("indicator-label")
-                    drawing_buttons = {}
-                    for kind in DRAWING_KINDS:
-                        icon = {"hline": "horizontal_rule", "trend": "show_chart", "rect": "crop_square"}[kind]
-                        drawing_buttons[kind] = (
-                            ui.button(DRAWING_LABELS[kind], icon=icon, on_click=make_mode_handler(kind))
-                            .props("flat dense size=sm")
-                            .classes("drawing-btn")
-                        )
-                    ui.button("Smazat kresby", icon="delete_sweep", on_click=clear_drawings).props(
-                        "flat dense size=sm"
-                    ).classes("drawing-btn")
-                chart = LightweightChart(dark=dark, on_ready=initial_load)
+                with ui.row().classes("chart-area w-full"):
+                    with ui.column().classes("drawing-toolbar"):
+                        drawing_buttons = {}
+                        for kind, tooltip, icon in DRAWING_TOOLS:
+                            drawing_buttons[kind] = (
+                                ui.button(icon=icon, on_click=make_mode_handler(kind))
+                                .props("flat dense size=sm")
+                                .classes("drawing-btn")
+                                .tooltip(tooltip)
+                            )
+                        ui.button(icon="delete_sweep", on_click=clear_drawings).props(
+                            "flat dense size=sm"
+                        ).classes("drawing-btn").tooltip("Smazat všechny kresby")
+                    chart = LightweightChart(dark=dark, on_ready=initial_load)
                 status_label = ui.label("").classes("statusbar w-full")
 
     # Dialog pro přidání indikátoru; pole parametrů se přestavují podle typu

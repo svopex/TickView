@@ -165,15 +165,17 @@ VÝSTUP
   zahazují. Barvy z cyklické palety. UI: dialog s parametry (přestavuje pole
   dle typu), aktivní indikátory jako čipy s odstraněním, přepočet po každém
   načtení dat.
-- Kreslení (krok 5): překryvný canvas nad hlavním grafem; převody px↔(čas,cena)
-  přes timeScale.coordinateToTime / series.coordinateToPrice a zpět;
-  horizontální linie 1 klik, trend a obdélník 2 kliky, preview sleduje kurzor,
-  Esc ruší. Body kresby se ukládají jako JSON do tabulky drawings
-  (source+symbol+timeframe). JS→Python kanál: stránkový timer 0,5 s vyzvedává
-  frontu hotových kreseb přes popFinishedDrawing (DOM CustomEvent z Vue
-  komponenty do NiceGUI neprojde spolehlivě; fronta zvládne více kreseb mezi
-  ticky). Kontejner grafu se hledá přes data-chart-id atribut – vlastní id
-  prvku necháváme NiceGUI (přepis id rozbil event binding).
+- Kreslení (krok 5 + lišta ve stylu TradingView): vertikální lišta nástrojů
+  vlevo od grafu (kurzor, horizontální/svislá linie, trendová čára, polopřímka,
+  přímka, obdélník, koš). Převody px↔(čas,cena) přes timeScale.coordinateToTime
+  / series.coordinateToPrice; kreslí se jen do plochy grafu (clip vůči pane
+  canvas, kliky v pásu os se ignorují). hline/vline = 1 klik, ostatní 2 kliky,
+  preview sleduje kurzor, Esc ruší. Body kresby se ukládají jako JSON do
+  tabulky drawings (source+symbol+timeframe). JS→Python kanál: stránkový timer
+  0,5 s vyzvedává frontu hotových kreseb přes popFinishedDrawing (DOM
+  CustomEvent z Vue komponenty do NiceGUI neprojde spolehlivě; fronta zvládne
+  více kreseb mezi ticky). Kontejner grafu se hledá přes data-chart-id atribut –
+  vlastní id prvku necháváme NiceGUI (přepis id rozbil event binding).
 - Watchlist (krok 6): tabulka watchlist (source+symbol, unique) v SQLite;
   UI levý panel, přidání aktuálního symbolu tlačítkem, odebrání ×, klik na
   řádek přepne graf. Ceny: Binance /ticker/24hr batch dotaz (json pole bez

@@ -195,14 +195,24 @@
   gap: 10px !important;
 }
 
-/* Lišta kreslicích nástrojů */
-.drawing-bar {
+/* Oblast grafu: vertikální lišta nástrojů (styl TradingView) + graf */
+.chart-area {
+  flex: 1 1 auto;
   min-height: 0;
-  padding: 2px 12px;
-  gap: 6px !important;
+  gap: 0 !important;
+  align-items: stretch;
+  flex-wrap: nowrap;
+}
+
+/* Vertikální lišta kreslicích nástrojů vlevo od grafu */
+.drawing-toolbar {
+  width: 42px;
+  min-width: 42px;
+  padding: 4px 2px;
+  gap: 2px !important;
   align-items: center;
-  flex-wrap: wrap;
-  border-bottom: 1px solid rgba(128, 128, 128, 0.25);
+  border-right: 1px solid rgba(128, 128, 128, 0.25);
+  overflow-y: auto;
 }
 
 .drawing-btn-active {

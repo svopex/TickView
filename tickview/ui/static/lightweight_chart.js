@@ -147,6 +147,7 @@ window.TickViewChart = (function () {
         drawings: [],
       },
       elementId: id,
+      paneCanvas: null,
       themeName,
       candles: [],
       byTime: new Map(),
@@ -183,6 +184,16 @@ window.TickViewChart = (function () {
     overlay.addEventListener('click', (event) => {
       s.lastClick = null;
       if (!s.overlay.mode) return;
+      // Kliky mimo cenovou plochu (pravá osa, spodní časová osa) ignorujeme
+      const pane = s.paneCanvas.getBoundingClientRect();
+      if (
+        event.clientX < pane.left ||
+        event.clientX > pane.right ||
+        event.clientY < pane.top ||
+        event.clientY > pane.bottom
+      ) {
+        return;
+      }
       const rect = overlay.getBoundingClientRect();
       const x = event.clientX - rect.left;
       const y = event.clientY - rect.top;
@@ -214,11 +225,11 @@ window.TickViewChart = (function () {
     renderLegend(s, null);
   }
 
-  // Zpracuje klik při aktivním kreslení; horizontální linie stačí jedním klikem
+  // Zpracuje klik při aktivním kreslení; hline a vline stačí jedním klikem
   function handleDrawingClick(s, point) {
     const kind = s.overlay.mode;
-    if (kind === 'hline') {
-      finishDrawing(s, { kind: 'hline', points: [point] });
+    if (kind === 'hline' || kind === 'vline') {
+      finishDrawing(s, { kind: kind, points: [point] });
       return;
     }
     if (!s.overlay.pending) {
@@ -264,11 +275,27 @@ window.TickViewChart = (function () {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, height);
 
+    // Kresby kreslíme jen do plochy grafu (bez pásu cenové a časové osy);
+    // souřadnice z LWC API jsou relativní k plátnu grafu, overlay je na stejném místě
+    s.paneCanvas = s.paneCanvas || s.mainHost.querySelector('canvas');
+    const paneRect = s.paneCanvas ? s.paneCanvas.getBoundingClientRect() : null;
+    const hostRect = canvas.getBoundingClientRect();
+    const offsetX = paneRect ? paneRect.left - hostRect.left : 0;
+    const offsetY = paneRect ? paneRect.top - hostRect.top : 0;
+    const paneWidth = paneRect ? paneRect.width : width;
+    const paneHeight = paneRect ? paneRect.height : height;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(offsetX, offsetY, paneWidth, paneHeight);
+    ctx.clip();
+    ctx.translate(offsetX, offsetY);
     const all = [...s.overlay.drawings];
     if (s.overlay.pending) all.push({ ...s.overlay.pending, preview: true });
     for (const drawing of all) {
-      drawShape(ctx, s, drawing, width, height);
+      drawShape(ctx, s, drawing, paneWidth, paneHeight);
     }
+    ctx.restore();
   }
 
   // Nakreslí jednu kresbu; preview = rozepsaná kresba sledující kurzor
@@ -303,6 +330,15 @@ window.TickViewChart = (function () {
       ctx.stroke();
       return;
     }
+    if (drawing.kind === 'vline') {
+      const x = timeScale.timeToCoordinate(points[0].time);
+      if (x === null) return;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, height);
+      ctx.stroke();
+      return;
+    }
     if (points.length < 2) return;
     const p1 = toPixel(points[0]);
     const p2 = toPixel(points[1]);
@@ -318,6 +354,24 @@ window.TickViewChart = (function () {
         ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
         ctx.stroke();
       }
+      return;
+    }
+    if (drawing.kind === 'ray' || drawing.kind === 'extended') {
+      // Směrový vektor; prodloužíme na okraj canvasu (ray jen za druhý bod)
+      const dx = p2.x - p1.x;
+      const dy = p2.y - p1.y;
+      const ts = [];
+      if (dx !== 0) ts.push((0 - p1.x) / dx, (width - p1.x) / dx);
+      if (dy !== 0) ts.push((0 - p1.y) / dy, (height - p1.y) / dy);
+      if (!ts.length) return;
+      const positive = ts.filter((t) => t >= 0);
+      const negative = ts.filter((t) => t <= 0);
+      const tEnd = Math.min(...(positive.length ? positive : [0]));
+      const tStart = drawing.kind === 'extended' ? Math.max(...(negative.length ? negative : [0])) : 0;
+      ctx.beginPath();
+      ctx.moveTo(p1.x + tStart * dx, p1.y + tStart * dy);
+      ctx.lineTo(p1.x + tEnd * dx, p1.y + tEnd * dy);
+      ctx.stroke();
       return;
     }
     if (drawing.kind === 'rect') {
@@ -564,6 +618,15 @@ window.TickViewChart = (function () {
     };
   }
 
+  // Diagnostika: přístup k internímu stavu grafu (jen pro testy)
+  function _chart(id) {
+    return state.get(id)?.chart || null;
+  }
+
+  function _series(id) {
+    return state.get(id)?.candleSeries || null;
+  }
+
   return {
     init: init,
     setCandles: setCandles,
@@ -575,5 +638,7 @@ window.TickViewChart = (function () {
     setDrawings: setDrawings,
     popFinishedDrawing: popFinishedDrawing,
     debugState: debugState,
+    _chart: _chart,
+    _series: _series,
   };
 })();
