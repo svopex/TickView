@@ -119,9 +119,10 @@ Všechny systémy (Windows, macOS, Linux):
 
 - Hotovo: vyhledání symbolů Binance, statické svíčkové grafy + objem,
   timeframy 1m/5m/15m/1h/4h/1D/1W, tmavý a světlý motiv, crosshair s OHLC
-  legendou, cache historie v SQLite, ukládání posledního symbolu/timeframu/motivu.
-- Připravuje se (kroky 2–7): živá data websocketem, Yahoo Finance, indikátory,
-  kreslení, watchlist, Alpaca.
+  legendou, cache historie v SQLite, ukládání posledního symbolu/timeframu/motivu,
+  živé svíčky Binance přes websocket (inkrementální update grafu, automatické
+  znovupřipojení, štítek „živě / zpožděno“).
+- Připravuje se (kroky 3–7): Yahoo Finance, indikátory, kreslení, watchlist, Alpaca.
 
 ## Struktura projektu
 

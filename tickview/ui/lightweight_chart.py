@@ -28,9 +28,11 @@ class LightweightChart(ui.element):
         ui.timer(0.1, self._init_in_browser, once=True)
 
     async def _init_in_browser(self) -> None:
-        ui.run_javascript(
-            f'window.TickViewChart.init("{self._js_id}", {{ dark: {str(self._dark).lower()} }});'
-        )
+        # Background volání z venčí (bez slotu) vstupují do kontextu tohoto prvku
+        with self:
+            ui.run_javascript(
+                f'window.TickViewChart.init("{self._js_id}", {{ dark: {str(self._dark).lower()} }});'
+            )
         if self._on_ready:
             await self._on_ready()
 
@@ -49,17 +51,20 @@ class LightweightChart(ui.element):
     async def set_candles(self, candles: list[Candle], visible_bars: int = 150) -> None:
         """Nahradí celý dataset grafu (načtení historie)."""
         payload = json.dumps([self._candle_payload(candle) for candle in candles])
-        ui.run_javascript(
-            f'window.TickViewChart.setCandles("{self._js_id}", {payload},'
-            f" {{ visibleBars: {visible_bars} }});"
-        )
+        with self:
+            ui.run_javascript(
+                f'window.TickViewChart.setCandles("{self._js_id}", {payload},'
+                f" {{ visibleBars: {visible_bars} }});"
+            )
 
     async def update_candle(self, candle: Candle) -> None:
         """Inkrementální doplnění/aktualizace poslední svíčky (živá data)."""
         payload = json.dumps(self._candle_payload(candle))
-        ui.run_javascript(f'window.TickViewChart.updateCandle("{self._js_id}", {payload});')
+        with self:
+            ui.run_javascript(f'window.TickViewChart.updateCandle("{self._js_id}", {payload});')
 
     async def set_theme(self, dark: bool) -> None:
         """Přepne motiv grafu v prohlížeči."""
         self._dark = dark
-        ui.run_javascript(f'window.TickViewChart.setTheme("{self._js_id}", {str(dark).lower()});')
+        with self:
+            ui.run_javascript(f'window.TickViewChart.setTheme("{self._js_id}", {str(dark).lower()});')

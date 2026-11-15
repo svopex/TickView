@@ -66,7 +66,7 @@ VÝSTUP
 ## Stav kroků
 
 1. Kostra projektu + Binance + statický graf – hotovo (commit „Krok 1“)
-2. Živá data (websocket) – čeká
+2. Živá data (websocket) – hotovo (commit „Krok 2“)
 3. yfinance – čeká
 4. Indikátory – čeká
 5. Kreslení – čeká
@@ -79,11 +79,10 @@ VÝSTUP
 
 ## Další krok
 
-- Krok 2 (živá data): v binance.py doplnit stream() přes websocket
-  wss://stream.binance.com:9443/ws/<symbol>@kline_<interval> s automatickým
-  znovupřipojením; v main_window spouštět stream pro zvolený symbol/timeframe,
-  svíčky posílat do grafu inkrementálně (chart.update_candle → series.update),
-  uzavřené svíčky ukládat do cache; štítek „živě / zpožděno“ u zdroje.
+- Krok 3 (yfinance): nový modul tickview/providers/yahoo.py (DataProvider přes
+  yfinance, search přes Yahoo search API, historie přes yf.download v
+  asyncio.to_thread), živá aktualizace pollingem v intervalu, štítek
+  „zpožděno“ a ošetření zavřeného trhu; registrace v providers/__init__.py.
 
 ## Jak spustit
 
@@ -136,6 +135,16 @@ VÝSTUP
 - SQLite spojení: check_same_thread=False + asyncio.Lock (operace v to_thread),
   takže nikdy neblokuje UI smyčku.
 - Vyhledávání Binance: řazení – nejdřív prefix, páry na USDT před ostatními.
+- Živý stream (krok 2): BinanceProvider.stream() je async generátor nad
+  websockets s exponenciálním znovupřipojováním (1→30 s); UI drží asyncio.Task
+  na klienta, ruší ho při přepnutí symbolu/timeframu i při odpojení klienta
+  (context.client.on_disconnect).
+- Uzavřené svíčky do cache se poznají bez příznaku: open_time + step_ms <= now;
+  rozepsaná svíčka se do cache neukládá, aby ji příští fetch z cache neposkytl
+  jako hotovou historii.
+- UI operace volané z background tasků (stream) musí vstupovat do slotu prvku
+  („with element:“) – jinak NiceGUI vyhodí chybu slot stacku a zpráva se
+  nepošle do prohlížeče.
 - NiceGUI: handlery on_value_change volané s event objektem – pokud handler má
   poziciální parametr, dostane event; bool hodnoty bereme přes lambda
   (event.value), jinak selže serializace zprávy do prohlížeče.

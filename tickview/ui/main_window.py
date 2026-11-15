@@ -1,6 +1,8 @@
-"""Hlavní stránka TickView: vyhledání symbolu, timeframy, graf, stavová lišta."""
+"""Hlavní stránka TickView: vyhledání symbolu, timeframy, graf, živý stream."""
 
-from nicegui import ui
+import asyncio
+
+from nicegui import context, ui
 
 from tickview.logic.cache import KlineCache, fetch_history
 from tickview.providers import PROVIDERS, get_provider
@@ -46,13 +48,17 @@ async def _build_index(cache: KlineCache) -> None:
         "symbol": None,
         "timeframe": last_timeframe,
         "load_seq": 0,
+        "stream_task": None,
+        "badge_live": None,
     }
 
     # ---------- handlery (uzávěry nad elementy vytvořenými níže) ----------
 
     def show_status(message: str, error: bool = False) -> None:
-        status_label.text = message
-        status_label.classes(add="error" if error else "", remove="" if error else "error")
+        # Z background tasků (živý stream) musíme vstoupit do slotu prvku
+        with status_label:
+            status_label.text = message
+            status_label.classes(add="error" if error else "", remove="" if error else "error")
 
     async def search_symbols() -> None:
         # Vyhledání napříč zdroji; výpadek jednoho zdroje nesmí shodit UI
@@ -94,8 +100,7 @@ async def _build_index(cache: KlineCache) -> None:
         timeframe_toggle.options = timeframes
         timeframe_toggle.value = state["timeframe"]
         timeframe_toggle.update()
-        source_badge.text = f"{provider.name} · zpožděno"
-        source_badge.update()
+        set_badge(None)
         await cache.set_setting("last_symbol", f"{provider_id}:{symbol}")
         await reload_chart()
 
@@ -106,6 +111,64 @@ async def _build_index(cache: KlineCache) -> None:
         await cache.set_setting("last_timeframe", str(value))
         await reload_chart()
 
+    def set_badge(live: bool | None) -> None:
+        """Aktualizuje štítek zdroje jen při změně stavu (živě / zpožděno / —)."""
+        if state["badge_live"] == live:
+            return
+        state["badge_live"] = live
+        provider = state.get("provider")
+        name = provider.name if provider else "—"
+        if live is None:
+            text = "—"
+        elif live:
+            text = f"{name} · živě"
+        else:
+            text = f"{name} · zpožděno"
+        # Z background tasků (živý stream) musíme vstoupit do slotu prvku
+        with source_badge:
+            source_badge.text = text
+            source_badge.update()
+
+    async def consume_stream(provider, symbol: str, timeframe: str, seq: int) -> None:
+        """Konzumuje živý stream zdroje a doplňuje svíčky do grafu a cache."""
+        step_ms = TIMEFRAME_MS[timeframe]
+        try:
+            async for candle in provider.stream(symbol, timeframe):
+                if seq != state["load_seq"]:
+                    # Mezitím se přepnulo zobrazení – stream ukončíme
+                    return
+                set_badge(True)
+                await chart.update_candle(candle)
+                # Do cache ukládáme jen uzavřené svíčky (uplynulé období);
+                # rozepsanou svíčku vrátí příště historie ze sítě v plné podobě
+                if candle.open_time + step_ms <= utc_now_ms():
+                    await cache.store(provider.id, symbol, timeframe, [candle])
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if seq == state["load_seq"]:
+                set_badge(False)
+                show_status(f"Živý stream přerušen, čekám na znovupřipojení: {exc}", error=True)
+
+    def cancel_stream() -> None:
+        task = state.get("stream_task")
+        if task and not task.done():
+            task.cancel()
+        state["stream_task"] = None
+
+    def start_stream() -> None:
+        # Předchozí stream zrušíme (přepnutí symbolu/timeframu/klienta)
+        cancel_stream()
+        provider = state.get("provider")
+        if provider is None or not provider.supports_stream:
+            set_badge(False)
+            return
+        state["stream_task"] = asyncio.create_task(
+            consume_stream(
+                provider, state["symbol"], state["timeframe"], state["load_seq"]
+            )
+        )
+
     async def reload_chart() -> None:
         provider = state.get("provider")
         symbol = state.get("symbol")
@@ -114,6 +177,8 @@ async def _build_index(cache: KlineCache) -> None:
             return
         state["load_seq"] += 1
         seq = state["load_seq"]
+        cancel_stream()
+        set_badge(False)
         show_status(f"Načítám {symbol} ({timeframe})…")
         try:
             end_ms = utc_now_ms()
@@ -127,8 +192,10 @@ async def _build_index(cache: KlineCache) -> None:
                 return
             await chart.set_candles(candles, visible_bars=VISIBLE_BARS)
             show_status(
-                f"{symbol} · {timeframe} · {len(candles)} svíček · zdroj {provider.name} (zpožděno)"
+                f"{symbol} · {timeframe} · {len(candles)} svíček · zdroj {provider.name}"
             )
+            # Historie načtena → spustíme živý stream pro aktuální zobrazení
+            start_stream()
         except Exception as exc:
             show_status(f"Načtení dat selhalo: {exc}", error=True)
 
@@ -161,3 +228,6 @@ async def _build_index(cache: KlineCache) -> None:
     symbol_select.on_value_change(lambda event: load_symbol(event.value))
     timeframe_toggle.on_value_change(lambda event: set_timeframe(event.value))
     theme_switch.on_value_change(lambda event: toggle_theme(bool(event.value)))
+
+    # Při odpojení klienta ukončíme jeho živý stream, aby nezůstal běžet
+    context.client.on_disconnect(cancel_stream)

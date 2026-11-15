@@ -1,20 +1,25 @@
-"""Datový zdroj Binance (spot): veřejné REST API bez klíče."""
+"""Datový zdroj Binance (spot): veřejné REST API bez klíče, živá data websocketem."""
 
 import asyncio
+import json
 import time as time_module
-from typing import Any, Optional
+from typing import Any, AsyncIterator, Optional
 
 import httpx
+import websockets
 
 from tickview.providers.base import Candle, DataProvider, SymbolInfo, TIMEFRAME_MS
 
 REST_BASE_URL = "https://api.binance.com"
+WS_BASE_URL = "wss://stream.binance.com:9443/ws"
 # Seznam symbolů se nemění často; stačí ho načítat jednou za den
 EXCHANGE_INFO_TTL_S = 24 * 3600
 # Maximální počet svíček na jeden REST dotaz (limit Binance)
 KLINES_PAGE_LIMIT = 1000
 # Pojistka proti nekonečnému stahování při velkých mezerách v datech
 MAX_KLINES_PAGES = 100
+# Horní mez čekání mezi pokusy o znovupřipojení websocketu
+WS_MAX_BACKOFF_S = 30.0
 
 
 class RateLimiter:
@@ -187,3 +192,40 @@ class BinanceProvider(DataProvider):
                 break
             cursor = last_open + step_ms
         return candles
+
+    async def stream(self, symbol: str, timeframe: str) -> AsyncIterator[Candle]:
+        """Živé svíčky přes websocket kline stream s automatickým znovupřipojením.
+
+        Po výpadku spojení čeká exponenciálně (1→30 s) a napojuje se znovu;
+        generátor běží, dokud ho konzument nezruší (CancelledError).
+        """
+        interval = self.timeframes[timeframe]
+        url = f"{WS_BASE_URL}/{symbol.lower()}@kline_{interval}"
+        backoff = 1.0
+        while True:
+            try:
+                async with websockets.connect(url) as ws:
+                    backoff = 1.0
+                    async for raw in ws:
+                        message = json.loads(raw)
+                        # Zajímají nás jen kline eventy; ostatní zprávy ignorujeme
+                        if message.get("e") != "kline":
+                            continue
+                        k = message["k"]
+                        yield Candle(
+                            open_time=int(k["t"]),
+                            open=float(k["o"]),
+                            high=float(k["h"]),
+                            low=float(k["l"]),
+                            close=float(k["c"]),
+                            volume=float(k["v"]),
+                        )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # Výpadek spojení: exponenciální čekání a znovupřipojení
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, WS_MAX_BACKOFF_S)
+            else:
+                # Čisté uzavření spojení serverem: krátká pauza a znovu
+                await asyncio.sleep(0.5)
