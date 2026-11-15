@@ -116,12 +116,12 @@ class AlpacaProvider(DataProvider):
             params={"status": "active", "asset_class": "us_equity"},
         )
         # Popisek: symbol – název (burza); třídíme podle symbolu
-        self._assets = sorted(
+        self._symbols = sorted(
             (
                 SymbolInfo(
                     provider_id=self.id,
                     symbol=item["symbol"],
-                    label=f"{item['symbol']} – {item.get('name') or '?'} ({item.get('exchange', '?')})",
+                    label=f"{item['symbol']} – {item.get('name') or '?'}",
                 )
                 for item in data
                 if item.get("tradable", True) and item.get("symbol")

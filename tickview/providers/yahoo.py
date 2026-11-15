@@ -97,8 +97,7 @@ class YahooProvider(DataProvider):
             SymbolInfo(
                 provider_id=self.id,
                 symbol=item["symbol"],
-                label=f"{item['symbol']} – {item.get('shortname') or item.get('longname') or '?'}"
-                f" ({item.get('exchange', '?')})",
+                label=f"{item['symbol']} – {item.get('shortname') or item.get('longname') or '?'}",
             )
             for item in quotes
             if item.get("quoteType") in SEARCH_QUOTE_TYPES and item.get("symbol")

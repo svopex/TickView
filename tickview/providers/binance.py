@@ -93,7 +93,7 @@ class BinanceProvider(DataProvider):
             SymbolInfo(
                 provider_id=self.id,
                 symbol=s["symbol"],
-                label=f"{s['symbol']} ({s['quoteAsset']})",
+                label=s["symbol"],
             )
             for s in data["symbols"]
             if s.get("status") == "TRADING"

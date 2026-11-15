@@ -59,6 +59,7 @@
   z-index: 60;
   max-height: 320px;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 4px;
   gap: 2px !important;
   background: #ffffff;

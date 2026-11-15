@@ -18,7 +18,7 @@ DEFAULT_BARS = 600
 VISIBLE_BARS = 150
 
 # Verze statických souborů pro cache-busting v prohlížeči (při změně CSS/JS zvýšit)
-STATIC_VERSION = "0.4.2"
+STATIC_VERSION = "0.4.3"
 
 
 def register(cache: KlineCache) -> None:
@@ -81,7 +81,7 @@ async def _build_index(cache: KlineCache) -> None:
             except Exception as exc:
                 show_status(f"Zdroj {provider.name} není dostupný: {exc}", error=True)
                 continue
-            for symbol_info in found[:10]:
+            for symbol_info in found[:6]:
                 key = f"{symbol_info.provider_id}:{symbol_info.symbol}"
                 results.append(
                     {
@@ -90,8 +90,7 @@ async def _build_index(cache: KlineCache) -> None:
                         "symbol": symbol_info.symbol,
                     }
                 )
-        # Přesná shoda symbolu má přednost před prefixem (MSFT před MSFTBUSDT);
-        # řazení je stabilní, takže se zachová pořadí zdrojů uvnitř skupin
+        # Přesná shoda > prefix > výskyt; celkový počet návrhů omezíme na 12
         upper = query.upper()
 
         def relevance(result: dict) -> int:
@@ -103,7 +102,7 @@ async def _build_index(cache: KlineCache) -> None:
             return 2
 
         results.sort(key=relevance)
-        state["suggestions"] = results
+        state["suggestions"] = results[:12]
         render_suggestions()
 
     def hide_suggestions() -> None:
@@ -124,8 +123,17 @@ async def _build_index(cache: KlineCache) -> None:
                 item.on("click", make_load_from_search(suggestion["key"]))
 
     def make_load_from_search(key: str):
-        # Klik na návrh načte graf (Enter přidává do watchlistu)
+        # Klik na návrh: přidá do watchlistu (jen když tam ještě není), načte graf
         async def _handler(_event):
+            provider_id, _, symbol = key.partition(":")
+            existing = await cache.watchlist_list()
+            already = any(row["source"] == provider_id and row["symbol"] == symbol for row in existing)
+            if not already:
+                await cache.watchlist_add(provider_id, symbol)
+                await rebuild_watchlist()
+                show_status(f"{symbol} přidán do watchlistu ({provider_id}).")
+            else:
+                show_status(f"{symbol} už v watchlistu je.")
             await load_symbol(key)
             hide_suggestions()
 
@@ -139,16 +147,21 @@ async def _build_index(cache: KlineCache) -> None:
         render_suggestions()
 
     async def add_search_to_watchlist() -> None:
-        # Enter: přidá označený (nebo první) návrh do watchlistu
+        # Enter: přidá označený (nebo první) návrh do watchlistu, jen když tam není
         suggestions = state.get("suggestions") or []
         if not suggestions:
             show_status("Nejdřív hledejte symbol, poté ho Enterem přidáte do watchlistu.")
             return
         suggestion = suggestions[min(state["highlight"], len(suggestions) - 1)]
         provider_id, _, symbol = suggestion["key"].partition(":")
-        await cache.watchlist_add(provider_id, symbol)
-        await rebuild_watchlist()
-        show_status(f"{symbol} přidán do watchlistu ({provider_id}).")
+        existing = await cache.watchlist_list()
+        already = any(row["source"] == provider_id and row["symbol"] == symbol for row in existing)
+        if already:
+            show_status(f"{symbol} už v watchlistu je ({provider_id}).")
+        else:
+            await cache.watchlist_add(provider_id, symbol)
+            await rebuild_watchlist()
+            show_status(f"{symbol} přidán do watchlistu ({provider_id}).")
         hide_suggestions()
 
     async def load_symbol(key) -> None:

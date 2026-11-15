@@ -204,13 +204,19 @@ VÝSTUP
   /ticker/24hr batch dotaz (json pole bez mezer) každých 5 s; Yahoo denní
   svíčky s in-memory TTL 60 s a Alpaca snapshots (latestTrade/prevDailyBar,
   feed=iex) s TTL 5 s; změna se barví zeleně/červeně.
+- Paralelní kanál – posun definuje JEN kolmá složka vektoru p1→třetí bod
+  (šířka kanálu): dřív se používal celý vektor (p3−p1) a při posunu kurzoru
+  podél přímky se druhá linie „natahovala“ 2× rychleji. Render i hitTest
+  počítají posun stejnou projekcí na normálu přímky.
+- Pravý klik: nad kresbou ji VYBERE a otevře kontextové menu se „Smazat
+  objekt“ (žádné okamžité mazání); mimo kresbu jen zruší výběr. Mazání je
+  blokované, když jsou kresby uzamčené.
 - Počty kliků nástrojů (oprava kanálu/pitchforku): handleDrawingClick bere
   počet kliků z mapy DRAWING_CLICKS (hline/vline/hray/cross/text/sticker = 1,
   kanál a pitchfork = 3, štětec = tahání + klik, ostatní = 2). Dříve se
   VŠE dokončilo po 2. kliku, takže kanál/pitchfork ukládaly jen 2 body a
   kreslily se jako obyčejná přímka („nefunguje“). Staré 2bodové kanály se
-  vykreslí jako přímka (data nelze doplnit). Pravoklikové menu i mazání jsou
-  blokované, když jsou kresby uzamčené.
+  vykreslí jako přímka (data nelze doplnit).
 - Alpaca (krok 7): market data přes https://data.alpaca.markets/v2/stocks/bars
   s feed=iex (zdarma v plánu Basic – IEX pokrývá část objemu trhu, nikoli celý
   SIP feed); seznam instrumentů z nakonfigurovaného trading endpointu (paper

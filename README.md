@@ -117,8 +117,11 @@ Všechny systémy (Windows, macOS, Linux):
 
 ### Stav funkcí
 
-- Hotovo: vyhledání symbolů v jednom poli s autocomplete (Enter přidá do
-  watchlistu, klik na návrh načte graf), statické svíčkové grafy
+- Hotovo: vyhledání symbolů v jednom poli s autocomplete (návrhy napříč
+  zdroji, max 12 se řazením přesná shoda > prefix > výskyt; klik na návrh
+  přidá do watchlistu, jen když tam ještě není, a načte graf; Enter přidá
+  bez přepnutí grafu; šipky/Esc ovládají nabídku; do watchlistu lze přidávat
+  i tlačítkem +), statické svíčkové grafy
   + objem, timeframy 1m/5m/15m/1h/4h/1D/1W (jen co zdroj podporuje), tmavý a
   světlý motiv, crosshair s OHLC legendou, cache historie v SQLite,
   ukládání posledního symbolu/timeframu/motivu, živé svíčky Binance přes
@@ -131,8 +134,8 @@ Všechny systémy (Windows, macOS, Linux):
   polopřímka, přímka, trendová šipka, horizontální/svislá linie, horizontální
   polopřímka, kříž, Fibonacci retracement i extension (s popisky), paralelní
   kanál, pitchfork, obdélník, štětec, text, sticker (emoji), měřič; výběr
-  kresby klikem s úchopy a tažením, mazání přes pravoklikové menu („Odebrat
-  kresbu“ / „Odebrat všechny kresby“), Del nebo koš, magnet na
+  kresby klikem s úchopy a tažením, mazání přes pravoklikové menu („Smazat
+  objekt“), Del nebo koš, magnet na
   OHLC, tužka (nástroj zůstává aktivní), zámek a skrytí kreseb; paleta barev
   nových kreseb; kresby se ukládají k symbolu a timeframe (přetrvávají restart).
   Watchlist

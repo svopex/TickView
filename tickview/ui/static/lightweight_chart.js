@@ -323,23 +323,25 @@ window.TickViewChart = (function () {
       s.overlay.drag = null;
     });
 
-    // Pravý klik: smaže označenou / kresbu pod kurzorem (režim kurzoru);
-    // nad kresbou otevře menu s odebráním kresby a všech kreseb
+    // Pravý klik: nad kresbou ji vybere a otevře menu se „Smazat objekt“;
+    // mimo kresbu jen zruší výběr (žádné okamžité mazání)
     mainHost.addEventListener(
       'contextmenu',
       (event) => {
         if (s.overlay.mode || s.locked) return;
-        event.preventDefault();
-        if (deleteSelected(s)) return;
         const pane = getPaneGeometry(s);
         const x = event.clientX - pane.hostLeft - pane.offsetX;
         const y = event.clientY - pane.hostTop - pane.offsetY;
         const index = hitTest(s, x, y);
-        if (index >= 0) {
-          selectDrawing(s, index);
+        if (index < 0) {
+          selectDrawing(s, -1);
           redrawOverlay(s);
-          showContextMenu(s, event.clientX, event.clientY);
+          return;
         }
+        event.preventDefault();
+        selectDrawing(s, index);
+        redrawOverlay(s);
+        showContextMenu(s, event.clientX, event.clientY);
       },
       true
     );
@@ -404,8 +406,7 @@ window.TickViewChart = (function () {
     const menu = document.createElement('div');
     menu.className = 'drawing-contextmenu';
     const items = [
-      ['Odebrat kresbu', () => { deleteSelected(s); redrawOverlay(s); }],
-      ['Odebrat všechny kresby', () => { selectDrawing(s, -1); trashDrawings(s.elementId); }],
+      ['Smazat objekt', () => { deleteSelected(s); redrawOverlay(s); }],
     ];
     for (const [label, handler] of items) {
       const item = document.createElement('div');
@@ -1060,10 +1061,20 @@ window.TickViewChart = (function () {
       } else if (drawing.kind === 'sticker') {
         if (Math.hypot(x - points[0].x, y - points[0].y) <= 16) return i;
       } else if (drawing.kind === 'channel') {
-        // Obě přímky kanálu + vnitřek (klik dovnitř kanálu ho také vybere)
+        // Obě přímky kanálu (posun = kolmá složka od třetího bodu, stejně jako
+        // při kreslení) + vnitřek (klik dovnitř kanálu ho také vybere)
         const [a, b, c] = points;
         if (distToSegment(x, y, a.x, a.y, b.x, b.y) <= threshold) return i;
-        if (c && distToSegment(x, y, a.x + (c.x - a.x), a.y + (c.y - a.y), b.x + (c.x - a.x), b.y + (c.y - a.y)) <= threshold) return i;
+        if (!c) continue;
+        const ddx = b.x - a.x;
+        const ddy = b.y - a.y;
+        const len = Math.hypot(ddx, ddy) || 1;
+        const nx = -ddy / len;
+        const ny = ddx / len;
+        const perp = (c.x - a.x) * nx + (c.y - a.y) * ny;
+        const offX = nx * perp;
+        const offY = ny * perp;
+        if (distToSegment(x, y, a.x + offX, a.y + offY, b.x + offX, b.y + offY) <= threshold) return i;
       } else if (drawing.kind === 'fibext') {
         const [a, b] = points;
         const x1 = Math.min(a.x, b.x);
@@ -1316,7 +1327,9 @@ window.TickViewChart = (function () {
       return;
     }
     if (drawing.kind === 'channel') {
-      // Paralelní kanál: přímka p1→p2 a druhá posunutá podle třetího bodu
+      // Paralelní kanál: přímka p1→p2 a druhá rovnoběžná; posun dává Jen KOLMÁ
+      // složka vektoru p1→třetí bod (šířka kanálu) – posun podél přímky šířku
+      // nemění, takže se kanál „nestahuje“ rychleji než kurzor
       const third = points.length > 2 ? points[2] : s.overlay.previewPoint;
       const thirdPixel = third ? toPixel(third) : null;
       if (!thirdPixel) {
@@ -1328,8 +1341,14 @@ window.TickViewChart = (function () {
         renderHandles(ctx, s, drawing);
         return;
       }
-      const dx = thirdPixel.x - p1.x;
-      const dy = thirdPixel.y - p1.y;
+      const ddx = p2.x - p1.x;
+      const ddy = p2.y - p1.y;
+      const len = Math.hypot(ddx, ddy) || 1;
+      const nx = -ddy / len;
+      const ny = ddx / len;
+      const perp = (thirdPixel.x - p1.x) * nx + (thirdPixel.y - p1.y) * ny;
+      const dx = nx * perp;
+      const dy = ny * perp;
       ctx.beginPath();
       ctx.moveTo(p1.x, p1.y);
       ctx.lineTo(p2.x, p2.y);
