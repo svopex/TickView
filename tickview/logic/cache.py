@@ -1,0 +1,193 @@
+"""Logická vrstva: SQLite cache svíček a nastavení, skládání historie.
+
+Blokující operace sqlite3 běží přes asyncio.to_thread, aby nikdy nezdržely UI.
+"""
+
+import asyncio
+import sqlite3
+from typing import Optional
+
+from tickview.providers.base import Candle, DataProvider
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS klines (
+    source     TEXT    NOT NULL,
+    symbol     TEXT    NOT NULL,
+    timeframe  TEXT    NOT NULL,
+    open_time  INTEGER NOT NULL,
+    open       REAL    NOT NULL,
+    high       REAL    NOT NULL,
+    low        REAL    NOT NULL,
+    close      REAL    NOT NULL,
+    volume     REAL    NOT NULL,
+    PRIMARY KEY (source, symbol, timeframe, open_time)
+);
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+"""
+
+
+class KlineCache:
+    """Ukládá svíčky a nastavení do SQLite; operace jsou serializované zámkem."""
+
+    def __init__(self, db_path):
+        self._db_path = str(db_path)
+        self._conn: Optional[sqlite3.Connection] = None
+        self._lock = asyncio.Lock()
+
+    async def init(self) -> None:
+        """Otevře databázi a vytvoří schéma (volá se při startu aplikace)."""
+        async with self._lock:
+            # check_same_thread=False: operace posíláme do to_thread, vždy pod zámkem
+            self._conn = await asyncio.to_thread(
+                sqlite3.connect, self._db_path, check_same_thread=False
+            )
+            await asyncio.to_thread(self._conn.executescript, _SCHEMA)
+
+    async def load(
+        self,
+        source: str,
+        symbol: str,
+        timeframe: str,
+        start_ms: Optional[int] = None,
+        end_ms: Optional[int] = None,
+    ) -> list[Candle]:
+        """Vrátí svíčky z cache vzestupně podle času, volitelně omezené intervalem."""
+        async with self._lock:
+            rows = await asyncio.to_thread(
+                self._load_sync, source, symbol, timeframe, start_ms, end_ms
+            )
+        return [Candle(*row) for row in rows]
+
+    def _load_sync(
+        self,
+        source: str,
+        symbol: str,
+        timeframe: str,
+        start_ms: Optional[int],
+        end_ms: Optional[int],
+    ) -> list[tuple]:
+        cur = self._conn.execute(
+            """
+            SELECT open_time, open, high, low, close, volume
+            FROM klines
+            WHERE source = ? AND symbol = ? AND timeframe = ?
+              AND (? IS NULL OR open_time >= ?)
+              AND (? IS NULL OR open_time <= ?)
+            ORDER BY open_time
+            """,
+            (source, symbol, timeframe, start_ms, start_ms, end_ms, end_ms),
+        )
+        return cur.fetchall()
+
+    async def store(self, source: str, symbol: str, timeframe: str, candles: list[Candle]) -> None:
+        """Uloží svíčky do cache (přepíše duplikáty se stejným open_time)."""
+        if not candles:
+            return
+        async with self._lock:
+            await asyncio.to_thread(
+                self._store_sync, source, symbol, timeframe, candles
+            )
+
+    def _store_sync(
+        self, source: str, symbol: str, timeframe: str, candles: list[Candle]
+    ) -> None:
+        self._conn.executemany(
+            """
+            INSERT OR REPLACE INTO klines
+              (source, symbol, timeframe, open_time, open, high, low, close, volume)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    source,
+                    symbol,
+                    timeframe,
+                    c.open_time,
+                    c.open,
+                    c.high,
+                    c.low,
+                    c.close,
+                    c.volume,
+                )
+                for c in candles
+            ],
+        )
+        self._conn.commit()
+
+    async def coverage(
+        self, source: str, symbol: str, timeframe: str
+    ) -> Optional[tuple[int, int]]:
+        """Vrátí (min, max) open_time uložené v cache, nebo None, když je prázdná."""
+        async with self._lock:
+            row = await asyncio.to_thread(
+                self._coverage_sync, source, symbol, timeframe
+            )
+        if row is None or row[0] is None:
+            return None
+        return (row[0], row[1])
+
+    def _coverage_sync(self, source: str, symbol: str, timeframe: str):
+        cur = self._conn.execute(
+            """
+            SELECT MIN(open_time), MAX(open_time)
+            FROM klines
+            WHERE source = ? AND symbol = ? AND timeframe = ?
+            """,
+            (source, symbol, timeframe),
+        )
+        return cur.fetchone()
+
+    async def get_setting(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        """Vrátí uložené nastavení podle klíče."""
+        async with self._lock:
+            row = await asyncio.to_thread(self._get_setting_sync, key)
+        return row[0] if row else default
+
+    def _get_setting_sync(self, key: str):
+        cur = self._conn.execute("SELECT value FROM settings WHERE key = ?", (key,))
+        return cur.fetchone()
+
+    async def set_setting(self, key: str, value: str) -> None:
+        """Uloží nastavení (key/value) do SQLite."""
+        async with self._lock:
+            await asyncio.to_thread(self._set_setting_sync, key, value)
+
+    def _set_setting_sync(self, key: str, value: str) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value)
+        )
+        self._conn.commit()
+
+
+async def fetch_history(
+    provider: DataProvider,
+    cache: KlineCache,
+    symbol: str,
+    timeframe: str,
+    start_ms: int,
+    end_ms: int,
+) -> list[Candle]:
+    """Vrátí svíčky pro zobrazení; ze sítě stáhne jen úseky chybějící v cache.
+
+    Uvnitř pokryté oblasti předpokládáme souvislá data (klines z burzy bez děr);
+    chybějící okraje doleieme od zdroje a uložíme.
+    """
+    coverage = await cache.coverage(provider.id, symbol, timeframe)
+    missing: list[tuple[int, int]] = []
+    if coverage is None:
+        missing.append((start_ms, end_ms))
+    else:
+        cov_start, cov_end = coverage
+        if start_ms < cov_start:
+            missing.append((start_ms, min(cov_start - 1, end_ms)))
+        if end_ms > cov_end:
+            missing.append((max(cov_end + 1, start_ms), end_ms))
+    for missing_start, missing_end in missing:
+        if missing_end < missing_start:
+            continue
+        candles = await provider.history(symbol, timeframe, missing_start, missing_end)
+        await cache.store(provider.id, symbol, timeframe, candles)
+    return await cache.load(provider.id, symbol, timeframe, start_ms, end_ms)

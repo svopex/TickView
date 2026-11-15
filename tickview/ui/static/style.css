@@ -1,0 +1,128 @@
+/* TickView – styly hlavního okna */
+
+/* Celoplošný layout: zrušíme výchozí odsazení NiceGUI obsahu a mezery sloupce */
+.nicegui-content {
+  padding: 0;
+}
+
+/* Explicitní pozadí stránky podle motivu – bez něj prohlížeč kreslí za průhlednými
+   vrstvami tmavý canvas a světý texty nejsou vidět */
+.body--light {
+  background-color: #ffffff;
+  color-scheme: light;
+}
+
+.body--dark {
+  background-color: #131722;
+  color-scheme: dark;
+}
+
+/* Sloupec: horní lišta + graf + stavová lišta */
+.page-root {
+  height: 100vh;
+  gap: 0 !important;
+  overflow: hidden;
+}
+
+/* Horní lišta s vyhledáváním, timeframy a přepínačem motivu; na úzkém okně zalamuje */
+.topbar {
+  flex-wrap: wrap;
+  gap: 12px !important;
+  align-items: center;
+  padding: 8px 16px;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.25);
+}
+
+.brand {
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.symbol-search {
+  min-width: 220px;
+}
+
+.symbol-select {
+  min-width: 260px;
+}
+
+.source-badge {
+  margin-left: auto;
+}
+
+/* Kontejner grafu zabere zbytek výšky a celou šířku okna */
+.chart-container {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  align-self: stretch;
+}
+
+/* Sloupec panelů grafu (hlavní + případné indikátory v kroku 4) */
+.lwchart-panes {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Hlavní panel grafu */
+.lwchart-host {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Legenda s OHLC hodnotami jako překryv nad grafem */
+.lwchart-legend {
+  position: absolute;
+  top: 8px;
+  left: 12px;
+  z-index: 10;
+  font-size: 12px;
+  line-height: 1.6;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.lwchart-legend .ohlc-item {
+  margin-right: 10px;
+}
+
+.lwchart-legend .ohlc-value {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Barvy legendy podle motivu (Quasar přepíná třídy body--dark/light) */
+.body--dark .lwchart-legend {
+  color: #d1d4dc;
+}
+
+.body--light .lwchart-legend {
+  color: #131722;
+}
+
+.lwchart-legend.up {
+  color: #26a69a !important;
+}
+
+.lwchart-legend.down {
+  color: #ef5350 !important;
+}
+
+/* Timeframy přesně tak, jak je definuje zdroj (bez transformace na velká písmena) */
+.timeframes .q-btn {
+  text-transform: none;
+}
+
+/* Stavová lišta */
+.statusbar {
+  padding: 4px 16px;
+  font-size: 12px;
+  color: #808080;
+  border-top: 1px solid rgba(128, 128, 128, 0.25);
+}
+
+.statusbar.error {
+  color: #ef5350;
+}
