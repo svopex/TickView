@@ -125,6 +125,14 @@ class LightweightChart(ui.element):
                 f'window.TickViewChart.updateText("{self._js_id}", {int(drawing_id)}, {json.dumps(text)});'
             )
 
+    def set_tool_groups(self, groups: list[dict]) -> None:
+        """Pošle definice skupin nástrojů pro flyout nabídky lišty."""
+        groups_json = json.dumps(groups)
+        with self:
+            ui.run_javascript(
+                f'window.TickViewChart.setToolGroups("{self._js_id}", {groups_json});'
+            )
+
     async def trash_drawings(self) -> int:
         """Smaže označenou kresbu (nebo všechny) – vrací počet smazaných."""
         with self:

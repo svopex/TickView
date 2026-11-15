@@ -164,32 +164,38 @@ VÝSTUP
   zahazují. Barvy z cyklické palety. UI: dialog s parametry (přestavuje pole
   dle typu), aktivní indikátory jako čipy s odstraněním, přepočet po každém
   načtení dat.
-- Kreslení ve stylu TradingView (krok 5 + dvě rozšíření podle zpětné vazby):
-  vertikální lišta nástrojů vlevo od grafu ve skupinách (kurzor | horizontální
-  + svislá linie | trendová čára + polopřímka + přímka | obdélník + štětec +
-  Fibonacci retracement | text + měřič | magnet | oko | koš) a paleta 5 barev
-  nových kreseb. Převody px↔(čas,cena) přes timeScale.coordinateToTime /
+- Kreslení ve stylu TradingView (krok 5 + rozšíření dle zpětné vazby, lišta 1:1):
+  vertikální lišta vlevo od grafu se SKUPINAMI a flyout nabídkami (jako v TV):
+  kurzor | čáry (trend, polopřímka, přímka, trendová šipka) | horizontální a
+  svislé linie (hline, vline, horizontální polopřímka, kříž) | Fibonacci
+  (retracement + extension) | paralelní kanál (3 kliky) | pitchfork (3 kliky) |
+  tvary (obdélník, štětec) | text + sticker (emoji) | měřič | magnet | tužka
+  (nástroj zůstává aktivní) | zámek | oko | koš + paleta 5 barev nových
+  kreseb. Převody px↔(čas,cena) přes timeScale.coordinateToTime /
   series.coordinateToPrice; kreslí se jen do plochy grafu (clip vůči pane
-  canvas, kliky v pásu os se ignorují). hline/vline/text = 1 klik, ostatní
-  2 kliky, štětec taháním (body každých ~6 px), preview sleduje kurzor, Esc
-  ruší. Fibonacci: úrovně 0/0.236/0.382/0.5/0.618/0.786/1 s popisky ceny.
-  Výběr a editace: klik v režimu kurzoru označí kresbu (úchopové čtverečky),
-  tažení úchopu mění body, tažení těla posouvá celou kresbu (zachytávání
-  mousedown na hostu v capture fázi, aby graf nepanoval); mouseup uloží
-  update do DB (cache.update_drawing). Mazání: Del nad označenou, pravý klik
-  pod kurzorem, koš = označená nebo všechny. Magnet: přichytí bod k času
-  nejbližší svíčky a ceně k nejbližší OHLC (±12 px). Oko skryje/zobrazí
-  kresby. Měřič: Δcena, % a počet barů (jen náhled, neukládá se). Text:
-  klik → dialog v Pythonu → addText; editace dvojklikem (text_edit).
-  Barva se ukládá v DB (sloupce color a text v drawings, migrace každý ALTER
-  zvlášť, protože executescript u prvního konfliktu přeruší zbytek).
-  Body kresby se ukládají jako JSON do tabulky drawings
+  canvas, kliky v pásu os se ignorují). hline/vline/text/sticker = 1 klik,
+  kanál a pitchfork = 3 kliky, ostatní 2 kliky, štětec taháním (body každých
+  ~6 px), preview sleduje kurzor, Esc ruší. Fibonacci: úrovně
+  0/0.236/0.382/0.5/0.618/0.786/1 s popisky ceny; extension
+  0/0.618/1/1.618/2.618. Výběr a editace: klik v režimu kurzoru označí kresbu
+  (úchopové čtverečky), tažení úchopu mění body, tažení těla posouvá celou
+  kresbu (zachytávání mousedown na hostu v capture fázi, aby graf nepanoval);
+  mouseup uloží update do DB (cache.update_drawing). Mazání: Del nad
+  označenou, pravý klik pod kurzorem, koš = označená nebo všechny. Magnet:
+  přichytí bod k času nejbližší svíčky a ceně k nejbližší OHLC (±12 px). Oko
+  skryje/zobrazí kresby. Zámek zakáže editaci i mazání. Měřič: Δcena, % a
+  počet barů (jen náhled, neukládá se). Text: klik → dialog v Pythonu →
+  addText; editace dvojklikem (text_edit). Sticker: klik → dialog s emoji →
+  addSticker. Barva/text se ukládají v DB (sloupce color a text v drawings,
+  migrace každý ALTER zvlášť, protože executescript u prvního konfliktu
+  přeruší zbytek). Body kresby se ukládají jako JSON do tabulky drawings
   (source+symbol+timeframe). JS→Python kanál: stránkový timer 0,5 s vyzvedává
-  frontu událostí (typ add/update/delete/text_request/text_edit) přes
-  popFinishedDrawing (DOM CustomEvent z Vue komponenty do NiceGUI neprojde
-  spolehlivě; fronta zvládne více událostí mezi ticky). Kontejner grafu se
-  hledá přes data-chart-id atribut – vlastní id prvku necháváme NiceGUI
-  (přepis id rozbil event binding).
+  frontu událostí (typ tool/action/add/update/delete/text_request/text_edit/
+  sticker_request) přes popFinishedDrawing (DOM CustomEvent z Vue komponenty
+  do NiceGUI neprojde spolehlivě; fronta zvládne více událostí mezi ticky).
+  Kontejner grafu se hledá přes data-chart-id atribut – vlastní id prvku
+  necháváme NiceGUI (přepis id rozbil event binding). Definice skupin posílá
+  Python přes setToolGroups (JS si je uloží i před init grafu).
 - Watchlist (krok 6): tabulka watchlist (source+symbol, unique) v SQLite;
   UI levý panel, přidání tlačítkem + (aktuální symbol) nebo Enterem ze sloučeného
   vyhledávání, odebrání ×, klik na řádek přepne graf. Ceny: Binance

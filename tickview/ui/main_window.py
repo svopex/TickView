@@ -18,7 +18,7 @@ DEFAULT_BARS = 600
 VISIBLE_BARS = 150
 
 # Verze statických souborů pro cache-busting v prohlížeči (při změně CSS/JS zvýšit)
-STATIC_VERSION = "0.3.2"
+STATIC_VERSION = "0.4.0"
 
 
 def register(cache: KlineCache) -> None:
@@ -291,14 +291,49 @@ async def _build_index(cache: KlineCache) -> None:
     # ---------- kreslení (krok 5 + lišta ve stylu TradingView) ----------
 
     # Druhy kresby, které backend ukládá (cursor/measure = režimy bez ukládání)
-    DRAWING_KINDS = ["hline", "vline", "trend", "ray", "extended", "rect", "brush", "fib", "text"]
-    # Nástroje vertikální lišty ve skupinách: (id, tooltip, ikona)
+    DRAWING_KINDS = [
+        "hline", "vline", "trend", "ray", "extended", "arrow", "hray", "cross",
+        "channel", "fib", "fibext", "pitchfork", "rect", "brush", "text", "sticker",
+    ]
+    # Skupiny nástrojů lišty (jako v TradingView): id, ikona, tooltip, nástroje
     DRAWING_GROUPS = [
-        [("cursor", "Kurzor (výběr a tažení kreseb)", "near_me")],
-        [("hline", "Horizontální linie", "horizontal_rule"), ("vline", "Svislá linie", "height")],
-        [("trend", "Trendová čára", "show_chart"), ("ray", "Polopřímka", "trending_up"), ("extended", "Přímka (oboustranná)", "sync_alt")],
-        [("rect", "Obdélník", "crop_square"), ("brush", "Štětec", "brush"), ("fib", "Fibonacci retracement", "align_vertical_center")],
-        [("text", "Text", "title"), ("measure", "Měřič (vzdálenost a %)", "straighten")],
+        {"id": "g_cursor", "icon": "near_me", "tooltip": "Kurzor (výběr a tažení kreseb)",
+         "tools": [{"mode": "cursor", "tooltip": "Kurzor", "icon": "near_me"}]},
+        {"id": "g_trend", "icon": "show_chart", "tooltip": "Čáry",
+         "tools": [
+             {"mode": "trend", "tooltip": "Trendová čára", "icon": "show_chart"},
+             {"mode": "ray", "tooltip": "Polopřímka", "icon": "trending_up"},
+             {"mode": "extended", "tooltip": "Přímka (oboustranná)", "icon": "sync_alt"},
+             {"mode": "arrow", "tooltip": "Trendová šipka", "icon": "north_east"},
+         ]},
+        {"id": "g_levels", "icon": "horizontal_rule", "tooltip": "Horizontální a svislé linie",
+         "tools": [
+             {"mode": "hline", "tooltip": "Horizontální linie", "icon": "horizontal_rule"},
+             {"mode": "vline", "tooltip": "Svislá linie", "icon": "height"},
+             {"mode": "hray", "tooltip": "Horizontální polopřímka", "icon": "trending_flat"},
+             {"mode": "cross", "tooltip": "Kříž", "icon": "add"},
+         ]},
+        {"id": "g_fib", "icon": "align_vertical_center", "tooltip": "Fibonacci",
+         "tools": [
+             {"mode": "fib", "tooltip": "Fibonacci retracement", "icon": "align_vertical_center"},
+             {"mode": "fibext", "tooltip": "Fibonacci extension", "icon": "linear_scale"},
+         ]},
+        {"id": "g_channel", "icon": "view_stream", "tooltip": "Paralelní kanál (3 kliky)",
+         "tools": [{"mode": "channel", "tooltip": "Paralelní kanál (3 kliky)", "icon": "view_stream"}]},
+        {"id": "g_pitchfork", "icon": "gesture", "tooltip": "Pitchfork (3 kliky)",
+         "tools": [{"mode": "pitchfork", "tooltip": "Pitchfork (3 kliky)", "icon": "gesture"}]},
+        {"id": "g_shapes", "icon": "crop_square", "tooltip": "Tvary",
+         "tools": [
+             {"mode": "rect", "tooltip": "Obdélník", "icon": "crop_square"},
+             {"mode": "brush", "tooltip": "Štětec", "icon": "brush"},
+         ]},
+        {"id": "g_text", "icon": "title", "tooltip": "Text a stickers",
+         "tools": [
+             {"mode": "text", "tooltip": "Text", "icon": "title"},
+             {"mode": "sticker", "tooltip": "Sticker (emoji)", "icon": "emoji_emotions"},
+         ]},
+        {"id": "g_measure", "icon": "straighten", "tooltip": "Měřič (Δcena, %, bary)",
+         "tools": [{"mode": "measure", "tooltip": "Měřič (Δcena, %, bary)", "icon": "straighten"}]},
     ]
     DRAWING_LABELS = {
         "hline": "Horizontální linie",
@@ -306,18 +341,34 @@ async def _build_index(cache: KlineCache) -> None:
         "trend": "Trendová čára",
         "ray": "Polopřímka",
         "extended": "Přímka",
+        "arrow": "Trendová šipka",
+        "hray": "Horizontální polopřímka",
+        "cross": "Kříž",
+        "channel": "Paralelní kanál",
+        "fib": "Fibonacci retracement",
+        "fibext": "Fibonacci extension",
+        "pitchfork": "Pitchfork",
         "rect": "Obdélník",
         "brush": "Štětec",
-        "fib": "Fibonacci retracement",
+        "text": "Text",
+        "sticker": "Sticker",
     }
     # Barvy nových kreseb (paleta v liště)
     DRAWING_COLORS = ["#2962ff", "#e91e63", "#26a69a", "#ff9800", "#d1d4dc"]
+    EMOJIS = ["😀", "🚀", "💰", "📈", "📉", "👍", "⚡", "🎯"]
 
-    async def set_drawing_mode(mode: str | None) -> None:
-        # Aktivní nástroj zvýrazníme; cursor = režim bez kreslení (JS mode null)
+    async def set_drawing_mode(mode) -> None:
+        # Aktivní nástroj zvýrazníme na skupině, do které patří (jako v TradingView)
         state["drawing_mode"] = mode
-        for kind, button in drawing_buttons.items():
-            button.classes(add="drawing-btn-active" if kind == mode else "", remove="" if kind == mode else "drawing-btn-active")
+        for group in DRAWING_GROUPS:
+            button = drawing_buttons.get(group["id"])
+            if not button:
+                continue
+            group_modes = [tool["mode"] for tool in group["tools"]]
+            button.classes(
+                add="drawing-btn-active" if mode in group_modes else "",
+                remove="" if mode in group_modes else "drawing-btn-active",
+            )
         await chart.set_drawing_mode(None if mode in (None, "cursor") else mode)
 
     async def set_drawing_color(color: str) -> None:
@@ -327,18 +378,37 @@ async def _build_index(cache: KlineCache) -> None:
             button.classes(add="swatch-active" if hex_color == color else "", remove="" if hex_color == color else "swatch-active")
         await chart.set_drawing_color(color)
 
-    async def set_magnet() -> None:
+    async def toggle_magnet() -> None:
         # Magnet: přichytávání nových bodů k OHLC nejbližší svíčky
         state["magnet"] = not state.get("magnet", False)
-        magnet_button.classes(add="drawing-btn-active" if state["magnet"] else "", remove="" if state["magnet"] else "drawing-btn-active")
+        button = action_buttons["magnet"]
+        button.classes(add="drawing-btn-active" if state["magnet"] else "", remove="" if state["magnet"] else "drawing-btn-active")
         await chart.set_magnet(state["magnet"])
         show_status(f"Magnet {'zapnut' if state['magnet'] else 'vypnut'}.")
+
+    async def toggle_pencil() -> None:
+        # Režim tužky: nástroj zůstává vybraný i po nakreslení (jako v TradingView)
+        state["keep_tool"] = not state.get("keep_tool", False)
+        button = action_buttons["pencil"]
+        button.classes(add="drawing-btn-active" if state["keep_tool"] else "", remove="" if state["keep_tool"] else "drawing-btn-active")
+        await chart.set_keep_tool(state["keep_tool"])
+        show_status(f"Režim kreslení {'zapnut' if state['keep_tool'] else 'vypnut'}.")
+
+    async def toggle_lock() -> None:
+        # Zámek: kresby nelze vybírat, posouvat ani mazat
+        state["locked"] = not state.get("locked", False)
+        button = action_buttons["lock"]
+        button.props(f'icon={"lock" if state["locked"] else "lock_open"}')
+        button.classes(add="drawing-btn-active" if state["locked"] else "", remove="" if state["locked"] else "drawing-btn-active")
+        await chart.set_locked(state["locked"])
+        show_status(f"Kresby {'uzamčeny' if state['locked'] else 'odemčeny'}.")
 
     async def toggle_hide_drawings() -> None:
         # Skrytí/zobrazení všech kreseb (ikona oka)
         state["hidden"] = not state.get("hidden", False)
-        hide_button.props(f'icon={"visibility_off" if state["hidden"] else "visibility"}')
-        hide_button.classes(add="drawing-btn-active" if state["hidden"] else "", remove="" if state["hidden"] else "drawing-btn-active")
+        button = action_buttons["eye"]
+        button.props(f'icon={"visibility_off" if state["hidden"] else "visibility"}')
+        button.classes(add="drawing-btn-active" if state["hidden"] else "", remove="" if state["hidden"] else "drawing-btn-active")
         await chart.set_drawings_hidden(state["hidden"])
 
     async def trash_drawings() -> None:
@@ -395,7 +465,27 @@ async def _build_index(cache: KlineCache) -> None:
             )
             if not isinstance(payload, dict):
                 break
-            if payload.get("type") == "delete":
+            if payload.get("type") == "tool":
+                await set_drawing_mode(payload.get("mode"))
+            elif payload.get("type") == "action":
+                action = payload.get("action")
+                if action == "magnet":
+                    await toggle_magnet()
+                elif action == "pencil":
+                    await toggle_pencil()
+                elif action == "lock":
+                    await toggle_lock()
+                elif action == "eye":
+                    await toggle_hide_drawings()
+                elif action == "trash":
+                    await trash_drawings()
+            elif payload.get("type") == "sticker_request":
+                state["sticker_pending"] = {
+                    "time": int(payload.get("time")),
+                    "price": float(payload.get("price")),
+                }
+                sticker_dialog.open()
+            elif payload.get("type") == "delete":
                 drawing_id = payload.get("id")
                 if drawing_id:
                     await cache.delete_drawing(provider_id, symbol, timeframe, int(drawing_id))
@@ -533,7 +623,8 @@ async def _build_index(cache: KlineCache) -> None:
         await refresh_watchlist_prices()
 
     async def initial_load() -> None:
-        # Po inicializaci grafu v prohlížeči obnovíme poslední zobrazený symbol
+        # Po inicializaci grafu obnovíme poslední symbol a výchozí režim kurzoru
+        await set_drawing_mode("cursor")
         await load_symbol(last_symbol)
 
     # ---------- nastavení API klíčů (krok 7 – volitelný zdroj Alpaca) ----------
@@ -625,13 +716,6 @@ async def _build_index(cache: KlineCache) -> None:
 
     # ---------- UI ----------
 
-    def make_mode_handler(kind: str):
-        # Klik na aktivní nástroj ho vypne, jiný klik ho zapne
-        async def _handler(_event):
-            await set_drawing_mode(None if state["drawing_mode"] == kind else kind)
-
-        return _handler
-
     with ui.column().classes("page-root w-full"):
         with ui.row().classes("topbar w-full"):
             ui.label("TickView").classes("brand")
@@ -661,16 +745,17 @@ async def _build_index(cache: KlineCache) -> None:
                 indicator_bar = ui.row().classes("indicator-bar w-full hidden")
                 with ui.row().classes("chart-area w-full"):
                     with ui.column().classes("drawing-toolbar"):
+                        # Skupinová tlačítka: klik otevře flyout nabídku (JS) a
+                        # výběr nástroje přijde zpět přes frontu událostí
                         drawing_buttons = {}
                         for group in DRAWING_GROUPS:
-                            for kind, tooltip, icon in group:
-                                drawing_buttons[kind] = (
-                                    ui.button(icon=icon, on_click=make_mode_handler(kind))
-                                    .props("flat dense")
-                                    .classes("drawing-btn")
-                                    .tooltip(tooltip)
-                                )
-                            ui.separator().props("vertical").classes("toolbar-sep")
+                            drawing_buttons[group["id"]] = (
+                                ui.button(icon=group["icon"])
+                                .props(f'flat dense data-tool-group={group["id"]}')
+                                .classes("drawing-btn")
+                                .tooltip(group["tooltip"])
+                            )
+                        ui.separator().props("vertical").classes("toolbar-sep")
                         # Paleta barev nových kreseb
                         swatch_buttons = {}
                         for index, hex_color in enumerate(DRAWING_COLORS):
@@ -681,24 +766,45 @@ async def _build_index(cache: KlineCache) -> None:
                                 .tooltip("Barva nových kreseb")
                             )
                         ui.separator().props("vertical").classes("toolbar-sep")
-                        magnet_button = (
-                            ui.button(icon="push_pin", on_click=set_magnet)
-                            .props("flat dense")
-                            .classes("drawing-btn")
-                            .tooltip("Magnet (přichytávání k OHLC)")
-                        )
-                        hide_button = (
-                            ui.button(icon="visibility", on_click=toggle_hide_drawings)
-                            .props("flat dense")
-                            .classes("drawing-btn")
-                            .tooltip("Skrýt/zobrazit kresby")
-                        )
-                        ui.separator().props("vertical").classes("toolbar-sep")
-                        ui.button(icon="delete_sweep", on_click=trash_drawings).props(
-                            "flat dense"
-                        ).classes("drawing-btn").tooltip("Smazat označenou / všechny kresby")
+                        # Akční tlačítka (zpracovává je on_drawing_finished přes frontu)
+                        action_buttons = {}
+                        for action, tooltip, icon in [
+                            ("magnet", "Magnet (přichytávání k OHLC)", "push_pin"),
+                            ("pencil", "Režim kreslení (nástroj zůstává aktivní)", "edit"),
+                            ("lock", "Zamknout kresby", "lock"),
+                            ("eye", "Skrýt/zobrazit kresby", "visibility"),
+                            ("trash", "Smazat označenou / všechny kresby", "delete_sweep"),
+                        ]:
+                            action_buttons[action] = (
+                                ui.button(icon=icon)
+                                .props(f'flat dense data-tool-action={action}')
+                                .classes("drawing-btn")
+                                .tooltip(tooltip)
+                            )
                     chart = LightweightChart(dark=dark, on_ready=initial_load)
+                    # Definice skupin pro flyout nabídky lišty (může přijít i před init grafu)
+                    chart.set_tool_groups(DRAWING_GROUPS)
                 status_label = ui.label("").classes("statusbar w-full")
+
+    # Dialog pro výběr stickeru (emoji)
+    with ui.dialog() as sticker_dialog, ui.card().classes("settings-dialog"):
+        with ui.column().classes("indicator-dialog-body"):
+            ui.label("Vyberte sticker").classes("settings-note")
+            with ui.row().classes("emoji-row"):
+                for emoji in EMOJIS:
+                    ui.button(emoji, on_click=lambda _, e=emoji: place_sticker(e)).props(
+                        "flat dense size=lg"
+                    ).classes("emoji-button")
+
+    async def place_sticker(emoji: str) -> None:
+        # Po výběru emoji umístí sticker na uloženou pozici kliku
+        pending = state.get("sticker_pending")
+        sticker_dialog.close()
+        if not pending:
+            return
+        await chart.add_sticker(pending["time"], pending["price"], emoji)
+        show_status(f"Sticker {emoji} přidán a uložen.")
+        state["sticker_pending"] = None
 
     # Dialog pro textové kresby (textový nástroj + dvojklik na existující text)
     with ui.dialog() as text_dialog, ui.card().classes("settings-dialog"):

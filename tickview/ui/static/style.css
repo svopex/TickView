@@ -400,6 +400,63 @@
   gap: 0 !important;
 }
 
+/* Flyout nabídka skupiny nástrojů (vysouvá se vedle lišty jako v TradingView) */
+.tool-flyout {
+  position: absolute;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  min-width: 220px;
+  padding: 4px;
+  gap: 2px !important;
+  background: #ffffff;
+  border: 1px solid rgba(128, 128, 128, 0.45);
+  border-radius: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+.body--dark .tool-flyout {
+  background: #1e222d;
+}
+
+.tool-flyout-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.body--dark .tool-flyout-item {
+  color: #d1d4dc;
+}
+
+.body--light .tool-flyout-item {
+  color: #131722;
+}
+
+.tool-flyout-item:hover,
+.tool-flyout-item.active {
+  background: rgba(41, 98, 255, 0.18);
+}
+
+.tool-flyout-icon {
+  font-size: 18px !important;
+}
+
+/* Emoji stickers v dialogu */
+.emoji-row {
+  flex-wrap: wrap;
+  gap: 6px !important;
+}
+
+.emoji-button {
+  font-size: 20px;
+}
+
 /* Stavová lišta */
 .statusbar {
   padding: 4px 16px;

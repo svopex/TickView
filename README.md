@@ -126,14 +126,14 @@ Všechny systémy (Windows, macOS, Linux):
   „živě / zpožděno“), akcie/ETF/indexy/forex přes Yahoo Finance s živým
   pollingem a hlášením zavřeného trhu, indikátory SMA, EMA, Bollinger Bands,
   RSI a MACD (RSI/MACD ve vlastních panelech se synchronizovaným časem,
-  nastavitelné parametry, mazání čipem), kreslení s lištou nástrojů ve stylu
-  TradingView: kurzor s výběrem kreseb (klik = označit, tažení za úchopy nebo
-  za celou kresbu, Del/koš = smazat, pravý klik = smazat pod kurzorem),
-  horizontální i svislá linie, trendová čára, polopřímka, oboustranná přímka,
-  obdélník, štětec, Fibonacci retracement (s popisky), text s editací
-  dvojklikem, měřič (Δcena, %, počet barů), magnet na OHLC svíček a skrytí
-  kreseb (oko); paleta barev nových kreseb; kresby se ukládají k symbolu a
-  timeframe (přetrvávají restart), watchlist
+  nastavitelné parametry, mazání čipem), kreslení s lištou nástrojů 1:1 ve
+  stylu TradingView: skupiny nástrojů s flyout nabídkami — trendová čára,
+  polopřímka, přímka, trendová šipka, horizontální/svislá linie, horizontální
+  polopřímka, kříž, Fibonacci retracement i extension (s popisky), paralelní
+  kanál, pitchfork, obdélník, štětec, text, sticker (emoji), měřič; výběr
+  kresby klikem s úchopy a tažením, Del/pravý klik/koš na mazání, magnet na
+  OHLC, tužka (nástroj zůstává aktivní), zámek a skrytí kreseb; paleta barev
+  nových kreseb; kresby se ukládají k symbolu a timeframe (přetrvávají restart), watchlist
   v levém panelu (přidat/odebrat, klik přepne graf, poslední cena a denní
   změna – Binance živě po 5 s, Yahoo denní změna a Alpaca snapshots s obnovou
   po 60/5 s).
