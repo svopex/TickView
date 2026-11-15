@@ -183,12 +183,14 @@ VÝSTUP
   (throttle kvůli limitům); změna se barví zeleně/červeně.
 - Alpaca (krok 7): market data přes https://data.alpaca.markets/v2/stocks/bars
   s feed=iex (zdarma v plánu Basic – IEX pokrývá část objemu trhu, nikoli celý
-  SIP feed); seznam instrumentů přes https://api.alpaca.markets/v2/assets;
-  živá data wss://stream.data.alpaca.markets/v2/iex (auth + subscribe bars,
-  automatické znovupřipojení). Provider se do seznamu přidá jen když má klíče
-  (configured). Klíče se zadávají v UI přes ozubené kolečko → ukládají se do
-  data/config.local.json; aktivace až po restartu aplikace. Historie se
-  stránkuje přes next_page_token.
+  SIP feed); seznam instrumentů z nakonfigurovaného trading endpointu (paper
+  účet → https://paper-api.alpaca.markets/v2/assets – live host api.alpaca.markets
+  papírové klíče odmítá); autentizace hlavičkami APCA-API-KEY-ID a
+  APCA-API-SECRET-KEY; živá data wss://stream.data.alpaca.markets/v2/iex
+  (auth + subscribe bars, automatické znovupřipojení). Provider se do seznamu
+  přidá jen když má klíče (configured). Klíče se zadávají v UI přes ozubené
+  kolečko → ukládají se do data/config.local.json; aktivace až po restartu.
+  Historie se stránkuje přes next_page_token.
 - Alpaca (krok 7): uživatel zadal endpoint https://paper-api.alpaca.markets/v2
   a api_key PKPCQ5NKWKFVLY5N7EKU3WNK4N, uloženo v data/config.local.json
   (neverzováno); chybí secret key – po jeho zadání zdroj povolíme. Pro tržní
@@ -207,10 +209,10 @@ VÝSTUP
 
 ## Známé problémy
 
-- Alpaca: API odmítá obě zatím zadané generace klíčů („unauthorized“ na
-  /v2/account i na data endpoints) – přepis/zadání klíčů je patrně vadné;
-  čeká se na platné klíče (Regenerate v dashboardu a zadání přes Nastavení
-  v aplikaci). Kód je hotový a chyba 401 se v UI korektně zobrazí.
+- Alpaca: vyřešeno – API vyžaduje hlavičku APCA-API-SECRET-KEY (s „-KEY“);
+  s hlavičkou APCA-API-SECRET dle novějších docs vrací 401 unauthorized.
+  Ověřeno: účet PA3ZYD2CZ (ACTIVE), historie AAPL 1D/4h z IEX feedu funguje.
+  Živý websocket půjde ověřit až při otevřeném trhu (víkend = bez baru).
 - Testováno headless prohlížečem v sandboxu (Chrome panel): načtení dat,
   přepínání timeframe/symbolu, motivy, nastavení i interakce fungují;
   nativní režim (--native) nebyl ověřen (vyžaduje okenní systém).

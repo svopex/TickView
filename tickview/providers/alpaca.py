@@ -24,7 +24,6 @@ from tickview.providers.base import (
 )
 
 DATA_BASE_URL = "https://data.alpaca.markets"
-ASSETS_BASE_URL = "https://api.alpaca.markets"
 WS_BASE_URL = "wss://stream.data.alpaca.markets/v2/iex"
 # Seznam instrumentů se mění zřídka – v paměti na 24 h
 ASSETS_TTL_S = 24 * 3600
@@ -57,6 +56,8 @@ class AlpacaProvider(DataProvider):
         config = load_config().get("alpaca", {})
         self._key = config.get("api_key") or ""
         self._secret = config.get("secret") or ""
+        # Trading API endpoint z konfigurace (paper-api pro papírový účet)
+        self._endpoint = (config.get("endpoint") or "https://paper-api.alpaca.markets/v2").rstrip("/")
         self._client: Optional[httpx.AsyncClient] = None
         self._limiter = RateLimiter(min_interval=0.2)
         self._assets: list[SymbolInfo] = []
@@ -68,7 +69,12 @@ class AlpacaProvider(DataProvider):
         return bool(self._key and self._secret)
 
     def _headers(self) -> dict[str, str]:
-        return {"APCA-API-KEY-ID": self._key, "APCA-API-SECRET": self._secret}
+        # Alpaca vyžaduje hlavičku APCA-API-SECRET-KEY (s „-KEY“ na konci);
+        # s hlavičkou APCA-API-SECRET dle novějších docs vrací 401 unauthorized
+        return {
+            "APCA-API-KEY-ID": self._key,
+            "APCA-API-SECRET-KEY": self._secret,
+        }
 
     async def _get_client(self) -> httpx.AsyncClient:
         # Lazy klient – vytvoří se až u prvního dotazu v běžící smyčce
@@ -106,7 +112,7 @@ class AlpacaProvider(DataProvider):
         if self._assets and now - self._assets_loaded_at < ASSETS_TTL_S:
             return
         data = await self._request(
-            f"{ASSETS_BASE_URL}/v2/assets",
+            f"{self._endpoint}/assets",
             params={"status": "active", "asset_class": "us_equity"},
         )
         # Popisek: symbol – název (burza); třídíme podle symbolu
