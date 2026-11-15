@@ -51,6 +51,9 @@ async def _build_index(cache: KlineCache) -> None:
         "symbol": None,
         "timeframe": last_timeframe,
         "load_seq": 0,
+        # Zámek řadí vykreslení: starší (pomalejší) odpověď nesmí přepsat
+        # novější data po rychlém přepnutí timeframu
+        "load_lock": asyncio.Lock(),
         "stream_task": None,
         "badge_live": None,
         "indicators": [],
@@ -282,12 +285,19 @@ async def _build_index(cache: KlineCache) -> None:
             if not candles:
                 show_status(f"Pro {symbol} ({timeframe}) nejsou dostupná data.", error=True)
                 return
-            await chart.set_candles(candles, visible_bars=VISIBLE_BARS)
-            state["candles"] = candles
-            # Přepočet aktivních indikátorů nad novými daty
-            await refresh_indicators()
+            # Vykreslení držíme pod zámkem a číslo požadavku kontrolujeme znovu
+            # uvnitř: data do grafu smí zapsat jen nejnovější načtení
+            async with state["load_lock"]:
+                if seq != state["load_seq"]:
+                    return
+                await chart.set_candles(candles, visible_bars=VISIBLE_BARS)
+                state["candles"] = candles
+                # Přepočet aktivních indikátorů nad novými daty
+                await refresh_indicators()
             # Kresby patří k symbolu/timeframu – načteme uložené
             await reload_drawings()
+            if seq != state["load_seq"]:
+                return
             show_status(
                 f"{symbol} · {timeframe} · {len(candles)} svíček · zdroj {provider.name}"
             )

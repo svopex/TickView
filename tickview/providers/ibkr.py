@@ -101,6 +101,17 @@ class IbkrProvider(DataProvider):
         # Kontrakt americké akcie/ETF na SMART burze v USD
         return Stock(symbol, "SMART", "USD")
 
+    @staticmethod
+    def _duration(delta_seconds: int) -> str:
+        """Převede délku intervalu na duration string TWS (S / D / Y)."""
+        if delta_seconds < 86400:
+            return f"{delta_seconds} S"
+        days = max(1, math.ceil(delta_seconds / 86400))
+        # TWS odmítá duration delší než 365 dní v jiné jednotce než roky (chyba 321)
+        if days > 365:
+            return f"{math.ceil(days / 365)} Y"
+        return f"{days} D"
+
     async def search(self, query: str, limit: int = 30) -> list[SymbolInfo]:
         """Vyhledá akcie/ETF přes TWS matching symbols (prefixová shoda)."""
         q = query.strip().upper()
@@ -142,13 +153,11 @@ class IbkrProvider(DataProvider):
         # qualifyContracts doplní conId a ověří, že kontrakt existuje
         contract = (await ib.qualifyContractsAsync(contract))[0]
         delta_seconds = max(60, (end_ms - start_ms) // 1000)
-        # Duration string: delší rozsahy po dnech, krátké po sekundách
-        if delta_seconds >= 86400:
-            duration = f"{min(delta_seconds // 86400, 720)} D"
-        else:
-            duration = f"{delta_seconds} S"
+        duration = self._duration(delta_seconds)
         end_dt = datetime.fromtimestamp(end_ms / 1000, tz=timezone.utc)
         await self._limiter.acquire()
+        # Kratší timeout: při chybě validace TWS (např. neplatná duration) totiž
+        # ib_async čeká na odpověď, která nikdy nepřijde, a UI by zamrzlo
         bars = await ib.reqHistoricalDataAsync(
             contract,
             endDateTime=end_dt,
@@ -157,6 +166,7 @@ class IbkrProvider(DataProvider):
             whatToShow="TRADES",
             useRTH=False,
             formatDate=2,
+            timeout=20,
         )
         candles: list[Candle] = []
         for bar in bars:
