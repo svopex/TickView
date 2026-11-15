@@ -79,11 +79,10 @@ VÝSTUP
 
 ## Další krok
 
-- Zadat platné klíče Alpaca: v dashboardu Alpaca (Paper Trading → API Keys →
-  Regenerate), poté v aplikaci přes ozubené kolečko (Nastavení) do
-  data/config.local.json, restart aplikace a ověřit živá data AAPL.
-- Podle zpětné vazby doladit kreslení ve stylu TradingView (viz další
-  požadavek uživatele: vertikální lišta nástrojů jako na tradingview.com/chart).
+- Ověřit živá data Alpaca při otevřeném trhu (AAPL v intraday timeframe, IEX
+  websocket) – kód hotový, víkend bez obchodování neumožnil potvrdit toky baru.
+- Volitelně doladit kreslení podle zpětné vazby (barvy kreseb, mazání po
+  jedné, popisky) – lišta ve stylu TradingView je nasazená.
 
 ## Jak spustit
 

@@ -161,6 +161,28 @@ class AlpacaProvider(DataProvider):
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
         return int(parsed.timestamp() * 1000)
 
+    async def tickers(self, symbols: list[str]) -> dict[str, dict]:
+        """Vrátí poslední cenu a denní změnu (%) ze snapshots (feed IEX)."""
+        if not symbols:
+            return {}
+        data = await self._request(
+            f"{DATA_BASE_URL}/v2/stocks/snapshots",
+            params={"symbols": ",".join(symbols), "feed": "iex"},
+        )
+        result: dict[str, dict] = {}
+        for symbol, snapshot in (data or {}).items():
+            latest_trade = snapshot.get("latestTrade") or {}
+            daily_bar = snapshot.get("dailyBar") or {}
+            previous_bar = snapshot.get("prevDailyBar") or {}
+            price = latest_trade.get("p") or daily_bar.get("c")
+            previous_close = previous_bar.get("c")
+            if price is None:
+                continue
+            # Denní změna proti předchozímu uzavření
+            change_pct = ((price / previous_close) - 1.0) * 100.0 if previous_close else 0.0
+            result[symbol] = {"price": float(price), "change_pct": change_pct}
+        return result
+
     async def history(
         self, symbol: str, timeframe: str, start_ms: int, end_ms: int
     ) -> list[Candle]:

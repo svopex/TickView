@@ -131,7 +131,7 @@ Všechny systémy (Windows, macOS, Linux):
   horizontální i svislá linie, trendová čára, polopřímka, přímka, obdélník,
   mazání všeho), watchlist v levém panelu (přidat/odebrat,
   klik přepne graf, poslední cena a denní změna – Binance živě po 5 s,
-  Yahoo denní změna s obnovou po 60 s).
+  Yahoo denní změna a Alpaca snapshots s obnovou po 60/5 s).
 - Připravuje se: kreslení ve stylu TradingView (vertikální lišta nástrojů),
   poté volitelné vylepšení podle zpětné vazby.
 
