@@ -323,7 +323,8 @@ window.TickViewChart = (function () {
       s.overlay.drag = null;
     });
 
-    // Pravý klik: smaže označenou / kresbu pod kurzorem (režim kurzoru)
+    // Pravý klik: smaže označenou / kresbu pod kurzorem (režim kurzoru);
+    // nad kresbou otevře menu s odebráním kresby a všech kreseb
     mainHost.addEventListener(
       'contextmenu',
       (event) => {
@@ -334,7 +335,11 @@ window.TickViewChart = (function () {
         const x = event.clientX - pane.hostLeft - pane.offsetX;
         const y = event.clientY - pane.hostTop - pane.offsetY;
         const index = hitTest(s, x, y);
-        if (index >= 0) removeDrawing(s, index);
+        if (index >= 0) {
+          selectDrawing(s, index);
+          redrawOverlay(s);
+          showContextMenu(s, event.clientX, event.clientY);
+        }
       },
       true
     );
@@ -380,14 +385,56 @@ window.TickViewChart = (function () {
         }
       });
     }
-    // Klik mimo lištu a flyout nabídku flyout zavře
+    // Klik mimo lištu a flyout nabídku flyout zavře; klik mimo kontextové menu ho zavře
     document.addEventListener('click', (event) => {
       if (!event.target.closest('.drawing-toolbar') && !event.target.closest('.tool-flyout')) {
         closeFlyout();
       }
+      if (!event.target.closest('.drawing-contextmenu')) {
+        closeContextMenu();
+      }
     });
 
     renderLegend(s, null);
+  }
+
+  // Pravoklikové menu nad kresbou: odebrání kresby a všech kreseb
+  function showContextMenu(s, clientX, clientY) {
+    closeContextMenu();
+    const menu = document.createElement('div');
+    menu.className = 'drawing-contextmenu';
+    const items = [
+      ['Odebrat kresbu', () => { deleteSelected(s); redrawOverlay(s); }],
+      ['Odebrat všechny kresby', () => { selectDrawing(s, -1); trashDrawings(s.elementId); }],
+    ];
+    for (const [label, handler] of items) {
+      const item = document.createElement('div');
+      item.className = 'drawing-contextmenu-item';
+      item.textContent = label;
+      item.addEventListener('click', () => {
+        handler();
+        closeContextMenu();
+      });
+      menu.appendChild(item);
+    }
+    menu.style.left = clientX + 'px';
+    menu.style.top = clientY + 'px';
+    document.body.appendChild(menu);
+  }
+
+  // Zavře pravoklikové menu (pokud existuje)
+  function closeContextMenu() {
+    document.querySelectorAll('.drawing-contextmenu').forEach((menu) => menu.remove());
+  }
+
+  // Odeberie všechny kresby (lokálně + fronta mazání pro backend)
+  function clearAllDrawings(s) {
+    for (const drawing of s.overlay.drawings) {
+      if (drawing.id) s.finishedQueue.push({ type: 'delete', id: drawing.id });
+    }
+    s.overlay.drawings = [];
+    s.overlay.selected = -1;
+    redrawOverlay(s);
   }
 
   // Flyout nabídka skupiny nástrojů (pozice u tlačítka, jako v TradingView)
@@ -808,32 +855,61 @@ window.TickViewChart = (function () {
     return false;
   }
 
-  // Zpracuje klik při aktivním kreslení; hline a vline stačí jedním klikem
+  // Počet kliků potřebných pro každý nástroj (1 = jednoklikové, 3 = kanál/pitchfork)
+  const DRAWING_CLICKS = {
+    hline: 1,
+    vline: 1,
+    hray: 1,
+    cross: 1,
+    channel: 3,
+    pitchfork: 3,
+    brush: 0,
+    text: 1,
+    sticker: 1,
+    measure: 2,
+  };
+
+  // Zpracuje klik při aktivním kreslení; jednoklikové nástroje hline, vline,
+  // hray a cross stačí jedním klikem; kanál a pitchfork potřebují tři kliky;
+  // štětec sbírá body při tažení a klikem se ukončí; ostatní jsou dvouklikové
   function handleDrawingClick(s, point) {
     const kind = s.overlay.mode;
-    if (kind === 'hline' || kind === 'vline') {
-      finishDrawing(s, { kind: kind, points: [point] });
-      return;
-    }
+    const needed = DRAWING_CLICKS[kind] !== undefined ? DRAWING_CLICKS[kind] : 2;
     if (!s.overlay.pending) {
+      if (needed === 1) {
+        finishDrawing(s, { kind: kind, points: [point] });
+        return;
+      }
       s.overlay.pending = { kind: kind, points: [point] };
       redrawOverlay(s);
       return;
     }
-    // Štětec ukončí tažení dalším klikem (body se sbíraly při pohybu)
-    if (kind === 'brush' && s.overlay.pending.kind === 'brush') {
+    // Štětec: body se sbírají při tažení, klik ukončí kresbu
+    if (kind === 'brush') {
       s.overlay.pending.points.push(point);
       finishDrawing(s, s.overlay.pending);
       return;
     }
-    s.overlay.pending.points.push(point);
-    finishDrawing(s, s.overlay.pending);
+    const points = s.overlay.pending.points;
+    // Další body přidáváme, dokud není dosažen počet kliků nástroje
+    points.push(point);
+    if (points.length >= needed) {
+      finishDrawing(s, s.overlay.pending);
+      return;
+    }
+    redrawOverlay(s);
   }
 
-  // Klik měřiče: první bod → náhled, další klik měřič zruší (neukládá se)
+  // Klik měřiče: 1. klik start, 2. klik finální měřič (zůstane zobrazený),
+  // 3. klik ho zruší (jako v TradingView – měřič se neukládá)
   function handleMeasureClick(s, point) {
     if (!s.measure) {
       s.measure = { points: [point] };
+      redrawOverlay(s);
+      return;
+    }
+    if (s.measure.points.length === 1) {
+      s.measure.points.push(point);
       redrawOverlay(s);
       return;
     }
@@ -997,13 +1073,18 @@ window.TickViewChart = (function () {
           if (x >= x1 - threshold && x <= x2 + threshold && Math.abs(y - yLevel) <= threshold) return i;
         }
       } else if (drawing.kind === 'pitchfork') {
-        // Tři linie: A→M(B,C) a rovnoběžky z B a C (testujeme viditelnou část)
+        // Tři linie: A→M(B,C) a rovnoběžky z B a C (testujeme viditelnou část);
+        // při dvoubodové (rozpracované) kresbě testujeme jen spojnici A→B
         const [a, b, c] = points;
-        const midX = (b.x + c.x) / 2;
-        const midY = (b.y + c.y) / 2;
-        if (distToSegment(x, y, a.x, a.y, midX, midY) <= threshold) return i;
-        if (distToSegment(x, y, b.x, b.y, midX + (b.x - a.x), midY + (b.y - a.y)) <= threshold) return i;
-        if (distToSegment(x, y, c.x, c.y, midX + (c.x - a.x), midY + (c.y - a.y)) <= threshold) return i;
+        if (!c) {
+          if (distToSegment(x, y, a.x, a.y, b.x, b.y) <= threshold) return i;
+        } else {
+          const midX = (b.x + c.x) / 2;
+          const midY = (b.y + c.y) / 2;
+          if (distToSegment(x, y, a.x, a.y, midX, midY) <= threshold) return i;
+          if (distToSegment(x, y, b.x, b.y, midX + (b.x - a.x), midY + (b.y - a.y)) <= threshold) return i;
+          if (distToSegment(x, y, c.x, c.y, midX + (c.x - a.x), midY + (c.y - a.y)) <= threshold) return i;
+        }
       } else {
         // trend / ray / extended: vzdálenost k úsečce mezi body
         const [a, b] = points;

@@ -181,7 +181,9 @@ VÝSTUP
   (úchopové čtverečky), tažení úchopu mění body, tažení těla posouvá celou
   kresbu (zachytávání mousedown na hostu v capture fázi, aby graf nepanoval);
   mouseup uloží update do DB (cache.update_drawing). Mazání: Del nad
-  označenou, pravý klik pod kurzorem, koš = označená nebo všechny. Magnet:
+  označenou, pravý klik pod kurzorem otevře KONTEXTOVÉ MENU s „Odebrat
+  kresbu“ a „Odebrat všechny kresby“ (klik nad kresbou ji nejprve vybere),
+  koš = označená nebo všechny. Magnet:
   přichytí bod k času nejbližší svíčky a ceně k nejbližší OHLC (±12 px). Oko
   skryje/zobrazí kresby. Zámek zakáže editaci i mazání. Měřič: Δcena, % a
   počet barů (jen náhled, neukládá se). Text: klik → dialog v Pythonu →
@@ -202,6 +204,13 @@ VÝSTUP
   /ticker/24hr batch dotaz (json pole bez mezer) každých 5 s; Yahoo denní
   svíčky s in-memory TTL 60 s a Alpaca snapshots (latestTrade/prevDailyBar,
   feed=iex) s TTL 5 s; změna se barví zeleně/červeně.
+- Počty kliků nástrojů (oprava kanálu/pitchforku): handleDrawingClick bere
+  počet kliků z mapy DRAWING_CLICKS (hline/vline/hray/cross/text/sticker = 1,
+  kanál a pitchfork = 3, štětec = tahání + klik, ostatní = 2). Dříve se
+  VŠE dokončilo po 2. kliku, takže kanál/pitchfork ukládaly jen 2 body a
+  kreslily se jako obyčejná přímka („nefunguje“). Staré 2bodové kanály se
+  vykreslí jako přímka (data nelze doplnit). Pravoklikové menu i mazání jsou
+  blokované, když jsou kresby uzamčené.
 - Alpaca (krok 7): market data přes https://data.alpaca.markets/v2/stocks/bars
   s feed=iex (zdarma v plánu Basic – IEX pokrývá část objemu trhu, nikoli celý
   SIP feed); seznam instrumentů z nakonfigurovaného trading endpointu (paper

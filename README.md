@@ -131,13 +131,16 @@ Všechny systémy (Windows, macOS, Linux):
   polopřímka, přímka, trendová šipka, horizontální/svislá linie, horizontální
   polopřímka, kříž, Fibonacci retracement i extension (s popisky), paralelní
   kanál, pitchfork, obdélník, štětec, text, sticker (emoji), měřič; výběr
-  kresby klikem s úchopy a tažením, Del/pravý klik/koš na mazání, magnet na
+  kresby klikem s úchopy a tažením, mazání přes pravoklikové menu („Odebrat
+  kresbu“ / „Odebrat všechny kresby“), Del nebo koš, magnet na
   OHLC, tužka (nástroj zůstává aktivní), zámek a skrytí kreseb; paleta barev
-  nových kreseb; kresby se ukládají k symbolu a timeframe (přetrvávají restart), watchlist
+  nových kreseb; kresby se ukládají k symbolu a timeframe (přetrvávají restart).
+  Watchlist
   v levém panelu (přidat/odebrat, klik přepne graf, poslední cena a denní
   změna – Binance živě po 5 s, Yahoo denní změna a Alpaca snapshots s obnovou
   po 60/5 s).
-- Připravuje se: kreslení ve stylu TradingView (vertikální lišta nástrojů),
+- Do hotových funkcí patří i kreslení ve stylu TradingView (viz výše) —
+  vertikální lišta nástrojů je nasazená.
   poté volitelné vylepšení podle zpětné vazby.
 
 ### Alpaca (volitelný zdroj živých akcií)

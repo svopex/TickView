@@ -18,7 +18,7 @@ DEFAULT_BARS = 600
 VISIBLE_BARS = 150
 
 # Verze statických souborů pro cache-busting v prohlížeči (při změně CSS/JS zvýšit)
-STATIC_VERSION = "0.4.0"
+STATIC_VERSION = "0.4.2"
 
 
 def register(cache: KlineCache) -> None:
