@@ -1,10 +1,12 @@
-"""Hlavní stránka TickView: vyhledání symbolu, timeframy, graf, živý stream."""
+"""Hlavní stránka TickView: vyhledání symbolu, timeframy, graf, indikátory, živý stream."""
 
 import asyncio
+import uuid
 
 from nicegui import context, ui
 
 from tickview.logic.cache import KlineCache, fetch_history
+from tickview.logic.indicators import INDICATOR_DEFS, PARAM_LABELS, compute_indicators
 from tickview.providers import PROVIDERS, get_provider
 from tickview.providers.base import TIMEFRAME_MS, utc_now_ms
 from tickview.ui.lightweight_chart import LightweightChart
@@ -15,7 +17,7 @@ DEFAULT_BARS = 600
 VISIBLE_BARS = 150
 
 # Verze statických souborů pro cache-busting v prohlížeči (při změně CSS/JS zvýšit)
-STATIC_VERSION = "0.1.3"
+STATIC_VERSION = "0.1.4"
 
 
 def register(cache: KlineCache) -> None:
@@ -50,6 +52,8 @@ async def _build_index(cache: KlineCache) -> None:
         "load_seq": 0,
         "stream_task": None,
         "badge_live": None,
+        "indicators": [],
+        "candles": None,
     }
 
     # ---------- handlery (uzávěry nad elementy vytvořenými níže) ----------
@@ -199,6 +203,9 @@ async def _build_index(cache: KlineCache) -> None:
                 show_status(f"Pro {symbol} ({timeframe}) nejsou dostupná data.", error=True)
                 return
             await chart.set_candles(candles, visible_bars=VISIBLE_BARS)
+            state["candles"] = candles
+            # Přepočet aktivních indikátorů nad novými daty
+            await refresh_indicators()
             show_status(
                 f"{symbol} · {timeframe} · {len(candles)} svíček · zdroj {provider.name}"
             )
@@ -217,6 +224,70 @@ async def _build_index(cache: KlineCache) -> None:
         # Po inicializaci grafu v prohlížeči obnovíme poslední zobrazený symbol
         await load_symbol(last_symbol)
 
+    # ---------- indikátory ----------
+
+    async def refresh_indicators() -> None:
+        # Přepočítá všechny aktivní indikátory nad aktuálními svíčkami
+        candles = state.get("candles") or []
+        payload = compute_indicators(state["indicators"], candles)
+        await chart.set_indicators(payload)
+        rebuild_indicator_chips()
+
+    def rebuild_indicator_chips() -> None:
+        # Lišta čipů aktivních indikátorů (klik na × odstraní)
+        indicator_bar.clear()
+        if not state["indicators"]:
+            indicator_bar.classes(add="hidden")
+            return
+        indicator_bar.classes(remove="hidden")
+
+        def make_remove(index: int):
+            async def _remove(_event):
+                del state["indicators"][index]
+                await refresh_indicators()
+
+            return _remove
+
+        with indicator_bar:
+            ui.label("Indikátory:").classes("indicator-label")
+            for index, spec in enumerate(state["indicators"]):
+                title = INDICATOR_DEFS[spec["kind"]]["title"] + " " + " ".join(
+                    str(v) for v in spec["params"].values()
+                )
+                ui.button(title, icon="close", on_click=make_remove(index)).props(
+                    "flat dense size=sm"
+                ).classes("indicator-chip")
+
+    async def submit_indicator() -> None:
+        # Přečte parametry z dialogu a přidá indikátor do aktivních
+        kind = dialog_state["kind"]
+        params = {}
+        for name, default in INDICATOR_DEFS[kind]["params"].items():
+            value = dialog_params[name].value
+            params[name] = default if value is None else value
+        state["indicators"].append(
+            {"id": uuid.uuid4().hex[:8], "kind": kind, "params": params}
+        )
+        indicator_dialog.close()
+        await refresh_indicators()
+
+    def rebuild_dialog_params(kind: str) -> None:
+        # Pole parametrů se mění podle typu indikátoru
+        dialog_params.clear()
+        dialog_params_container.clear()
+        with dialog_params_container:
+            for name, default in INDICATOR_DEFS[kind]["params"].items():
+                dialog_params[name] = ui.number(
+                    PARAM_LABELS.get(name, name), value=default
+                ).props("outlined dense")
+
+    def open_indicator_dialog() -> None:
+        # Výchozí hodnoty parametrů při každém otevření
+        dialog_state["kind"] = "sma"
+        dialog_kind_select.value = "sma"
+        rebuild_dialog_params("sma")
+        indicator_dialog.open()
+
     # ---------- UI ----------
 
     with ui.column().classes("page-root w-full"):
@@ -228,8 +299,28 @@ async def _build_index(cache: KlineCache) -> None:
             timeframe_toggle = ui.toggle(options=[], value=None).classes("timeframes")
             source_badge = ui.badge("—").classes("source-badge")
             theme_switch = ui.switch("Tmavý motiv", value=dark)
+            ui.button("Indikátor", icon="add_chart", on_click=open_indicator_dialog).props(
+                "flat"
+            ).classes("indicator-add")
+        indicator_bar = ui.row().classes("indicator-bar w-full hidden")
         chart = LightweightChart(dark=dark, on_ready=initial_load)
         status_label = ui.label("").classes("statusbar w-full")
+
+    # Dialog pro přidání indikátoru; pole parametrů se přestavují podle typu
+    dialog_state = {"kind": "sma"}
+    dialog_params = {}
+    with ui.dialog() as indicator_dialog, ui.card().classes("indicator-dialog"):
+        with ui.column().classes("indicator-dialog-body"):
+            dialog_kind_select = ui.select(
+                {k: v["title"] for k, v in INDICATOR_DEFS.items()},
+                value="sma",
+                label="Typ indikátoru",
+                on_change=lambda event: rebuild_dialog_params(event.value),
+            ).props("outlined dense").classes("indicator-kind-select")
+            dialog_params_container = ui.column().classes("indicator-dialog-params")
+            with ui.row().classes("dialog-actions"):
+                ui.button("Přidat", on_click=submit_indicator).props("unelevated")
+                ui.button("Zrušit", on_click=indicator_dialog.close).props("flat")
 
     # ---------- vazby ----------
     search_input.on("keydown.enter", search_symbols)

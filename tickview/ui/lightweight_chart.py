@@ -68,3 +68,11 @@ class LightweightChart(ui.element):
         self._dark = dark
         with self:
             ui.run_javascript(f'window.TickViewChart.setTheme("{self._js_id}", {str(dark).lower()});')
+
+    async def set_indicators(self, payload: dict) -> None:
+        """Nahradí všechny indikátory (overlay čáry + panely) v grafu."""
+        payload_json = json.dumps(payload)
+        with self:
+            ui.run_javascript(
+                f'window.TickViewChart.setIndicators("{self._js_id}", {payload_json});'
+            )

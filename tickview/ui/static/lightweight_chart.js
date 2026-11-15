@@ -138,6 +138,10 @@ window.TickViewChart = (function () {
       byTime: new Map(),
       lastCandle: null,
       hovering: false,
+      overlaySeries: [],
+      panesMap: new Map(),
+      syncing: false,
+      lastIndicatorPayload: null,
     };
     state.set(id, s);
 
@@ -149,7 +153,135 @@ window.TickViewChart = (function () {
       renderLegend(s, bar || s.lastCandle);
     });
 
+    // Panely indikátorů následují rozsah hlavního grafu
+    chart.timeScale().subscribeVisibleLogicalRangeChange((range) => syncRange(s, chart, range));
+
     renderLegend(s, null);
+  }
+
+  // Synchronizuje viditelný rozsah mezi hlavním grafem a panely indikátorů
+  function syncRange(s, source, range) {
+    if (s.syncing || !range) return;
+    s.syncing = true;
+    try {
+      if (s.chart !== source) s.chart.timeScale().setVisibleLogicalRange(range);
+      for (const pane of s.panesMap.values()) {
+        if (pane.chart !== source) pane.chart.timeScale().setVisibleLogicalRange(range);
+      }
+    } finally {
+      s.syncing = false;
+    }
+  }
+
+  // Odstraní overlay čáry i panely indikátorů
+  function clearIndicators(id) {
+    const s = state.get(id);
+    if (!s) return;
+    for (const series of s.overlaySeries) s.chart.removeSeries(series);
+    s.overlaySeries = [];
+    for (const pane of s.panesMap.values()) {
+      try {
+        pane.chart.remove();
+      } catch (err) {
+        // Graf už byl odstraněn – nic nerozbíjíme
+      }
+      pane.wrap.remove();
+    }
+    s.panesMap.clear();
+  }
+
+  // Vytvoří panel indikátoru (RSI/MACD) pod hlavním grafem se synchronizovaným časem
+  function addIndicatorPane(s, pane, theme) {
+    const wrap = document.createElement('div');
+    wrap.className = 'lwchart-pane lwchart-pane-' + pane.kind;
+    const title = document.createElement('div');
+    title.className = 'lwchart-pane-title';
+    title.textContent = pane.title;
+    const host = document.createElement('div');
+    host.className = 'lwchart-pane-host';
+    wrap.appendChild(title);
+    wrap.appendChild(host);
+    s.panes.appendChild(wrap);
+
+    const chart = LightweightCharts.createChart(host, {
+      autoSize: true,
+      layout: theme.layout,
+      grid: theme.grid,
+      rightPriceScale: { borderColor: theme.border },
+      // Časová osa je vidět jen v hlavním grafu; panely se synchronizují rozsahem
+      timeScale: { borderColor: theme.border, visible: false },
+    });
+
+    const created = [];
+    let baseSeries = null;
+    for (const spec of pane.series) {
+      let series;
+      if (spec.type === 'histogram') {
+        series = chart.addHistogramSeries({
+          priceFormat: { type: 'price' },
+          lastValueVisible: false,
+          priceLineVisible: false,
+        });
+        series.setData(spec.data);
+      } else {
+        series = chart.addLineSeries({
+          color: spec.color,
+          lineWidth: 1,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+        });
+        series.setData(spec.data);
+      }
+      if (!baseSeries && spec.type !== 'histogram') baseSeries = series;
+      created.push(series);
+    }
+
+    // Úrovně (30/70 u RSI, 0 u MACD) jako přerušované cenové linky
+    const levelColor = s.themeName === 'dark' ? 'rgba(209, 212, 220, 0.4)' : 'rgba(19, 23, 34, 0.4)';
+    for (const level of pane.levels || []) {
+      const target = baseSeries || created[0];
+      if (target) {
+        target.createPriceLine({
+          price: level,
+          color: levelColor,
+          lineWidth: 1,
+          lineStyle: LightweightCharts.LineStyle.Dashed,
+          axisLabelVisible: false,
+        });
+      }
+    }
+
+    chart.timeScale().subscribeVisibleLogicalRangeChange((range) => syncRange(s, chart, range));
+    // Nový panel se rovná na rozsah hlavního grafu
+    const mainRange = s.chart.timeScale().getVisibleLogicalRange();
+    if (mainRange) chart.timeScale().setVisibleLogicalRange(mainRange);
+    s.panesMap.set(pane.paneId, { chart, wrap, series: created });
+  }
+
+  // Nahradí všechny indikátory: overlay čáry + panely pod hlavním grafem
+  function setIndicators(id, payload) {
+    const s = state.get(id);
+    if (!s) return;
+    s.lastIndicatorPayload = payload;
+    clearIndicators(id);
+    const theme = THEMES[s.themeName];
+    // Overlay čáry v hlavním grafu (SMA, EMA, Bollinger)
+    for (const overlay of payload.overlays || []) {
+      const series = s.chart.addLineSeries({
+        color: overlay.color,
+        lineWidth: 1,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false,
+      });
+      series.setData(overlay.data);
+      s.overlaySeries.push(series);
+    }
+    // Samostatné panely (RSI, MACD)
+    for (const pane of payload.panes || []) {
+      addIndicatorPane(s, pane, theme);
+    }
   }
 
   // Nahradí celý dataset svíček (načtení historie)
@@ -224,7 +356,16 @@ window.TickViewChart = (function () {
     s.volumeSeries.setData(
       s.candles.map((candle) => ({ time: candle.time, value: candle.volume, color: volumeColor(candle) }))
     );
+    // Panely indikátorů přegenerovat v novém motivu
+    if (s.lastIndicatorPayload) setIndicators(id, s.lastIndicatorPayload);
   }
 
-  return { init: init, setCandles: setCandles, updateCandle: updateCandle, setTheme: setTheme };
+  return {
+    init: init,
+    setCandles: setCandles,
+    updateCandle: updateCandle,
+    setTheme: setTheme,
+    setIndicators: setIndicators,
+    clearIndicators: clearIndicators,
+  };
 })();

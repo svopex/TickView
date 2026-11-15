@@ -123,8 +123,10 @@ Všechny systémy (Windows, macOS, Linux):
   ukládání posledního symbolu/timeframu/motivu, živé svíčky Binance přes
   websocket (inkrementální update grafu, automatické znovupřipojení, štítek
   „živě / zpožděno“), akcie/ETF/indexy/forex přes Yahoo Finance s živým
-  pollingem a hlášením zavřeného trhu.
-- Připravuje se (kroky 4–7): indikátory, kreslení, watchlist, Alpaca.
+  pollingem a hlášením zavřeného trhu, indikátory SMA, EMA, Bollinger Bands,
+  RSI a MACD (RSI/MACD ve vlastních panelech se synchronizovaným časem,
+  nastavitelné parametry, mazání čipem).
+- Připravuje se (kroky 5–7): kreslení, watchlist, Alpaca.
 
 ## Struktura projektu
 
@@ -141,6 +143,8 @@ Všechny systémy (Windows, macOS, Linux):
 - `tickview/providers/__init__.py` – registr zdrojů (nový zdroj = jeden řádek)
 - `tickview/logic/cache.py` – SQLite cache svíček + nastavení; skládání historie
   z cache a sítě (ze sítě stahuje jen chybějící úseky)
+- `tickview/logic/indicators.py` – výpočet SMA/EMA/BB/RSI/MACD přes pandas-ta,
+  payload overlay čar a panelů pro graf
 - `tickview/ui/lightweight_chart.py` – vlastní komponenta NiceGUI obalující
   Lightweight Charts (init, výměna dat, inkrementální svíčka, motiv)
 - `tickview/ui/main_window.py` – hlavní stránka: vyhledání symbolu, timeframy,

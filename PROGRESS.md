@@ -68,7 +68,7 @@ VÝSTUP
 1. Kostra projektu + Binance + statický graf – hotovo (commit „Krok 1“)
 2. Živá data (websocket) – hotovo (commit „Krok 2“)
 3. yfinance – hotovo (commit „Krok 3“)
-4. Indikátory – čeká
+4. Indikátory – hotovo (commit „Krok 4“)
 5. Kreslení – čeká
 6. Watchlist – čeká
 7. Alpaca – čeká
@@ -79,10 +79,10 @@ VÝSTUP
 
 ## Další krok
 
-- Krok 4 (indikátory): tickview/logic/indicators.py (SMA, EMA, Bollinger
-  Bands, RSI, MACD přes pandas-ta), JS panely pod hlavním grafem se
-  synchronizovaným časem, UI dialog pro přidání indikátoru s parametry,
-  přepočet při změně symbolu/timeframu.
+- Krok 5 (kreslení): překryvný canvas nad hlavním grafem, nástroje horizontální
+  linie / trendová čára / obdélník, převod mezi pixely a (čas, cena) přes LWC
+  API, ukládání kreseb k symbolu do SQLite (tabulka drawings), tlačítko pro
+  smazání kreseb.
 
 ## Jak spustit
 
@@ -155,6 +155,15 @@ VÝSTUP
 - Zavřený trh: consume_stream hlásí „trh je pravděpodobně zavřený“, když je
   nejnovější svíčka už uzavřená (open_time + step <= now) – hlásí se jen jednou
   na načtení.
+- Indikátory (krok 4): výpočet přes pandas-ta (sma/ema/bbands/rsi/macd);
+  sloupce BB/MACD se hledají prefixem, protože názvy obsahují parametry
+  (BBL_20_2.0_2.0, MACDh_12_26_9). Payload pro JS: overlays (čáry v hlavním
+  grafu) + panes (RSI 110 px, MACD 140 px; úrovně 30/70 resp. 0 jako price
+  lines). Panely se synchronizují přes visibleLogicalRangeChange s ochranným
+  příznakem syncing; časová osa viditelná jen v hlavním grafu. NaN hodnoty se
+  zahazují. Barvy z cyklické palety. UI: dialog s parametry (přestavuje pole
+  dle typu), aktivní indikátory jako čipy s odstraněním, přepočet po každém
+  načtení dat.
 - Alpaca (krok 7): uživatel zadal endpoint https://paper-api.alpaca.markets/v2
   a api_key PKPCQ5NKWKFVLY5N7EKU3WNK4N, uloženo v data/config.local.json
   (neverzováno); chybí secret key – po jeho zadání zdroj povolíme. Pro tržní
