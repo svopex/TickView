@@ -69,7 +69,7 @@ VÝSTUP
 2. Živá data (websocket) – hotovo (commit „Krok 2“)
 3. yfinance – hotovo (commit „Krok 3“)
 4. Indikátory – hotovo (commit „Krok 4“)
-5. Kreslení – čeká
+5. Kreslení – hotovo (commit „Krok 5“)
 6. Watchlist – čeká
 7. Alpaca – čeká
 
@@ -79,10 +79,10 @@ VÝSTUP
 
 ## Další krok
 
-- Krok 5 (kreslení): překryvný canvas nad hlavním grafem, nástroje horizontální
-  linie / trendová čára / obdélník, převod mezi pixely a (čas, cena) přes LWC
-  API, ukládání kreseb k symbolu do SQLite (tabulka drawings), tlačítko pro
-  smazání kreseb.
+- Krok 6 (watchlist): tabulka watchlist (source+symbol) v SQLite, levý panel
+  se seznamem sledovaných symbolů (přidat/odebrat, klik přepne graf), cena a
+  denní změna přes Binance REST /ticker/24hr (polling, omezovač) resp. cache
+  denních svíček pro Yahoo; uchování napříč restartem.
 
 ## Jak spustit
 
@@ -164,6 +164,15 @@ VÝSTUP
   zahazují. Barvy z cyklické palety. UI: dialog s parametry (přestavuje pole
   dle typu), aktivní indikátory jako čipy s odstraněním, přepočet po každém
   načtení dat.
+- Kreslení (krok 5): překryvný canvas nad hlavním grafem; převody px↔(čas,cena)
+  přes timeScale.coordinateToTime / series.coordinateToPrice a zpět;
+  horizontální linie 1 klik, trend a obdélník 2 kliky, preview sleduje kurzor,
+  Esc ruší. Body kresby se ukládají jako JSON do tabulky drawings
+  (source+symbol+timeframe). JS→Python kanál: stránkový timer 0,5 s vyzvedává
+  frontu hotových kreseb přes popFinishedDrawing (DOM CustomEvent z Vue
+  komponenty do NiceGUI neprojde spolehlivě; fronta zvládne více kreseb mezi
+  ticky). Kontejner grafu se hledá přes data-chart-id atribut – vlastní id
+  prvku necháváme NiceGUI (přepis id rozbil event binding).
 - Alpaca (krok 7): uživatel zadal endpoint https://paper-api.alpaca.markets/v2
   a api_key PKPCQ5NKWKFVLY5N7EKU3WNK4N, uloženo v data/config.local.json
   (neverzováno); chybí secret key – po jeho zadání zdroj povolíme. Pro tržní

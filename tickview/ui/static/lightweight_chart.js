@@ -73,7 +73,7 @@ window.TickViewChart = (function () {
 
   // Vytvoří graf v kontejneru: hlavní panel se svíčkami + objem jako překryv
   function init(id, options) {
-    const container = document.getElementById(id);
+    const container = document.querySelector('[data-chart-id="' + id + '"]');
     if (!container || state.has(id)) return;
     const themeName = options && options.dark ? 'dark' : 'light';
     const theme = THEMES[themeName];
@@ -93,6 +93,11 @@ window.TickViewChart = (function () {
     const mainHost = document.createElement('div');
     mainHost.className = 'lwchart-host';
     panes.appendChild(mainHost);
+
+    // Překryvný canvas pro kreslení nad hlavním grafem
+    const overlay = document.createElement('canvas');
+    overlay.className = 'lwchart-overlay';
+    mainHost.appendChild(overlay);
 
     const chart = LightweightCharts.createChart(mainHost, {
       autoSize: true,
@@ -133,6 +138,15 @@ window.TickViewChart = (function () {
       legend,
       panes,
       mainHost,
+      overlay: {
+        canvas: overlay,
+        ctx: overlay.getContext('2d'),
+        mode: null,
+        pending: null,
+        previewPoint: null,
+        drawings: [],
+      },
+      elementId: id,
       themeName,
       candles: [],
       byTime: new Map(),
@@ -142,6 +156,8 @@ window.TickViewChart = (function () {
       panesMap: new Map(),
       syncing: false,
       lastIndicatorPayload: null,
+      finishedQueue: [],
+      lastClick: null,
     };
     state.set(id, s);
 
@@ -153,10 +169,185 @@ window.TickViewChart = (function () {
       renderLegend(s, bar || s.lastCandle);
     });
 
-    // Panely indikátorů následují rozsah hlavního grafu
-    chart.timeScale().subscribeVisibleLogicalRangeChange((range) => syncRange(s, chart, range));
+    // Panely indikátorů + překreslení kresby následují rozsah hlavního grafu
+    chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+      syncRange(s, chart, range);
+      redrawOverlay(s);
+    });
+
+    // Přizpůsobení překryvného canvasu při změně velikosti hostitele
+    const overlayResize = new ResizeObserver(() => redrawOverlay(s));
+    overlayResize.observe(mainHost);
+
+    // Kreslení: kliky na překryvném canvasu vytvářejí body kresby
+    overlay.addEventListener('click', (event) => {
+      s.lastClick = null;
+      if (!s.overlay.mode) return;
+      const rect = overlay.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      // Převod pixel → (čas, cena) přes API grafu
+      const time = s.chart.timeScale().coordinateToTime(x);
+      const price = s.candleSeries.coordinateToPrice(y);
+      s.lastClick = { x: x, y: y, time: time, price: price };
+      if (time === null || price === null) return;
+      handleDrawingClick(s, { time: Number(time), price: Number(price) });
+    });
+    overlay.addEventListener('mousemove', (event) => {
+      if (!s.overlay.pending) return;
+      const rect = overlay.getBoundingClientRect();
+      s.overlay.previewPoint = {
+        x: event.clientX - rect.left,
+        y: event.clientY - rect.top,
+      };
+      redrawOverlay(s);
+    });
+    // Escape zruší rozepsanou kresbu
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && s.overlay.pending) {
+        s.overlay.pending = null;
+        s.overlay.previewPoint = null;
+        redrawOverlay(s);
+      }
+    });
 
     renderLegend(s, null);
+  }
+
+  // Zpracuje klik při aktivním kreslení; horizontální linie stačí jedním klikem
+  function handleDrawingClick(s, point) {
+    const kind = s.overlay.mode;
+    if (kind === 'hline') {
+      finishDrawing(s, { kind: 'hline', points: [point] });
+      return;
+    }
+    if (!s.overlay.pending) {
+      s.overlay.pending = { kind: kind, points: [point] };
+      redrawOverlay(s);
+      return;
+    }
+    s.overlay.pending.points.push(point);
+    finishDrawing(s, s.overlay.pending);
+  }
+
+  // Dokončí kresbu: přidá ji do seznamu, uloží payload pro backend a upozorní ho signálem
+  function finishDrawing(s, drawing) {
+    s.overlay.pending = null;
+    s.overlay.previewPoint = null;
+    s.overlay.drawings.push(drawing);
+    redrawOverlay(s);
+    // Hotové kresby se hromadí ve frontě a backend si je vyzvedává stránkovým
+    // timerem přes popFinishedDrawing (DOM eventy z Vue komponenty nejsou
+    // spolehlivé; fronta zvládne i více kreseb mezi dvěma ticky)
+    s.finishedQueue.push({ kind: drawing.kind, points: drawing.points });
+  }
+
+  // Vyzvedne jednu dokončenou kresbu z fronty (nebo null, když je prázdná)
+  function popFinishedDrawing(id) {
+    const s = state.get(id);
+    if (!s || !s.finishedQueue.length) return null;
+    return s.finishedQueue.shift();
+  }
+
+  // Překreslí všechny kresby na překryvném canvasu
+  function redrawOverlay(s) {
+    const canvas = s.overlay.canvas;
+    const ctx = s.overlay.ctx;
+    const dpr = window.devicePixelRatio || 1;
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
+    if (!width || !height) return;
+    if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
+      canvas.width = Math.round(width * dpr);
+      canvas.height = Math.round(height * dpr);
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+
+    const all = [...s.overlay.drawings];
+    if (s.overlay.pending) all.push({ ...s.overlay.pending, preview: true });
+    for (const drawing of all) {
+      drawShape(ctx, s, drawing, width, height);
+    }
+  }
+
+  // Nakreslí jednu kresbu; preview = rozepsaná kresba sledující kurzor
+  function drawShape(ctx, s, drawing, width, height) {
+    const timeScale = s.chart.timeScale();
+    const series = s.candleSeries;
+    let points = drawing.points;
+    // Druhý bod rozepsané kresby se přizpůsobí aktuální pozici kurzoru
+    if (drawing.preview && s.overlay.previewPoint && points.length === 1) {
+      const time = timeScale.coordinateToTime(s.overlay.previewPoint.x);
+      const price = series.coordinateToPrice(s.overlay.previewPoint.y);
+      if (time !== null && price !== null) {
+        points = [points[0], { time: Number(time), price: Number(price) }];
+      }
+    }
+
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = drawing.preview ? 'rgba(41, 98, 255, 0.8)' : '#2962ff';
+
+    const toPixel = (point) => {
+      const x = timeScale.timeToCoordinate(point.time);
+      const y = series.priceToCoordinate(point.price);
+      return x === null || y === null ? null : { x: x, y: y };
+    };
+
+    if (drawing.kind === 'hline') {
+      const p = toPixel(points[0]);
+      if (!p) return;
+      ctx.beginPath();
+      ctx.moveTo(0, p.y);
+      ctx.lineTo(width, p.y);
+      ctx.stroke();
+      return;
+    }
+    if (points.length < 2) return;
+    const p1 = toPixel(points[0]);
+    const p2 = toPixel(points[1]);
+    if (!p1 || !p2) return;
+    if (drawing.kind === 'trend') {
+      ctx.beginPath();
+      ctx.moveTo(p1.x, p1.y);
+      ctx.lineTo(p2.x, p2.y);
+      ctx.stroke();
+      // Koncové body jako malé kroužky
+      for (const p of [p1, p2]) {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      return;
+    }
+    if (drawing.kind === 'rect') {
+      const x = Math.min(p1.x, p2.x);
+      const y = Math.min(p1.y, p2.y);
+      const w = Math.abs(p2.x - p1.x);
+      const h = Math.abs(p2.y - p1.y);
+      ctx.fillStyle = 'rgba(41, 98, 255, 0.12)';
+      ctx.fillRect(x, y, w, h);
+      ctx.strokeRect(x, y, w, h);
+    }
+  }
+
+  // Zapne/vypne kreslicí mód (hline | trend | rect | null)
+  function setDrawingMode(id, mode) {
+    const s = state.get(id);
+    if (!s) return;
+    s.overlay.mode = mode || null;
+    s.overlay.pending = null;
+    s.overlay.previewPoint = null;
+    s.overlay.canvas.classList.toggle('drawing-active', !!mode);
+    redrawOverlay(s);
+  }
+
+  // Nahradí kresby zobrazené k symbolu (načtené z backendu)
+  function setDrawings(id, drawings) {
+    const s = state.get(id);
+    if (!s) return;
+    s.overlay.drawings = (drawings || []).map((d) => ({ kind: d.kind, points: d.points }));
+    redrawOverlay(s);
   }
 
   // Synchronizuje viditelný rozsah mezi hlavním grafem a panely indikátorů
@@ -360,6 +551,19 @@ window.TickViewChart = (function () {
     if (s.lastIndicatorPayload) setIndicators(id, s.lastIndicatorPayload);
   }
 
+  // Diagnostika kreslení (používané při testování; vrací stav overlay vrstvy)
+  function debugState(id) {
+    const s = state.get(id);
+    if (!s) return null;
+    return {
+      mode: s.overlay.mode,
+      drawings: s.overlay.drawings.length,
+      pending: !!s.overlay.pending,
+      lastClick: s.lastClick,
+      queue: s.finishedQueue.length,
+    };
+  }
+
   return {
     init: init,
     setCandles: setCandles,
@@ -367,5 +571,9 @@ window.TickViewChart = (function () {
     setTheme: setTheme,
     setIndicators: setIndicators,
     clearIndicators: clearIndicators,
+    setDrawingMode: setDrawingMode,
+    setDrawings: setDrawings,
+    popFinishedDrawing: popFinishedDrawing,
+    debugState: debugState,
   };
 })();

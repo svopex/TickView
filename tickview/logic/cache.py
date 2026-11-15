@@ -4,6 +4,7 @@ Blokující operace sqlite3 běží přes asyncio.to_thread, aby nikdy nezdržel
 """
 
 import asyncio
+import json
 import sqlite3
 from typing import Optional
 
@@ -26,6 +27,16 @@ CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS drawings (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    source     TEXT    NOT NULL,
+    symbol     TEXT    NOT NULL,
+    timeframe  TEXT    NOT NULL,
+    kind       TEXT    NOT NULL,
+    points     TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_drawings
+    ON drawings (source, symbol, timeframe);
 """
 
 
@@ -158,6 +169,61 @@ class KlineCache:
     def _set_setting_sync(self, key: str, value: str) -> None:
         self._conn.execute(
             "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value)
+        )
+        self._conn.commit()
+
+    # ---------- kreslení (krok 5) ----------
+
+    async def load_drawings(self, source: str, symbol: str, timeframe: str) -> list[dict]:
+        """Vrátí kresby uložené k symbolu a timeframe, seřazené podle id."""
+        async with self._lock:
+            rows = await asyncio.to_thread(
+                self._load_drawings_sync, source, symbol, timeframe
+            )
+        # body kresby jsou uložené jako JSON (čas v sekundách UTC + cena)
+        return [
+            {"id": row[0], "kind": row[1], "points": json.loads(row[2])}
+            for row in rows
+        ]
+
+    def _load_drawings_sync(self, source: str, symbol: str, timeframe: str):
+        cur = self._conn.execute(
+            """
+            SELECT id, kind, points FROM drawings
+            WHERE source = ? AND symbol = ? AND timeframe = ?
+            ORDER BY id
+            """,
+            (source, symbol, timeframe),
+        )
+        return cur.fetchall()
+
+    async def add_drawing(
+        self, source: str, symbol: str, timeframe: str, kind: str, points: list[dict]
+    ) -> None:
+        """Uloží jednu kresbu (typ + body) k symbolu a timeframe."""
+        async with self._lock:
+            await asyncio.to_thread(
+                self._add_drawing_sync, source, symbol, timeframe, kind, points
+            )
+
+    def _add_drawing_sync(
+        self, source: str, symbol: str, timeframe: str, kind: str, points: list[dict]
+    ) -> None:
+        self._conn.execute(
+            "INSERT INTO drawings (source, symbol, timeframe, kind, points) VALUES (?, ?, ?, ?, ?)",
+            (source, symbol, timeframe, kind, json.dumps(points)),
+        )
+        self._conn.commit()
+
+    async def clear_drawings(self, source: str, symbol: str, timeframe: str) -> None:
+        """Smaže všechny kresby daného symbolu a timeframe."""
+        async with self._lock:
+            await asyncio.to_thread(self._clear_drawings_sync, source, symbol, timeframe)
+
+    def _clear_drawings_sync(self, source: str, symbol: str, timeframe: str) -> None:
+        self._conn.execute(
+            "DELETE FROM drawings WHERE source = ? AND symbol = ? AND timeframe = ?",
+            (source, symbol, timeframe),
         )
         self._conn.commit()
 

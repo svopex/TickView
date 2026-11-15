@@ -125,8 +125,10 @@ Všechny systémy (Windows, macOS, Linux):
   „živě / zpožděno“), akcie/ETF/indexy/forex přes Yahoo Finance s živým
   pollingem a hlášením zavřeného trhu, indikátory SMA, EMA, Bollinger Bands,
   RSI a MACD (RSI/MACD ve vlastních panelech se synchronizovaným časem,
-  nastavitelné parametry, mazání čipem).
-- Připravuje se (kroky 5–7): kreslení, watchlist, Alpaca.
+  nastavitelné parametry, mazání čipem), kreslení horizontální linie,
+  trendové čáry a obdélníku s ukládáním k symbolu a timeframe (přetrvává
+  restart, mazání tlačítkem).
+- Připravuje se (kroky 6–7): watchlist, Alpaca.
 
 ## Struktura projektu
 
@@ -141,8 +143,8 @@ Všechny systémy (Windows, macOS, Linux):
 - `tickview/providers/yahoo.py` – zdroj Yahoo Finance (yfinance): akcie, ETF,
   indexy, forex; historie v to_thread, živá aktualizace pollingem
 - `tickview/providers/__init__.py` – registr zdrojů (nový zdroj = jeden řádek)
-- `tickview/logic/cache.py` – SQLite cache svíček + nastavení; skládání historie
-  z cache a sítě (ze sítě stahuje jen chybějící úseky)
+- `tickview/logic/cache.py` – SQLite cache svíček, nastavení a kreseb;
+  skládání historie z cache a sítě (ze sítě stahuje jen chybějící úseky)
 - `tickview/logic/indicators.py` – výpočet SMA/EMA/BB/RSI/MACD přes pandas-ta,
   payload overlay čar a panelů pro graf
 - `tickview/ui/lightweight_chart.py` – vlastní komponenta NiceGUI obalující

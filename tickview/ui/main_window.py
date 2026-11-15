@@ -1,4 +1,4 @@
-"""Hlavní stránka TickView: vyhledání symbolu, timeframy, graf, indikátory, živý stream."""
+"""Hlavní stránka TickView: vyhledání symbolu, timeframy, graf, indikátory, kreslení, živý stream."""
 
 import asyncio
 import uuid
@@ -17,7 +17,7 @@ DEFAULT_BARS = 600
 VISIBLE_BARS = 150
 
 # Verze statických souborů pro cache-busting v prohlížeči (při změně CSS/JS zvýšit)
-STATIC_VERSION = "0.1.4"
+STATIC_VERSION = "0.2.1"
 
 
 def register(cache: KlineCache) -> None:
@@ -54,6 +54,7 @@ async def _build_index(cache: KlineCache) -> None:
         "badge_live": None,
         "indicators": [],
         "candles": None,
+        "drawing_mode": None,
     }
 
     # ---------- handlery (uzávěry nad elementy vytvořenými níže) ----------
@@ -206,6 +207,8 @@ async def _build_index(cache: KlineCache) -> None:
             state["candles"] = candles
             # Přepočet aktivních indikátorů nad novými daty
             await refresh_indicators()
+            # Kresby patří k symbolu/timeframu – načteme uložené
+            await reload_drawings()
             show_status(
                 f"{symbol} · {timeframe} · {len(candles)} svíček · zdroj {provider.name}"
             )
@@ -219,6 +222,62 @@ async def _build_index(cache: KlineCache) -> None:
         ui.dark_mode().set_value(value)
         await chart.set_theme(value)
         await cache.set_setting("theme", "dark" if value else "light")
+
+    # ---------- kreslení (krok 5) ----------
+
+    DRAWING_KINDS = ["hline", "trend", "rect"]
+    DRAWING_LABELS = {"hline": "Horizontální linie", "trend": "Trendová čára", "rect": "Obdélník"}
+
+    async def set_drawing_mode(mode: str | None) -> None:
+        # Aktivní nástroj zvýrazníme a přepneme mód v grafu
+        state["drawing_mode"] = mode
+        for kind, button in drawing_buttons.items():
+            button.classes(add="drawing-btn-active" if kind == mode else "", remove="" if kind == mode else "drawing-btn-active")
+        await chart.set_drawing_mode(mode)
+
+    async def reload_drawings() -> None:
+        """Načte kresby pro aktuální symbol z cache a pošle je do grafu."""
+        provider_id = state.get("provider_id")
+        symbol = state.get("symbol")
+        timeframe = state.get("timeframe")
+        if not provider_id or not symbol:
+            return
+        drawings = await cache.load_drawings(provider_id, symbol, timeframe)
+        await chart.set_drawings(drawings)
+
+    async def on_drawing_finished() -> None:
+        # Stránkový timer vyzvedne hotové kresby z grafu (fronta) a uloží je
+        provider_id = state.get("provider_id")
+        symbol = state.get("symbol")
+        timeframe = state.get("timeframe")
+        if not provider_id or not symbol:
+            return
+        saved = 0
+        for _ in range(20):
+            payload = await ui.run_javascript(
+                f'return window.TickViewChart.popFinishedDrawing("{chart.js_id}");'
+            )
+            if not isinstance(payload, dict) or payload.get("kind") not in DRAWING_KINDS:
+                break
+            points = [
+                {"time": int(p["time"]), "price": float(p["price"])}
+                for p in (payload.get("points") or [])
+            ]
+            await cache.add_drawing(provider_id, symbol, timeframe, payload["kind"], points)
+            saved += 1
+        if saved:
+            await reload_drawings()
+            show_status(f"Kresba uložena ({DRAWING_LABELS[payload['kind']]}) k {symbol} ({timeframe})")
+
+    async def clear_drawings() -> None:
+        provider_id = state.get("provider_id")
+        symbol = state.get("symbol")
+        timeframe = state.get("timeframe")
+        if not provider_id or not symbol:
+            return
+        await cache.clear_drawings(provider_id, symbol, timeframe)
+        await chart.set_drawings([])
+        show_status("Kresby smazány.")
 
     async def initial_load() -> None:
         # Po inicializaci grafu v prohlížeči obnovíme poslední zobrazený symbol
@@ -290,6 +349,13 @@ async def _build_index(cache: KlineCache) -> None:
 
     # ---------- UI ----------
 
+    def make_mode_handler(kind: str):
+        # Klik na aktivní nástroj ho vypne, jiný klik ho zapne
+        async def _handler(_event):
+            await set_drawing_mode(None if state["drawing_mode"] == kind else kind)
+
+        return _handler
+
     with ui.column().classes("page-root w-full"):
         with ui.row().classes("topbar w-full"):
             ui.label("TickView").classes("brand")
@@ -303,6 +369,19 @@ async def _build_index(cache: KlineCache) -> None:
                 "flat"
             ).classes("indicator-add")
         indicator_bar = ui.row().classes("indicator-bar w-full hidden")
+        with ui.row().classes("drawing-bar w-full"):
+            ui.label("Kreslení:").classes("indicator-label")
+            drawing_buttons = {}
+            for kind in DRAWING_KINDS:
+                icon = {"hline": "horizontal_rule", "trend": "show_chart", "rect": "crop_square"}[kind]
+                drawing_buttons[kind] = (
+                    ui.button(DRAWING_LABELS[kind], icon=icon, on_click=make_mode_handler(kind))
+                    .props("flat dense size=sm")
+                    .classes("drawing-btn")
+                )
+            ui.button("Smazat kresby", icon="delete_sweep", on_click=clear_drawings).props(
+                "flat dense size=sm"
+            ).classes("drawing-btn")
         chart = LightweightChart(dark=dark, on_ready=initial_load)
         status_label = ui.label("").classes("statusbar w-full")
 
@@ -327,6 +406,9 @@ async def _build_index(cache: KlineCache) -> None:
     symbol_select.on_value_change(lambda event: load_symbol(event.value))
     timeframe_toggle.on_value_change(lambda event: set_timeframe(event.value))
     theme_switch.on_value_change(lambda event: toggle_theme(bool(event.value)))
+
+    # Průběžné vyzvedávání dokončených kreseb z grafu (viz on_drawing_finished)
+    ui.timer(0.5, on_drawing_finished)
 
     # Při odpojení klienta ukončíme jeho živý stream, aby nezůstal běžet
     context.client.on_disconnect(cancel_stream)

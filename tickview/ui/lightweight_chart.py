@@ -19,13 +19,19 @@ class LightweightChart(ui.element):
     def __init__(self, dark: bool = True, on_ready=None) -> None:
         super().__init__("div")
         self._js_id = f"tickview-chart-{uuid.uuid4().hex[:8]}"
-        # Unikátní DOM id, pod kterým JS komponenta graf hledá
-        self.props(f"id={self._js_id}")
+        # JS graf hledá kontejner přes data-chart-id (vlastní id prvku necháme
+        # NiceGUI, které ho používá pro mapování DOM uzlů a eventy)
+        self.props(f"data-chart-id={self._js_id}")
         self.classes("chart-container")
         self._dark = dark
         self._on_ready = on_ready
         # Graf inicializujeme až po prvním vykreslení stránky v prohlížeči
         ui.timer(0.1, self._init_in_browser, once=True)
+
+    @property
+    def js_id(self) -> str:
+        """DOM id grafu, pod kterým se volá JS API."""
+        return self._js_id
 
     async def _init_in_browser(self) -> None:
         # Background volání z venčí (bez slotu) vstupují do kontextu tohoto prvku
@@ -75,4 +81,18 @@ class LightweightChart(ui.element):
         with self:
             ui.run_javascript(
                 f'window.TickViewChart.setIndicators("{self._js_id}", {payload_json});'
+            )
+
+    async def set_drawing_mode(self, mode: str | None) -> None:
+        """Zapne/vypne kreslicí mód (hline/trend/rect/None)."""
+        with self:
+            ui.run_javascript(
+                f'window.TickViewChart.setDrawingMode("{self._js_id}", {json.dumps(mode)});'
+            )
+
+    async def set_drawings(self, drawings: list[dict]) -> None:
+        """Nahradí zobrazené kresby (načtené z cache)."""
+        with self:
+            ui.run_javascript(
+                f'window.TickViewChart.setDrawings("{self._js_id}", {json.dumps(drawings)});'
             )
