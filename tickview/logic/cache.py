@@ -37,6 +37,13 @@ CREATE TABLE IF NOT EXISTS drawings (
 );
 CREATE INDEX IF NOT EXISTS idx_drawings
     ON drawings (source, symbol, timeframe);
+CREATE TABLE IF NOT EXISTS watchlist (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    source  TEXT    NOT NULL,
+    symbol  TEXT    NOT NULL,
+    added_at TEXT   NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (source, symbol)
+);
 """
 
 
@@ -224,6 +231,44 @@ class KlineCache:
         self._conn.execute(
             "DELETE FROM drawings WHERE source = ? AND symbol = ? AND timeframe = ?",
             (source, symbol, timeframe),
+        )
+        self._conn.commit()
+
+    # ---------- watchlist (krok 6) ----------
+
+    async def watchlist_list(self) -> list[dict]:
+        """Vrátí sledované symboly v pořadí přidání."""
+        async with self._lock:
+            rows = await asyncio.to_thread(self._watchlist_list_sync)
+        return [{"source": row[0], "symbol": row[1]} for row in rows]
+
+    def _watchlist_list_sync(self):
+        cur = self._conn.execute(
+            "SELECT source, symbol FROM watchlist ORDER BY id"
+        )
+        return cur.fetchall()
+
+    async def watchlist_add(self, source: str, symbol: str) -> None:
+        """Přidá symbol do watchlistu (duplicita se ignoruje)."""
+        async with self._lock:
+            await asyncio.to_thread(self._watchlist_add_sync, source, symbol)
+
+    def _watchlist_add_sync(self, source: str, symbol: str) -> None:
+        self._conn.execute(
+            "INSERT OR IGNORE INTO watchlist (source, symbol) VALUES (?, ?)",
+            (source, symbol),
+        )
+        self._conn.commit()
+
+    async def watchlist_remove(self, source: str, symbol: str) -> None:
+        """Odebere symbol z watchlistu."""
+        async with self._lock:
+            await asyncio.to_thread(self._watchlist_remove_sync, source, symbol)
+
+    def _watchlist_remove_sync(self, source: str, symbol: str) -> None:
+        self._conn.execute(
+            "DELETE FROM watchlist WHERE source = ? AND symbol = ?",
+            (source, symbol),
         )
         self._conn.commit()
 

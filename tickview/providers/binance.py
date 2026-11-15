@@ -195,6 +195,24 @@ class BinanceProvider(DataProvider):
             cursor = last_open + step_ms
         return candles
 
+    async def tickers(self, symbols: list[str]) -> dict[str, dict]:
+        """Vrátí poslední cenu a denní změnu (%) pro seznam symbolů (1 REST dotaz)."""
+        if not symbols:
+            return {}
+        # Binance vyžaduje JSON pole bez mezer (např. ["BTCUSDT","ETHUSDT"])
+        data = await self._request(
+            "GET",
+            "/api/v3/ticker/24hr",
+            params={"symbols": json.dumps(symbols, separators=(",", ":"))},
+        )
+        return {
+            row["symbol"]: {
+                "price": float(row["lastPrice"]),
+                "change_pct": float(row["priceChangePercent"]),
+            }
+            for row in data
+        }
+
     async def stream(self, symbol: str, timeframe: str) -> AsyncIterator[Candle]:
         """Živé svíčky přes websocket kline stream s automatickým znovupřipojením.
 

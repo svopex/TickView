@@ -5,6 +5,7 @@ Historie i vyhledávání se volají v asyncio.to_thread (blokující volání);
 """
 
 import asyncio
+import time as time_module
 from datetime import datetime, timezone
 from typing import AsyncIterator, Optional
 
@@ -18,6 +19,8 @@ SEARCH_QUOTE_TYPES = {"EQUITY", "ETF", "INDEX", "CURRENCY"}
 # Jak často se při pollingem živá data obnovují (sekundy), podle timeframeu
 POLL_SECONDS_INTRADAY = 15
 POLL_SECONDS_DAILY = 60
+# Jak často se smí obnovit cena watchlistu (throttle kvůli limitům Yahoo)
+TICKER_TTL_S = 60.0
 
 
 class YahooProvider(DataProvider):
@@ -39,6 +42,38 @@ class YahooProvider(DataProvider):
             "1D": "1d",
             "1W": "1wk",
         }
+        # Cache cen pro watchlist (symbol -> (čas, data)) s TTL kvůli limitům
+        self._ticker_cache: dict[str, tuple[float, dict]] = {}
+
+    async def tickers(self, symbols: list[str]) -> dict[str, dict]:
+        """Vrátí poslední cenu a denní změnu (%) z denních svíček (polling)."""
+        result: dict[str, dict] = {}
+        now = time_module.monotonic()
+        for symbol in symbols:
+            cached = self._ticker_cache.get(symbol)
+            if cached and now - cached[0] < TICKER_TTL_S:
+                result[symbol] = cached[1]
+                continue
+            try:
+                candles = await self._download(
+                    symbol, "1D", None, None, period="5d"
+                )
+                quote: Optional[dict] = None
+                if len(candles) >= 2:
+                    last, prev = candles[-1].close, candles[-2].close
+                    quote = {
+                        "price": last,
+                        "change_pct": (last / prev - 1.0) * 100.0 if prev else 0.0,
+                    }
+                elif len(candles) == 1:
+                    quote = {"price": candles[-1].close, "change_pct": 0.0}
+                if quote is not None:
+                    self._ticker_cache[symbol] = (now, quote)
+                    result[symbol] = quote
+            except Exception:
+                # Výpadek zdroje: symbol bez aktualizace, zkusíme příště
+                pass
+        return result
 
     async def search(self, query: str, limit: int = 30) -> list[SymbolInfo]:
         """Vyhledá symboly přes yf.Search (blokující volání ve vlákně)."""

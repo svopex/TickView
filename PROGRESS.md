@@ -70,8 +70,8 @@ VÝSTUP
 3. yfinance – hotovo (commit „Krok 3“)
 4. Indikátory – hotovo (commit „Krok 4“)
 5. Kreslení – hotovo (commit „Krok 5“)
-6. Watchlist – čeká
-7. Alpaca – čeká
+6. Watchlist – hotovo (commit „Krok 6“)
+7. Alpaca – rozpracováno (klíče zadány, modul se píše)
 
 ## Rozpracováno
 
@@ -79,10 +79,12 @@ VÝSTUP
 
 ## Další krok
 
-- Krok 6 (watchlist): tabulka watchlist (source+symbol) v SQLite, levý panel
-  se seznamem sledovaných symbolů (přidat/odebrat, klik přepne graf), cena a
-  denní změna přes Binance REST /ticker/24hr (polling, omezovač) resp. cache
-  denních svíček pro Yahoo; uchování napříč restartem.
+- Krok 7 (Alpaca): modul tickview/providers/alpaca.py – REST data API
+  https://data.alpaca.markets/v2/stocks/bars (hlavičky APCA-API-KEY-ID/
+  APCA-API-SECRET z data/config.local.json), search přes /v2/assets,
+  websocket živých dat wss://stream.data.alpaca.markets/v2/iex (auth +
+  subscribe bars, automatické znovupřipojení); provider se přidá do seznamu
+  jen když konfigurace obsahuje klíče; ověřit autentizaci a grafy AAPL.
 
 ## Jak spustit
 
@@ -173,6 +175,11 @@ VÝSTUP
   komponenty do NiceGUI neprojde spolehlivě; fronta zvládne více kreseb mezi
   ticky). Kontejner grafu se hledá přes data-chart-id atribut – vlastní id
   prvku necháváme NiceGUI (přepis id rozbil event binding).
+- Watchlist (krok 6): tabulka watchlist (source+symbol, unique) v SQLite;
+  UI levý panel, přidání aktuálního symbolu tlačítkem, odebrání ×, klik na
+  řádek přepne graf. Ceny: Binance /ticker/24hr batch dotaz (json pole bez
+  mezer) každých 5 s; Yahoo denní svíčky s in-memory TTL 60 s na symbol
+  (throttle kvůli limitům); změna se barví zeleně/červeně.
 - Alpaca (krok 7): uživatel zadal endpoint https://paper-api.alpaca.markets/v2
   a api_key PKPCQ5NKWKFVLY5N7EKU3WNK4N, uloženo v data/config.local.json
   (neverzováno); chybí secret key – po jeho zadání zdroj povolíme. Pro tržní

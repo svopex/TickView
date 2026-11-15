@@ -211,6 +211,81 @@
   cursor: crosshair;
 }
 
+/* Layout: hlavní oblast = watchlist panel + obsah */
+.main-area {
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 0 !important;
+  align-items: stretch;
+  flex-wrap: nowrap;
+}
+
+/* Levý panel watchlistu */
+.watchlist-panel {
+  width: 250px;
+  min-width: 250px;
+  padding: 6px 8px;
+  gap: 4px !important;
+  overflow-y: auto;
+  border-right: 1px solid rgba(128, 128, 128, 0.25);
+}
+
+.watchlist-header {
+  align-items: center;
+  gap: 8px !important;
+}
+
+.watchlist-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.watchlist-body {
+  gap: 2px !important;
+}
+
+.watch-row {
+  align-items: center;
+  gap: 6px !important;
+  padding: 3px 4px;
+  border-radius: 4px;
+}
+
+.watch-row:hover {
+  background: rgba(128, 128, 128, 0.15);
+}
+
+.watch-symbol {
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.watch-price,
+.watch-change {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.watch-change.up {
+  color: #26a69a;
+}
+
+.watch-change.down {
+  color: #ef5350;
+}
+
+.watch-remove {
+  color: #808080;
+}
+
+/* Obsah vpravo od watchlistu: lišty + graf + stav */
+.content-col {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  gap: 0 !important;
+}
+
 /* Stavová lišta */
 .statusbar {
   padding: 4px 16px;

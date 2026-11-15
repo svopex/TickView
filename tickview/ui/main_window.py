@@ -17,7 +17,7 @@ DEFAULT_BARS = 600
 VISIBLE_BARS = 150
 
 # Verze statických souborů pro cache-busting v prohlížeči (při změně CSS/JS zvýšit)
-STATIC_VERSION = "0.2.1"
+STATIC_VERSION = "0.2.2"
 
 
 def register(cache: KlineCache) -> None:
@@ -279,6 +279,91 @@ async def _build_index(cache: KlineCache) -> None:
         await chart.set_drawings([])
         show_status("Kresby smazány.")
 
+    # ---------- watchlist (krok 6) ----------
+
+    # Řádky watchlistu: key -> elementy pro aktualizaci cen
+    watch_rows: dict = {}
+
+    def _format_price(price: float) -> str:
+        # Formát ceny podle řádu hodnoty
+        if abs(price) >= 1000:
+            return f"{price:,.2f}"
+        if abs(price) >= 1:
+            return f"{price:,.4f}"
+        return f"{price:.8f}".rstrip("0").rstrip(".")
+
+    async def refresh_watchlist_prices() -> None:
+        # Aktualizuje ceny a denní změny v řádcích watchlistu (per zdroj 1 dotaz)
+        by_provider: dict[str, list[str]] = {}
+        for key in watch_rows:
+            provider_id, _, symbol = key.partition(":")
+            by_provider.setdefault(provider_id, []).append(symbol)
+        for provider_id, symbols in by_provider.items():
+            try:
+                provider = get_provider(provider_id)
+                tickers = await provider.tickers(symbols)
+            except Exception as exc:
+                show_status(f"Ceny watchlistu ({provider_id}) nedostupné: {exc}", error=True)
+                continue
+            for symbol in symbols:
+                quote = tickers.get(symbol)
+                if not quote:
+                    continue
+                row = watch_rows.get(f"{provider_id}:{symbol}")
+                if not row:
+                    continue
+                with row["price"]:
+                    row["price"].text = _format_price(quote["price"])
+                with row["change"]:
+                    row["change"].text = f"{quote['change_pct']:+.2f} %"
+                    row["change"].classes(
+                        add="up" if quote["change_pct"] >= 0 else "down",
+                        remove="down" if quote["change_pct"] >= 0 else "up",
+                    )
+
+    def make_watch_click(key: str):
+        async def _handler(_event):
+            await load_symbol(key)
+
+        return _handler
+
+    def make_watch_remove(key: str):
+        async def _handler(_event):
+            provider_id, _, symbol = key.partition(":")
+            await cache.watchlist_remove(provider_id, symbol)
+            await rebuild_watchlist()
+
+        return _handler
+
+    async def watchlist_add_current() -> None:
+        # Přidá aktuálně zobrazený symbol do watchlistu
+        provider_id = state.get("provider_id")
+        symbol = state.get("symbol")
+        if not provider_id or not symbol:
+            return
+        await cache.watchlist_add(provider_id, symbol)
+        await rebuild_watchlist()
+
+    async def rebuild_watchlist() -> None:
+        # Přestaví řádky watchlistu podle databáze
+        watch_rows.clear()
+        watchlist_body.clear()
+        items = await cache.watchlist_list()
+        with watchlist_body:
+            for item in items:
+                key = f"{item['source']}:{item['symbol']}"
+                with ui.row().classes("watch-row w-full"):
+                    ui.label(item["symbol"]).classes("watch-symbol").on(
+                        "click", make_watch_click(key)
+                    )
+                    price_label = ui.label("—").classes("watch-price")
+                    change_label = ui.label("—").classes("watch-change")
+                    ui.button(
+                        icon="close", on_click=make_watch_remove(key)
+                    ).props("flat dense size=sm").classes("watch-remove")
+                watch_rows[key] = {"price": price_label, "change": change_label}
+        await refresh_watchlist_prices()
+
     async def initial_load() -> None:
         # Po inicializaci grafu v prohlížeči obnovíme poslední zobrazený symbol
         await load_symbol(last_symbol)
@@ -368,22 +453,31 @@ async def _build_index(cache: KlineCache) -> None:
             ui.button("Indikátor", icon="add_chart", on_click=open_indicator_dialog).props(
                 "flat"
             ).classes("indicator-add")
-        indicator_bar = ui.row().classes("indicator-bar w-full hidden")
-        with ui.row().classes("drawing-bar w-full"):
-            ui.label("Kreslení:").classes("indicator-label")
-            drawing_buttons = {}
-            for kind in DRAWING_KINDS:
-                icon = {"hline": "horizontal_rule", "trend": "show_chart", "rect": "crop_square"}[kind]
-                drawing_buttons[kind] = (
-                    ui.button(DRAWING_LABELS[kind], icon=icon, on_click=make_mode_handler(kind))
-                    .props("flat dense size=sm")
-                    .classes("drawing-btn")
-                )
-            ui.button("Smazat kresby", icon="delete_sweep", on_click=clear_drawings).props(
-                "flat dense size=sm"
-            ).classes("drawing-btn")
-        chart = LightweightChart(dark=dark, on_ready=initial_load)
-        status_label = ui.label("").classes("statusbar w-full")
+        with ui.row().classes("main-area w-full"):
+            with ui.column().classes("watchlist-panel"):
+                with ui.row().classes("watchlist-header w-full"):
+                    ui.label("Watchlist").classes("watchlist-title")
+                    ui.button(icon="playlist_add", on_click=watchlist_add_current).props(
+                        "flat dense size=sm"
+                    ).classes("watch-add")
+                watchlist_body = ui.column().classes("watchlist-body w-full")
+            with ui.column().classes("content-col"):
+                indicator_bar = ui.row().classes("indicator-bar w-full hidden")
+                with ui.row().classes("drawing-bar w-full"):
+                    ui.label("Kreslení:").classes("indicator-label")
+                    drawing_buttons = {}
+                    for kind in DRAWING_KINDS:
+                        icon = {"hline": "horizontal_rule", "trend": "show_chart", "rect": "crop_square"}[kind]
+                        drawing_buttons[kind] = (
+                            ui.button(DRAWING_LABELS[kind], icon=icon, on_click=make_mode_handler(kind))
+                            .props("flat dense size=sm")
+                            .classes("drawing-btn")
+                        )
+                    ui.button("Smazat kresby", icon="delete_sweep", on_click=clear_drawings).props(
+                        "flat dense size=sm"
+                    ).classes("drawing-btn")
+                chart = LightweightChart(dark=dark, on_ready=initial_load)
+                status_label = ui.label("").classes("statusbar w-full")
 
     # Dialog pro přidání indikátoru; pole parametrů se přestavují podle typu
     dialog_state = {"kind": "sma"}
@@ -409,6 +503,12 @@ async def _build_index(cache: KlineCache) -> None:
 
     # Průběžné vyzvedávání dokončených kreseb z grafu (viz on_drawing_finished)
     ui.timer(0.5, on_drawing_finished)
+
+    # Aktualizace cen watchlistu (Binance 5 s, Yahoo throttlováno na zdroji)
+    ui.timer(5.0, refresh_watchlist_prices)
+
+    # Naplnění watchlistu z databáze po načtení stránky
+    ui.timer(0.2, rebuild_watchlist, once=True)
 
     # Při odpojení klienta ukončíme jeho živý stream, aby nezůstal běžet
     context.client.on_disconnect(cancel_stream)
