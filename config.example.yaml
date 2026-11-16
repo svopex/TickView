@@ -1,11 +1,12 @@
 # TickView konfigurace – zkopírujte tento soubor na config.yaml a doplňte hodnoty.
 # Obsah config.yaml se necommituje (může obsahovat API klíče).
 
-# Alpaca (volitelný zdroj živých amerických akcií) – klíče z Paper Trading dashboardu
+# Alpaca (volitelný zdroj živých amerických akcií) – klíče z Paper Trading dashboardu;
+# bez vyplněných klíčů se zdroj nezapne (celou sekci lze smazat)
 alpaca:
   endpoint: https://paper-api.alpaca.markets/v2
-  api_key: PKLCCTAVCVIJMM32R4OTI5FV5M
-  secret: 3A5yNrdAihXP7Sq8DUpDx3cgQ41WihhwWj4VCRE9cpL4
+  api_key: ""   # např. PK...
+  secret: ""
 
 # Interactive Brokers – TWS nebo IB Gateway musí běžet a mít povolené API
 ibkr:

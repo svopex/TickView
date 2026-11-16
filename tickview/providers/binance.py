@@ -9,11 +9,13 @@ import httpx
 import websockets
 
 from tickview.providers.base import (
+    TIMEFRAME_MS,
     Candle,
     DataProvider,
+    FailureLatch,
     RateLimiter,
+    StreamItem,
     SymbolInfo,
-    TIMEFRAME_MS,
 )
 
 REST_BASE_URL = "https://api.binance.com"
@@ -29,7 +31,7 @@ WS_MAX_BACKOFF_S = 30.0
 
 
 class BinanceProvider(DataProvider):
-    """Kryptoburza Binance – historie přes veřejné REST, živá data přes websocket (krok 2)."""
+    """Kryptoburza Binance – historie přes veřejné REST, živá data přes websocket."""
 
     id = "binance"
     name = "Binance"
@@ -38,7 +40,7 @@ class BinanceProvider(DataProvider):
     is_live = True
 
     def __init__(self) -> None:
-        # Mapování kanonických timeframeů na intervaly Binance (bez 4h necháváme, Binance ji umí)
+        # Mapování kanonických timeframeů na intervaly Binance (Binance umí všechny)
         self.timeframes = {
             "1m": "1m",
             "5m": "5m",
@@ -58,6 +60,12 @@ class BinanceProvider(DataProvider):
         if self._client is None:
             self._client = httpx.AsyncClient(base_url=REST_BASE_URL, timeout=15.0)
         return self._client
+
+    async def close(self) -> None:
+        """Zavře HTTP klienta (při ukončení aplikace)."""
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
 
     async def _request(self, method: str, path: str, params: dict[str, Any] | None = None) -> Any:
         """REST dotaz s omezovačem, backoffem po 429 a opakováním při 5xx."""
@@ -133,7 +141,7 @@ class BinanceProvider(DataProvider):
         while cursor <= end_ms:
             pages += 1
             if pages > MAX_KLINES_PAGES:
-                # Pojistka: moc velký rozsah po ukončíme, co se stáhlo vrátíme
+                # Pojistka: příliš velký rozsah ukončíme a vrátíme, co se stáhlo
                 break
             data = await self._request(
                 "GET",
@@ -159,11 +167,10 @@ class BinanceProvider(DataProvider):
                         volume=float(row[5]),
                     )
                 )
-            last_open = int(data[-1][0])
-            # API vrátilo méně než limit → další starší data nejsou
+            # API vrátilo méně než limit → v intervalu už další data nejsou
             if len(data) < KLINES_PAGE_LIMIT:
                 break
-            cursor = last_open + step_ms
+            cursor = int(data[-1][0]) + step_ms
         return candles
 
     async def tickers(self, symbols: list[str]) -> dict[str, dict]:
@@ -184,19 +191,23 @@ class BinanceProvider(DataProvider):
             for row in data
         }
 
-    async def stream(self, symbol: str, timeframe: str) -> AsyncIterator[Candle]:
+    async def stream(self, symbol: str, timeframe: str) -> AsyncIterator[StreamItem]:
         """Živé svíčky přes websocket kline stream s automatickým znovupřipojením.
 
-        Po výpadku spojení čeká exponenciálně (1→30 s) a napojuje se znovu;
-        generátor běží, dokud ho konzument nezruší (CancelledError).
+        Po výpadku spojení pošle StreamStatus(connected=False), čeká exponenciálně
+        (1→30 s) a napojuje se znovu; po obnovení pošle StreamStatus(connected=True).
+        Generátor běží, dokud ho konzument nezruší (CancelledError).
         """
         interval = self.timeframes[timeframe]
         url = f"{WS_BASE_URL}/{symbol.lower()}@kline_{interval}"
         backoff = 1.0
+        latch = FailureLatch()
         while True:
             try:
                 async with websockets.connect(url) as ws:
                     backoff = 1.0
+                    if status := latch.ok("websocket Binance znovu připojen"):
+                        yield status
                     async for raw in ws:
                         message = json.loads(raw)
                         # Zajímají nás jen kline eventy; ostatní zprávy ignorujeme
@@ -213,8 +224,10 @@ class BinanceProvider(DataProvider):
                         )
             except asyncio.CancelledError:
                 raise
-            except Exception:
-                # Výpadek spojení: exponenciální čekání a znovupřipojení
+            except Exception as exc:
+                # Výpadek spojení: ohlásíme (jednou), exponenciálně čekáme a připojíme znovu
+                if status := latch.fail(f"websocket Binance odpojen: {exc}"):
+                    yield status
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, WS_MAX_BACKOFF_S)
             else:

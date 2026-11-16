@@ -2,7 +2,7 @@
 
 Nový zdroj stačí přidat do seznamu PROVIDERS; zbytek aplikace se nezmění.
 Alpaca je volitelný – přidá se jen tehdy, když jsou v lokální konfiguraci
-(data/config.local.json) uložené API klíče.
+(config.yaml) uložené API klíče.
 """
 
 from tickview.providers.alpaca import AlpacaProvider
@@ -13,14 +13,19 @@ from tickview.providers.yahoo import YahooProvider
 
 
 def _build_providers() -> list[DataProvider]:
+    """Sestaví seznam aktivních zdrojů v pořadí, v jakém se prohledávají."""
     # IBKR se připojuje lazy k TWS (127.0.0.1:7497, clientId 30); když TWS
     # neběží, zdroj jen nahlásí chybu, ostatní zdroje fungují dál
-    return [
+    providers: list[DataProvider] = [
         BinanceProvider(),
         YahooProvider(),
         IbkrProvider(),
-        AlpacaProvider(),
     ]
+    # Alpaca bez klíčů by u každého hledání a obnovy cen hlásila chybu 401/403
+    alpaca = AlpacaProvider()
+    if alpaca.configured:
+        providers.append(alpaca)
+    return providers
 
 
 PROVIDERS: list[DataProvider] = _build_providers()

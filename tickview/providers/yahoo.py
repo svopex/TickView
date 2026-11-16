@@ -12,13 +12,17 @@ from typing import AsyncIterator, Optional
 import pandas as pd
 import yfinance as yf
 
-from tickview.providers.base import Candle, DataProvider, SymbolInfo
+from tickview.providers.base import (
+    Candle,
+    DataProvider,
+    StreamItem,
+    SymbolInfo,
+    poll_latest_candles,
+    poll_seconds_for,
+)
 
-# Yahoo provides quotes only for these types via search
+# Typy instrumentů z vyhledávání Yahoo, které umíme zobrazit
 SEARCH_QUOTE_TYPES = {"EQUITY", "ETF", "INDEX", "CURRENCY"}
-# Jak často se při pollingem živá data obnovují (sekundy), podle timeframeu
-POLL_SECONDS_INTRADAY = 15
-POLL_SECONDS_DAILY = 60
 # Jak často se smí obnovit cena watchlistu (throttle kvůli limitům Yahoo)
 TICKER_TTL_S = 60.0
 
@@ -31,6 +35,8 @@ class YahooProvider(DataProvider):
     supports_stream = True
     # Zdroj posílá data pollingem a bývají zpožděná → štítek zůstává „zpožděno“
     is_live = False
+    # Burzovní data Yahoo bývají zpožděná ~15 min (s rezervou)
+    data_delay_ms = 30 * 60_000
 
     def __init__(self) -> None:
         # Yahoo nemá 4h svíčky; mapujeme jen podporované intervaly
@@ -164,44 +170,14 @@ class YahooProvider(DataProvider):
         """Vrátí svíčky z Yahoo Finance v daném intervalu (UTC ms)."""
         return await self._download(symbol, timeframe, start_ms, end_ms)
 
-    async def stream(self, symbol: str, timeframe: str) -> AsyncIterator[Candle]:
+    def stream(self, symbol: str, timeframe: str) -> AsyncIterator[StreamItem]:
         """Živá aktualizace dotazováním: v pravidelných intervalech posílá
-        poslední svíčku; novou (uzavřenou i rozepsanou) jen když se změnila.
-
-        Generator běží, dokud ho konzument nezruší (CancelledError).
+        poslední svíčku, ale jen když je nová nebo se změnila.
         """
-        step_ms = {
-            "1m": 60_000,
-            "5m": 300_000,
-            "15m": 900_000,
-            "1h": 3_600_000,
-            "1D": 86_400_000,
-            "1W": 604_800_000,
-        }[timeframe]
-        # Denní/weekly data stačí obnovovat řidčeji než intraday
-        poll_seconds = (
-            POLL_SECONDS_DAILY if timeframe in ("1D", "1W") else POLL_SECONDS_INTRADAY
-        )
-        last_open_time = -1
-        last_close = None
-        while True:
-            try:
-                # Polling stahuje jen poslední den (intraday) resp. týden (denní)
-                period = "1d" if timeframe not in ("1D", "1W") else "5d"
-                candles = await self._download(symbol, timeframe, None, None, period=period)
-                if candles:
-                    latest = candles[-1]
-                    # Posíláme jen svíčky novější než ta načtená do grafu
-                    if (
-                        latest.open_time > last_open_time
-                        or latest.close != last_close
-                    ):
-                        last_open_time = latest.open_time
-                        last_close = latest.close
-                        yield latest
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                # Výpadek zdroje: zkusíme to znovu v dalším kole
-                pass
-            await asyncio.sleep(poll_seconds)
+        # Polling stahuje jen poslední den (intraday) resp. týden (denní)
+        period = "5d" if timeframe in ("1D", "1W") else "1d"
+
+        async def fetch_latest() -> list[Candle]:
+            return await self._download(symbol, timeframe, None, None, period=period)
+
+        return poll_latest_candles(fetch_latest, poll_seconds_for(timeframe))

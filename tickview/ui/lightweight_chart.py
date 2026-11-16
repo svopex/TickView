@@ -11,6 +11,9 @@ from tickview.providers.base import Candle
 class LightweightChart(ui.element):
     """Obal JS grafu: inicializace v prohlížeči, výměna dat, inkrementální svíčka, motiv.
 
+    Všechny metody volají funkce window.TickViewChart.<název>(id grafu, ...)
+    ze souboru static/lightweight_chart.js.
+
     Parametry:
         dark: počáteční motiv grafu.
         on_ready: async callback volaný po inicializaci grafu v prohlížeči.
@@ -28,17 +31,25 @@ class LightweightChart(ui.element):
         # Graf inicializujeme až po prvním vykreslení stránky v prohlížeči
         ui.timer(0.1, self._init_in_browser, once=True)
 
-    @property
-    def js_id(self) -> str:
-        """DOM id grafu, pod kterým se volá JS API."""
-        return self._js_id
+    def _js(self, method: str, args: tuple) -> str:
+        # Volání JS API grafu; argumenty převede json.dumps (řetězce, čísla,
+        # True/False/None → true/false/null, seznamy a slovníky)
+        arguments = ", ".join(json.dumps(value) for value in (self._js_id, *args))
+        return f"window.TickViewChart.{method}({arguments})"
 
-    async def _init_in_browser(self) -> None:
+    def _call(self, method: str, *args) -> None:
+        """Zavolá JS funkci grafu bez čekání na výsledek."""
         # Background volání z venčí (bez slotu) vstupují do kontextu tohoto prvku
         with self:
-            ui.run_javascript(
-                f'window.TickViewChart.init("{self._js_id}", {{ dark: {str(self._dark).lower()} }});'
-            )
+            ui.run_javascript(self._js(method, args) + ";")
+
+    async def _call_result(self, method: str, *args):
+        """Zavolá JS funkci grafu a vrátí její výsledek."""
+        with self:
+            return await ui.run_javascript("return " + self._js(method, args) + ";")
+
+    async def _init_in_browser(self) -> None:
+        self._call("init", {"dark": self._dark})
         if self._on_ready:
             await self._on_ready()
 
@@ -54,96 +65,95 @@ class LightweightChart(ui.element):
             "volume": candle.volume,
         }
 
-    async def set_candles(self, candles: list[Candle], visible_bars: int = 150) -> None:
-        """Nahradí celý dataset grafu (načtení historie)."""
-        payload = json.dumps([self._candle_payload(candle) for candle in candles])
-        with self:
-            ui.run_javascript(
-                f'window.TickViewChart.setCandles("{self._js_id}", {payload},'
-                f" {{ visibleBars: {visible_bars} }});"
-            )
+    async def set_candles(self, candles: list[Candle], step_ms: int, visible_bars: int = 150) -> None:
+        """Nahradí celý dataset grafu (načtení historie).
 
-    async def update_candle(self, candle: Candle) -> None:
-        """Inkrementální doplnění/aktualizace poslední svíčky (živá data)."""
-        payload = json.dumps(self._candle_payload(candle))
-        with self:
-            ui.run_javascript(f'window.TickViewChart.updateCandle("{self._js_id}", {payload});')
+        Parametry:
+            candles: svíčky vzestupně podle času.
+            step_ms: délka baru timeframu (graf podle ní umisťuje kresby mimo svíčky).
+            visible_bars: kolik posledních svíček má být vidět.
+        """
+        self._call(
+            "setCandles",
+            [self._candle_payload(candle) for candle in candles],
+            {"visibleBars": visible_bars, "stepSeconds": step_ms // 1000},
+        )
+
+    async def prepend_candles(self, candles: list[Candle], exhausted: bool) -> None:
+        """Přidá starší svíčky na začátek grafu (donačtení historie při posunu doleva).
+
+        Parametry:
+            candles: starší svíčky (prázdný seznam = nic nového).
+            exhausted: True = starší data už nejsou, graf se na ně přestane ptát.
+        """
+        self._call("prependCandles", [self._candle_payload(candle) for candle in candles], exhausted)
+
+    async def update_candles(self, candles: list[Candle]) -> None:
+        """Inkrementální doplnění/aktualizace posledních svíček (živá data, doplněná díra)."""
+        self._call("updateCandles", [self._candle_payload(candle) for candle in candles])
 
     async def set_theme(self, dark: bool) -> None:
         """Přepne motiv grafu v prohlížeči."""
         self._dark = dark
-        with self:
-            ui.run_javascript(f'window.TickViewChart.setTheme("{self._js_id}", {str(dark).lower()});')
+        self._call("setTheme", dark)
 
     async def set_indicators(self, payload: dict) -> None:
-        """Nahradí všechny indikátory (overlay čáry + panely) v grafu."""
-        payload_json = json.dumps(payload)
-        with self:
-            ui.run_javascript(
-                f'window.TickViewChart.setIndicators("{self._js_id}", {payload_json});'
-            )
+        """Nahradí indikátory (overlay čáry + panely); payload s "tail" jen doplní poslední body."""
+        self._call("setIndicators", payload)
 
     async def set_drawing_mode(self, mode: str | None) -> None:
         """Zapne/vypne kreslicí mód (hline/trend/rect/brush/fib/text/measure/None)."""
-        with self:
-            ui.run_javascript(
-                f'window.TickViewChart.setDrawingMode("{self._js_id}", {json.dumps(mode)});'
-            )
+        self._call("setDrawingMode", mode)
 
     async def set_drawing_color(self, color: str) -> None:
         """Nastaví barvu nových kreseb."""
-        with self:
-            ui.run_javascript(
-                f'window.TickViewChart.setDrawingColor("{self._js_id}", {json.dumps(color)});'
-            )
+        self._call("setDrawingColor", color)
 
     async def set_magnet(self, enabled: bool) -> None:
         """Zapne/vypne magnet (přichytávání k OHLC svíček)."""
-        with self:
-            ui.run_javascript(
-                f'window.TickViewChart.setMagnet("{self._js_id}", {str(enabled).lower()});'
-            )
+        self._call("setMagnet", enabled)
+
+    async def set_keep_tool(self, enabled: bool) -> None:
+        """Zapne/vypne režim tužky (nástroj zůstává aktivní i po nakreslení)."""
+        self._call("setKeepTool", enabled)
+
+    async def set_locked(self, locked: bool) -> None:
+        """Zamkne/odemkne kresby (nelze je vybírat, posouvat ani mazat)."""
+        self._call("setLocked", locked)
 
     async def set_drawings_hidden(self, hidden: bool) -> None:
         """Skryje/zobrazí všechny kresby."""
-        with self:
-            ui.run_javascript(
-                f'window.TickViewChart.setDrawingsHidden("{self._js_id}", {str(hidden).lower()});'
-            )
+        self._call("setDrawingsHidden", hidden)
 
     async def add_text(self, time_s: int, price: float, text: str) -> None:
         """Přidá textovou kresbu (po potvrzení dialogu)."""
-        with self:
-            ui.run_javascript(
-                f'window.TickViewChart.addText("{self._js_id}", {int(time_s)}, {float(price)}, {json.dumps(text)});'
-            )
+        self._call("addText", int(time_s), float(price), text)
+
+    async def add_sticker(self, time_s: int, price: float, emoji: str) -> None:
+        """Přidá sticker (emoji) na pozici kliku (po výběru v dialogu)."""
+        self._call("addSticker", int(time_s), float(price), emoji)
 
     async def update_text(self, drawing_id: int, text: str) -> None:
         """Aktualizuje text existující textové kresby."""
-        with self:
-            ui.run_javascript(
-                f'window.TickViewChart.updateText("{self._js_id}", {int(drawing_id)}, {json.dumps(text)});'
-            )
+        self._call("updateText", int(drawing_id), text)
+
+    async def assign_drawing_id(self, local_id: int, drawing_id: int) -> None:
+        """Přiřadí nově uložené kresbě její id z databáze (podle lokálního id z grafu)."""
+        self._call("assignDrawingId", int(local_id), int(drawing_id))
 
     def set_tool_groups(self, groups: list[dict]) -> None:
         """Pošle definice skupin nástrojů pro flyout nabídky lišty."""
-        groups_json = json.dumps(groups)
-        with self:
-            ui.run_javascript(
-                f'window.TickViewChart.setToolGroups("{self._js_id}", {groups_json});'
-            )
+        self._call("setToolGroups", groups)
 
     async def trash_drawings(self) -> int:
         """Smaže označenou kresbu (nebo všechny) – vrací počet smazaných."""
-        with self:
-            removed = await ui.run_javascript(
-                f'return window.TickViewChart.trashDrawings("{self._js_id}");'
-            )
-        return int(removed or 0)
+        return int(await self._call_result("trashDrawings") or 0)
+
+    async def pop_events(self) -> list[dict]:
+        """Vyzvedne všechny čekající události grafu (kresby, nástroje, akce) jedním dotazem."""
+        events = await self._call_result("popEvents")
+        return events if isinstance(events, list) else []
 
     async def set_drawings(self, drawings: list[dict]) -> None:
-        """Nahradí zobrazené kresby (načtené z cache)."""
-        with self:
-            ui.run_javascript(
-                f'window.TickViewChart.setDrawings("{self._js_id}", {json.dumps(drawings)});'
-            )
+        """Nahradí zobrazené kresby (načtené z cache při načtení symbolu)."""
+        self._call("setDrawings", drawings)

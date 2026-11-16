@@ -1,0 +1,235 @@
+"""Testy logické vrstvy a společných částí zdrojů (spuštění: python -m unittest)."""
+
+import asyncio
+import tempfile
+import time
+import unittest
+from pathlib import Path
+
+import yaml
+
+from tickview.config import update_config_section
+from tickview.logic.cache import KlineCache, fetch_history, uncovered_ranges
+from tickview.logic.indicators import compute_indicators, load_saved_indicators, normalize_params
+from tickview.providers.base import (
+    TIMEFRAME_MS,
+    Candle,
+    RateLimiter,
+    StreamStatus,
+    poll_latest_candles,
+    utc_now_ms,
+)
+
+
+def make_candle(open_time: int, close: float = 1.0) -> Candle:
+    """Svíčka pro testy s danou otevírací dobou (ms) a závěrečnou cenou."""
+    return Candle(open_time, close, close + 1, close - 1, close, 10.0)
+
+
+class FakeProvider:
+    """Testovací zdroj: vrací souvislé hodinové svíčky až do současnosti.
+
+    Atributy:
+        calls: seznam požadovaných intervalů (start_ms, end_ms).
+    """
+
+    id = "fake"
+    data_delay_ms = 0
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[int, int]] = []
+
+    async def history(self, symbol: str, timeframe: str, start_ms: int, end_ms: int) -> list[Candle]:
+        self.calls.append((start_ms, end_ms))
+        step = TIMEFRAME_MS[timeframe]
+        first = (start_ms + step - 1) // step * step
+        # Cena odliší jednotlivá stažení (kontrola přepsání rozpracované svíčky)
+        return [
+            make_candle(open_time, close=float(len(self.calls)))
+            for open_time in range(first, min(end_ms, utc_now_ms()) + 1, step)
+        ]
+
+
+class FetchHistoryTest(unittest.IsolatedAsyncioTestCase):
+    """Skládání historie z cache a sítě."""
+
+    async def asyncSetUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.cache = KlineCache(Path(self.tmp.name) / "test.db")
+        await self.cache.init()
+
+    async def asyncTearDown(self) -> None:
+        await self.cache.close()
+        self.tmp.cleanup()
+
+    async def test_open_candle_is_not_cached_and_is_refetched(self) -> None:
+        provider = FakeProvider()
+        step = TIMEFRAME_MS["1h"]
+        now = utc_now_ms()
+        first = await fetch_history(provider, self.cache, "X", "1h", now - 10 * step, now)
+        cached = await self.cache.load("fake", "X", "1h")
+        # Rozpracovaná poslední svíčka je ve výsledku, ale ne v cache
+        self.assertLess(cached[-1].open_time, first[-1].open_time)
+        second = await fetch_history(provider, self.cache, "X", "1h", now - 10 * step, now)
+        # Druhé načtení stáhne jen konec a rozpracovanou svíčku obnoví
+        self.assertEqual(len(provider.calls), 2)
+        self.assertNotEqual(second[-1].close, first[-1].close)
+        open_times = [candle.open_time for candle in second]
+        self.assertEqual(open_times, sorted(set(open_times)))
+
+    async def test_older_range_is_fetched_before_cached_data(self) -> None:
+        provider = FakeProvider()
+        step = TIMEFRAME_MS["1h"]
+        now = utc_now_ms()
+        await fetch_history(provider, self.cache, "X", "1h", now - 10 * step, now)
+        first_cached = (await self.cache.load("fake", "X", "1h"))[0].open_time
+        older = await fetch_history(
+            provider, self.cache, "X", "1h", first_cached - 5 * step, first_cached - 1
+        )
+        self.assertEqual(len(older), 5)
+        self.assertTrue(all(candle.open_time < first_cached for candle in older))
+        # Navazující stažené intervaly se sloučí do jednoho
+        self.assertEqual(len(await self.cache.fetched_ranges("fake", "X", "1h")), 1)
+
+    async def test_hole_in_cache_is_refetched(self) -> None:
+        provider = FakeProvider()
+        step = TIMEFRAME_MS["1h"]
+        base = (utc_now_ms() // step - 100) * step
+        # Cache se svíčkami před dírou a po ní (např. ze starší verze aplikace)
+        await self.cache.store("fake", "X", "1h", [make_candle(base + i * step) for i in range(5)])
+        await self.cache.store("fake", "X", "1h", [make_candle(base + i * step) for i in range(15, 20)])
+        result = await fetch_history(provider, self.cache, "X", "1h", base, base + 19 * step)
+        self.assertEqual([c.open_time for c in result], [base + i * step for i in range(20)])
+        # Podruhé už je interval stažený – žádný další dotaz
+        await fetch_history(provider, self.cache, "X", "1h", base, base + 19 * step)
+        self.assertEqual(len(provider.calls), 1)
+
+    def test_uncovered_ranges(self) -> None:
+        self.assertEqual(uncovered_ranges(0, 100, [], 10), [(0, 100)])
+        self.assertEqual(uncovered_ranges(0, 100, [(20, 40), (60, 70)], 10), [(0, 19), (41, 59), (71, 100)])
+        # Levý proužek kratší než bar se vynechá, celý interval pokrytý
+        self.assertEqual(uncovered_ranges(15, 100, [(20, 100)], 10), [])
+        self.assertEqual(uncovered_ranges(0, 100, [(-5, 200)], 10), [])
+
+
+class IndicatorsTest(unittest.TestCase):
+    """Výpočet a validace indikátorů."""
+
+    SPECS = [
+        {"id": "a", "kind": "sma", "params": {"length": 20}},
+        {"id": "b", "kind": "bb", "params": {"length": 20, "std": 2.0}},
+        {"id": "c", "kind": "rsi", "params": {"length": 14}},
+        {"id": "d", "kind": "macd", "params": {"fast": 12, "slow": 26, "signal": 9}},
+    ]
+
+    def test_short_history_skips_indicators(self) -> None:
+        candles = [make_candle(i * 60_000) for i in range(10)]
+        payload = compute_indicators(self.SPECS, candles)
+        self.assertEqual(payload, {"overlays": [], "panes": []})
+
+    def test_series_keep_candle_count(self) -> None:
+        candles = [make_candle(i * 60_000, close=1 + (i % 7) * 0.1) for i in range(100)]
+        payload = compute_indicators(self.SPECS, candles)
+        # Panely musí mít stejný počet bodů jako svíčky (whitespace místo NaN)
+        for pane in payload["panes"]:
+            for series in pane["series"]:
+                self.assertEqual(len(series["data"]), len(candles))
+        self.assertNotIn("value", payload["panes"][0]["series"][0]["data"][0])
+
+    def test_normalize_params(self) -> None:
+        self.assertEqual(normalize_params("sma", {"length": 20.0}), {"length": 20})
+        self.assertEqual(normalize_params("sma", {"length": None}), {"length": 20})
+        for kind, values in [
+            ("sma", {"length": 0}),
+            ("sma", {"length": 2.5}),
+            ("bb", {"length": 20, "std": -1}),
+            ("macd", {"fast": 26, "slow": 12, "signal": 9}),
+        ]:
+            with self.assertRaises(ValueError):
+                normalize_params(kind, values)
+
+    def test_load_saved_indicators_skips_invalid(self) -> None:
+        raw = '[{"id": "x", "kind": "ema", "params": {"length": 50}}, {"kind": "nope"}, 5]'
+        self.assertEqual(
+            load_saved_indicators(raw), [{"id": "x", "kind": "ema", "params": {"length": 50}}]
+        )
+        self.assertEqual(load_saved_indicators("not json"), [])
+
+
+class ProvidersBaseTest(unittest.IsolatedAsyncioTestCase):
+    """Omezovač dotazů a smyčka pollingu."""
+
+    async def test_rate_limiter_spreads_concurrent_calls(self) -> None:
+        limiter = RateLimiter(min_interval=0.05)
+        started = time.monotonic()
+        stamps: list[float] = []
+
+        async def call() -> None:
+            await limiter.acquire()
+            stamps.append(time.monotonic() - started)
+
+        await asyncio.gather(*(call() for _ in range(3)))
+        stamps.sort()
+        self.assertGreaterEqual(stamps[1] - stamps[0], 0.04)
+        self.assertGreaterEqual(stamps[2] - stamps[1], 0.04)
+
+    async def test_poll_reports_changes_finalization_and_outage(self) -> None:
+        responses = [
+            [make_candle(1, 1.0)],
+            [make_candle(1, 1.0)],
+            RuntimeError("výpadek"),
+            RuntimeError("výpadek"),
+            [make_candle(1, 2.0), make_candle(2, 3.0)],
+        ]
+
+        async def fetch() -> list[Candle]:
+            response = responses.pop(0)
+            if isinstance(response, Exception):
+                raise response
+            return response
+
+        items = []
+        stream = poll_latest_candles(fetch, 0)
+        async for item in stream:
+            items.append(item)
+            if len(items) == 5:
+                break
+        await stream.aclose()
+        self.assertEqual(items[0], make_candle(1, 1.0))
+        # Výpadek se hlásí jen jednou, obnovení také
+        self.assertEqual(items[1], StreamStatus(False, "zdroj neodpovídá: výpadek"))
+        self.assertEqual(items[2], StreamStatus(True, "zdroj opět odpovídá"))
+        # Konečná podoba předchozí svíčky i nová svíčka
+        self.assertEqual(items[3:], [make_candle(1, 2.0), make_candle(2, 3.0)])
+
+
+class ConfigTest(unittest.TestCase):
+    """Zápis sekce do config.yaml se zachováním komentářů."""
+
+    def test_update_section_keeps_comments(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.yaml"
+            path.write_text(
+                "# hlavička\nalpaca:\n  endpoint: https://x\n  api_key: \"\"   # např. PK...\n"
+                "  secret: \"\"\n\n# IBKR\nibkr:\n  port: 7497\n",
+                encoding="utf-8",
+            )
+            update_config_section("alpaca", {"api_key": 'a"b', "secret": "c#d"}, path)
+            text = path.read_text(encoding="utf-8")
+            self.assertIn("# hlavička", text)
+            self.assertIn("# např. PK...", text)
+            self.assertIn("# IBKR", text)
+            parsed = yaml.safe_load(text)
+            self.assertEqual(parsed["alpaca"], {"endpoint": "https://x", "api_key": 'a"b', "secret": "c#d"})
+            self.assertEqual(parsed["ibkr"], {"port": 7497})
+
+    def test_new_file_is_private(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.yaml"
+            update_config_section("alpaca", {"api_key": "k"}, path)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(yaml.safe_load(path.read_text(encoding="utf-8")), {"alpaca": {"api_key": "k"}})
+
+
+if __name__ == "__main__":
+    unittest.main()

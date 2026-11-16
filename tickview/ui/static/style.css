@@ -6,7 +6,7 @@
 }
 
 /* Explicitní pozadí stránky podle motivu – bez něj prohlížeč kreslí za průhlednými
-   vrstvami tmavý canvas a světý texty nejsou vidět */
+   vrstvami tmavý canvas a světlé texty nejsou vidět */
 .body--light {
   background-color: #ffffff;
   color-scheme: light;
@@ -107,7 +107,7 @@
   align-self: stretch;
 }
 
-/* Sloupec panelů grafu (hlavní + případné indikátory v kroku 4) */
+/* Sloupec panelů grafu (hlavní + případné panely indikátorů) */
 .lwchart-panes {
   position: absolute;
   inset: 0;
@@ -151,12 +151,13 @@
   color: #131722;
 }
 
-.lwchart-legend.up {
-  color: #26a69a !important;
+/* Změna svíčky v legendě (třída up/down je na položce, ne na celé legendě) */
+.lwchart-legend .ohlc-item.up {
+  color: #26a69a;
 }
 
-.lwchart-legend.down {
-  color: #ef5350 !important;
+.lwchart-legend .ohlc-item.down {
+  color: #ef5350;
 }
 
 /* Timeframy přesně tak, jak je definuje zdroj (bez transformace na velká písmena) */

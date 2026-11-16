@@ -1,6 +1,6 @@
 """Datový zdroj Alpaca (americké akcie/ETF): REST data API + websocket IEX.
 
-Zdroj je volitelný: aktivuje se jen když jsou v data/config.local.json
+Zdroj je volitelný: aktivuje se jen když jsou v config.yaml (sekce "alpaca")
 uložené klíče (api_key + secret). Aplikace je read-only, obchodní API
 (paper-api) se používá jen pro seznam instrumentů.
 """
@@ -18,9 +18,10 @@ from tickview.config import load_config
 from tickview.providers.base import (
     Candle,
     DataProvider,
+    FailureLatch,
     RateLimiter,
+    StreamItem,
     SymbolInfo,
-    TIMEFRAME_MS,
 )
 
 DATA_BASE_URL = "https://data.alpaca.markets"
@@ -62,6 +63,8 @@ class AlpacaProvider(DataProvider):
         self._limiter = RateLimiter(min_interval=0.2)
         self._assets: list[SymbolInfo] = []
         self._assets_loaded_at = 0.0
+        # Jedno sdílené websocket spojení pro všechny 1m streamy (limit účtu)
+        self._hub = _BarHub(self._key, self._secret)
 
     @property
     def configured(self) -> bool:
@@ -75,6 +78,13 @@ class AlpacaProvider(DataProvider):
             "APCA-API-KEY-ID": self._key,
             "APCA-API-SECRET-KEY": self._secret,
         }
+
+    async def close(self) -> None:
+        """Zavře websocket i HTTP klienta (při ukončení aplikace)."""
+        self._hub.stop()
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
 
     async def _get_client(self) -> httpx.AsyncClient:
         # Lazy klient – vytvoří se až u prvního dotazu v běžící smyčce
@@ -133,13 +143,12 @@ class AlpacaProvider(DataProvider):
     async def search(self, query: str, limit: int = 30) -> list[SymbolInfo]:
         """Vyhledá akcie/ETF podle dotazu v seznamu instrumentů Alpaca."""
         q = query.strip().upper()
+        await self._ensure_assets()
         if not q:
             # Prázdný dotaz: oblíbené tickery pro rychlý start
-            await self._ensure_assets()
             popular = ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "SPY"]
             available = {info.symbol: info for info in self._assets}
             return [available[symbol] for symbol in popular if symbol in available]
-        await self._ensure_assets()
         prefix = [info for info in self._assets if info.symbol.startswith(q)]
         contains = [
             info for info in self._assets if q in info.symbol and not info.symbol.startswith(q)
@@ -219,47 +228,161 @@ class AlpacaProvider(DataProvider):
                 break
         return candles
 
-    async def stream(self, symbol: str, timeframe: str) -> AsyncIterator[Candle]:
-        """Živé svíčky přes websocket IEX s automatickým znovupřipojením.
+    def stream(self, symbol: str, timeframe: str) -> AsyncIterator[StreamItem]:
+        """Živé svíčky: pro 1m websocket IEX, pro delší timeframy polling REST.
 
-        Generátor běží, dokud ho konzument nezruší (CancelledError).
+        Websocket Alpaca posílá jen minutové bary; kdyby šly do grafu 1h/1D,
+        vznikly by v něm (i v cache) falešné minutové svíčky. Delší timeframy
+        proto dotazujeme v intervalu přes REST historii.
         """
+        if timeframe == "1m":
+            return self._stream_minute_bars(symbol)
+        return self._poll_history(symbol, timeframe)
+
+    def is_live_for(self, timeframe: str) -> bool:
+        """Živě (websocket) jen 1m; delší timeframy se dotazují pollingem."""
+        return timeframe == "1m"
+
+    async def _stream_minute_bars(self, symbol: str) -> AsyncIterator[StreamItem]:
+        """Minutové bary (a stavové zprávy) ze sdíleného websocket spojení IEX.
+
+        Generátor běží, dokud ho konzument nezruší; při ukončení se odhlásí
+        z odběru (poslední odběratel zavře i spojení).
+        """
+        queue = self._hub.add(symbol)
+        try:
+            while True:
+                yield await queue.get()
+        finally:
+            self._hub.remove(symbol, queue)
+
+
+class _BarHub:
+    """Sdílené websocket spojení IEX pro všechny odběry minutových barů.
+
+    Bezplatný účet Alpaca povoluje jen jedno websocket spojení; všechny streamy
+    (záložky prohlížeče, symboly) proto sdílí jedno připojení a bary se
+    rozdělují do front odběratelů podle symbolu. Spojení se otevře s prvním
+    odběratelem, po výpadku se znovu připojí a zavře se s posledním odběratelem.
+
+    Parametry:
+        key: API key Alpaca.
+        secret: API secret Alpaca.
+    """
+
+    def __init__(self, key: str, secret: str) -> None:
+        self._key = key
+        self._secret = secret
+        # symbol -> fronty odběratelů (každý stream má vlastní frontu)
+        self._queues: dict[str, set[asyncio.Queue]] = {}
+        self._ws: Any = None
+        self._task: Optional[asyncio.Task] = None
+
+    def add(self, symbol: str) -> asyncio.Queue:
+        """Zaregistruje odběratele symbolu a vrátí jeho frontu."""
+        queue: asyncio.Queue = asyncio.Queue()
+        is_new_symbol = symbol not in self._queues
+        self._queues.setdefault(symbol, set()).add(queue)
+        if self._task is None or self._task.done():
+            # První odběratel: spojení otevřeme (odběry se přihlásí po autentizaci)
+            self._task = asyncio.create_task(self._run())
+        elif is_new_symbol:
+            self._send({"action": "subscribe", "bars": [symbol]})
+        return queue
+
+    def remove(self, symbol: str, queue: asyncio.Queue) -> None:
+        """Odhlásí odběratele; poslední odběratel symbolu ruší odběr na serveru."""
+        subscribers = self._queues.get(symbol)
+        if subscribers is None:
+            return
+        subscribers.discard(queue)
+        if subscribers:
+            return
+        del self._queues[symbol]
+        if not self._queues:
+            # Nikdo už nic neodebírá – spojení zavřeme
+            self.stop()
+        else:
+            self._send({"action": "unsubscribe", "bars": [symbol]})
+
+    def stop(self) -> None:
+        """Zavře spojení (zrušením obslužného tasku)."""
+        if self._task is not None:
+            self._task.cancel()
+            self._task = None
+        self._ws = None
+
+    def _send(self, message: dict) -> None:
+        # Odeslání na pozadí; bez spojení nic neposíláme – po (znovu)připojení
+        # _run přihlásí všechny aktuální odběry najednou
+        if self._ws is not None:
+            asyncio.create_task(self._safe_send(self._ws, message))
+
+    @staticmethod
+    async def _safe_send(ws: Any, message: dict) -> None:
+        try:
+            await ws.send(json.dumps(message))
+        except Exception:
+            # Spojení právě padá – _run se znovu připojí a odběry obnoví
+            pass
+
+    def _broadcast(self, item: StreamItem, symbol: Optional[str] = None) -> None:
+        # Bar jde odběratelům daného symbolu, stavová zpráva všem
+        if symbol is not None:
+            targets = list(self._queues.get(symbol, ()))
+        else:
+            targets = [queue for queues in self._queues.values() for queue in queues]
+        for queue in targets:
+            queue.put_nowait(item)
+
+    async def _run(self) -> None:
+        """Obsluha spojení: autentizace, odběry, rozdělování barů, znovupřipojení."""
         backoff = 1.0
+        latch = FailureLatch()
         while True:
             try:
                 async with websockets.connect(WS_BASE_URL) as ws:
-                    # Autentizace a odběr baru pro symbol
                     await ws.send(
                         json.dumps({"action": "auth", "key": self._key, "secret": self._secret})
                     )
-                    await ws.send(json.dumps({"action": "subscribe", "bars": [symbol]}))
+                    # Od teď smí add()/remove() posílat (un)subscribe; seznam
+                    # odběrů se sestaví až po autentizaci, aby žádný nechyběl
+                    self._ws = ws
+                    await ws.send(json.dumps({"action": "subscribe", "bars": list(self._queues)}))
                     backoff = 1.0
+                    if status := latch.ok("websocket Alpaca znovu připojen"):
+                        self._broadcast(status)
                     async for raw in ws:
                         for message in json.loads(raw):
                             kind = message.get("T")
                             if kind == "error":
-                                # Např. neplatné klíče; pošleme výš pro zobrazení v UI
+                                # Např. neplatné klíče nebo limit spojení: ukončí spojení,
+                                # níže se ohlásí výpadek a čeká se s backoffem
                                 raise RuntimeError(message.get("msg", "chyba websocketu Alpaca"))
                             if kind != "b":
                                 # success/subscription/... ignorujeme
                                 continue
-                            close_time = self._parse_time(message["t"])
-                            # Bar patří k symbolu, na který jsme se přihlásili
-                            if message.get("S") != symbol:
-                                continue
-                            yield Candle(
-                                open_time=close_time,
-                                open=float(message["o"]),
-                                high=float(message["h"]),
-                                low=float(message["l"]),
-                                close=float(message["c"]),
-                                volume=float(message["v"]),
+                            # Čas "t" je začátek minutového baru
+                            self._broadcast(
+                                Candle(
+                                    open_time=AlpacaProvider._parse_time(message["t"]),
+                                    open=float(message["o"]),
+                                    high=float(message["h"]),
+                                    low=float(message["l"]),
+                                    close=float(message["c"]),
+                                    volume=float(message["v"]),
+                                ),
+                                message.get("S"),
                             )
             except asyncio.CancelledError:
                 raise
-            except Exception:
-                # Výpadek spojení nebo chyba autentizace: čekáme a zkoušíme znovu
+            except Exception as exc:
+                self._ws = None
+                # Výpadek spojení nebo chyba autentizace: ohlásíme (jednou) a zkusíme znovu
+                if status := latch.fail(f"websocket Alpaca odpojen: {exc}"):
+                    self._broadcast(status)
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, WS_MAX_BACKOFF_S)
             else:
+                self._ws = None
                 await asyncio.sleep(0.5)

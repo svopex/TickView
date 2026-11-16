@@ -1,9 +1,10 @@
 """Datový zdroj Interactive Brokers přes TWS API (ib_async).
 
 Napojení na TWS / IB Gateway: výchozí host 127.0.0.1, port 7497 (demo TWS)
-a clientId 30; hodnoty lze přepsat v data/config.local.json v sekci "ibkr".
+a clientId 30; hodnoty lze přepsat v config.yaml v sekci "ibkr".
 Zdroj se připojuje lazy až při prvním dotazu a po výpadku se znovu připojuje
-s cooldownem, aby se TWS nezahlcovala pokusy.
+s cooldownem, aby se TWS nezahlcovala pokusy. Když clientId už používá jiný
+klient (např. druhá instance aplikace), zkusí se několik následujících.
 """
 
 import asyncio
@@ -15,7 +16,13 @@ from typing import AsyncIterator, Optional
 from ib_async import IB, Stock
 
 from tickview.config import load_config
-from tickview.providers.base import Candle, DataProvider, RateLimiter, SymbolInfo
+from tickview.providers.base import (
+    Candle,
+    DataProvider,
+    RateLimiter,
+    StreamItem,
+    SymbolInfo,
+)
 
 # Výchozí napojení na TWS (demo): host, port a clientId
 DEFAULT_HOST = "127.0.0.1"
@@ -23,11 +30,10 @@ DEFAULT_PORT = 7497
 DEFAULT_CLIENT_ID = 30
 # Jak dlouho po neúspěšném připojení se TWS nezkouší znovu (sekundy)
 RECONNECT_COOLDOWN_S = 60.0
+# Kolik dalších clientId se zkusí, když je nastavený obsazený jiným klientem
+CLIENT_ID_ATTEMPTS = 5
 # Jak často se obnovují ceny watchlistu (throttle kvůli TWS pacing)
 TICKER_TTL_S = 30.0
-# Interval pollingu živého streamu (sekundy) – intraday vs. denní data
-POLL_SECONDS_INTRADAY = 15.0
-POLL_SECONDS_DAILY = 60.0
 
 # Mapování kanonických timeframeů na barSizeSetting TWS API
 BAR_SIZES = {
@@ -47,16 +53,18 @@ class IbkrProvider(DataProvider):
     id = "ibkr"
     name = "IBKR"
     supports_stream = True
-    # Burzovní data z TWS jsou v reálném čase (případně zpožděná dle tarifu)
-    is_live = True
+    # Živá data se z TWS dotazují pollingem v intervalu (ne stream) → štítek „zpožděno“
+    is_live = False
 
     def __init__(self) -> None:
         config = load_config().get("ibkr", {})
         self._host = config.get("host") or DEFAULT_HOST
         self._port = int(config.get("port") or DEFAULT_PORT)
         self._client_id = int(config.get("client_id") or DEFAULT_CLIENT_ID)
-        self.timeframes = {name: api for name, api in BAR_SIZES.items()}
+        self.timeframes = dict(BAR_SIZES)
         self._ib: Optional[IB] = None
+        # Souběžné dotazy (hledání, ceny, historie) se připojují jen jednou
+        self._connect_lock = asyncio.Lock()
         # Cooldown po neúspěšném připojení (monotonic čas posledního selhání)
         self._last_fail = 0.0
         # Cache cen pro watchlist (symbol -> (čas, data))
@@ -68,6 +76,14 @@ class IbkrProvider(DataProvider):
         """Vrátí připojené IB; po výpadku zkusí reconnect s cooldownem."""
         if self._ib is not None and self._ib.isConnected():
             return self._ib
+        async with self._connect_lock:
+            # Mezitím se mohl připojit jiný souběžný dotaz
+            if self._ib is not None and self._ib.isConnected():
+                return self._ib
+            return await self._connect()
+
+    async def _connect(self) -> IB:
+        """Nové připojení k TWS (volá se pod zámkem); zkouší i další clientId."""
         now = time_module.monotonic()
         if now - self._last_fail < RECONNECT_COOLDOWN_S:
             raise RuntimeError(
@@ -76,25 +92,43 @@ class IbkrProvider(DataProvider):
             )
         # Před novým připojením uklidíme starou instanci, pokud existuje
         if self._ib is not None:
+            self._disconnect_quietly(self._ib)
+            self._ib = None
+        last_error: Optional[BaseException] = None
+        for client_id in range(self._client_id, self._client_id + CLIENT_ID_ATTEMPTS):
+            ib = IB()
             try:
-                self._ib.disconnect()
-            except Exception:
-                pass
-        ib = IB()
+                await ib.connectAsync(self._host, self._port, clientId=client_id, timeout=6)
+            except Exception as exc:
+                last_error = exc
+                self._disconnect_quietly(ib)
+                # TWS vůbec neběží – další clientId nemá smysl zkoušet; jinak jde
+                # typicky o chybu 326 „client id is already in use“ (TWS spojení
+                # zavře a ib_async skončí timeoutem) → zkusíme další clientId
+                if isinstance(exc, ConnectionRefusedError):
+                    break
+                continue
+            self._ib = ib
+            return ib
+        self._last_fail = time_module.monotonic()
+        raise RuntimeError(
+            f"Připojení k TWS ({self._host}:{self._port}, clientId {self._client_id}"
+            f"–{self._client_id + CLIENT_ID_ATTEMPTS - 1}) selhalo: {last_error!r}"
+        ) from last_error
+
+    @staticmethod
+    def _disconnect_quietly(ib: IB) -> None:
+        # Úklid nepovedeného/starého spojení; chyby při odpojení nejsou podstatné
         try:
-            await ib.connectAsync(self._host, self._port, clientId=self._client_id, timeout=6)
-        except Exception as exc:
-            self._last_fail = time_module.monotonic()
-            try:
-                ib.disconnect()
-            except Exception:
-                pass
-            raise RuntimeError(
-                f"Připojení k TWS ({self._host}:{self._port}, clientId {self._client_id}) "
-                f"selhalo: {exc}"
-            ) from exc
-        self._ib = ib
-        return ib
+            ib.disconnect()
+        except Exception:
+            pass
+
+    async def close(self) -> None:
+        """Odpojí se od TWS (při ukončení aplikace)."""
+        if self._ib is not None:
+            self._disconnect_quietly(self._ib)
+            self._ib = None
 
     @staticmethod
     def _stock(symbol: str) -> Stock:
@@ -197,39 +231,10 @@ class IbkrProvider(DataProvider):
         candles.sort(key=lambda c: c.open_time)
         return candles
 
-    async def stream(self, symbol: str, timeframe: str) -> AsyncIterator[Candle]:
-        """Živá aktualizace dotazováním TWS v intervalu (bar update každých pár s)."""
-        step_ms = {
-            "1m": 60_000,
-            "5m": 300_000,
-            "15m": 900_000,
-            "1h": 3_600_000,
-            "4h": 14_400_000,
-            "1D": 86_400_000,
-            "1W": 604_800_000,
-        }[timeframe]
-        poll_seconds = (
-            POLL_SECONDS_DAILY if timeframe in ("1D", "1W") else POLL_SECONDS_INTRADAY
-        )
-        last_open = -1
-        last_close = None
-        while True:
-            try:
-                now_ms = int(time_module.time() * 1000)
-                # Poslední tři svíčky stačí pro detekci nové/rozpracované svíčky
-                candles = await self.history(symbol, timeframe, now_ms - 3 * step_ms, now_ms)
-                if candles:
-                    latest = candles[-1]
-                    if latest.open_time > last_open or latest.close != last_close:
-                        last_open = latest.open_time
-                        last_close = latest.close
-                        yield latest
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                # Výpadek TWS: zkusíme to znovu v dalším kole (cooldown v _ensure_connected)
-                pass
-            await asyncio.sleep(poll_seconds)
+    def stream(self, symbol: str, timeframe: str) -> AsyncIterator[StreamItem]:
+        """Živá aktualizace dotazováním TWS v intervalu (výpadek TWS řeší cooldown
+        v _ensure_connected, polling to zkusí znovu v dalším kole)."""
+        return self._poll_history(symbol, timeframe)
 
     async def tickers(self, symbols: list[str]) -> dict[str, dict]:
         """Vrátí poslední cenu a denní změnu (%) z posledních dvou denních barů."""

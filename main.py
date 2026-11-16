@@ -6,6 +6,7 @@ from nicegui import app, ui
 
 from tickview.config import DB_PATH, PROJECT_ROOT, ensure_dirs
 from tickview.logic.cache import KlineCache
+from tickview.providers import PROVIDERS
 from tickview.ui import main_window
 
 
@@ -27,7 +28,19 @@ def main() -> None:
     cache = KlineCache(DB_PATH)
 
     # Databáze se otevře asynchronně při startu serveru
-    app.on_startup(lambda: cache.init())
+    app.on_startup(cache.init)
+
+    async def shutdown() -> None:
+        # Při ukončení zavřeme síťová spojení zdrojů (HTTP, websockety, TWS) i databázi
+        for provider in PROVIDERS:
+            try:
+                await provider.close()
+            except Exception:
+                # Chyba při úklidu jednoho zdroje nesmí zablokovat ostatní
+                pass
+        await cache.close()
+
+    app.on_shutdown(shutdown)
 
     # Statické soubory UI: styly, JS komponenta grafu a vendored knihovna
     app.add_static_files("/static", str(PROJECT_ROOT / "tickview" / "ui" / "static"))

@@ -29,6 +29,11 @@ window.TickViewChart = (function () {
   // Úrovně Fibonacci retracementu
   const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
 
+  // Kolik svíček od levého okraje dat stačí k vyžádání starší historie
+  const OLDER_THRESHOLD_BARS = 30;
+  // Pauza před dalším pokusem, když donačtení starších dat selhalo (ms)
+  const OLDER_RETRY_MS = 10000;
+
   // Stav jednotlivých instancí grafu (id kontejneru -> stav)
   const state = new Map();
 
@@ -158,11 +163,9 @@ window.TickViewChart = (function () {
         hidden: false,
         selected: -1,
         drag: null,
-        measure: null,
       },
       elementId: id,
       toolGroups: pendingToolGroups.get(id) || [],
-      paneCanvas: null,
       themeName,
       candles: [],
       byTime: new Map(),
@@ -174,8 +177,19 @@ window.TickViewChart = (function () {
       panesMap: new Map(),
       syncing: false,
       lastIndicatorPayload: null,
+      indicatorStructure: null,
+      // Čas posledního bodu sérií indikátorů (živé doplňování přes update())
+      indicatorLastTime: -Infinity,
       finishedQueue: [],
-      lastClick: null,
+      measure: null,
+      // Donačítání starší historie při posunu doleva
+      olderLoading: false,
+      olderExhausted: false,
+      olderRetryAt: 0,
+      // Délka baru timeframu v sekundách (posílá Python v setCandles)
+      stepSeconds: 60,
+      // Lokální id nových kreseb, dokud jim Python nepřiřadí id z databáze
+      nextLocalId: 1,
     };
     state.set(id, s);
 
@@ -191,6 +205,7 @@ window.TickViewChart = (function () {
     chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
       syncRange(s, chart, range);
       redrawOverlay(s);
+      maybeRequestOlder(s, range);
     });
 
     // Přizpůsobení překryvného canvasu při změně velikosti hostitele
@@ -199,7 +214,6 @@ window.TickViewChart = (function () {
 
     // Kreslení (aktivní nástroj): kliky na překryvném canvasu vytvářejí body
     overlay.addEventListener('click', (event) => {
-      s.lastClick = null;
       if (!s.overlay.mode || s.overlay.mode === 'cursor') return;
       const pane = getPaneGeometry(s);
       const clickX = event.clientX - pane.hostLeft;
@@ -208,21 +222,22 @@ window.TickViewChart = (function () {
       if (clickX < pane.offsetX || clickX > pane.offsetX + pane.width) return;
       if (clickY < pane.offsetY || clickY > pane.offsetY + pane.height) return;
       const point = snapPoint(s, clickX - pane.offsetX, clickY - pane.offsetY);
-      s.lastClick = point;
-      if (s.overlay.mode === 'text') {
-        // Textový nástroj: anchory pošleme Pythonu, dialog se zeptá na text
+      // Klik mimo rozsah dat (čas nebo cenu nelze určit) ignorujeme
+      if (!point) return;
+      if (s.overlay.mode === 'text' || s.overlay.mode === 'sticker') {
+        // Text a sticker: anchor pošleme Pythonu, dialog se zeptá na text / emoji
         s.finishedQueue.push({
-          type: 'text_request',
+          type: s.overlay.mode + '_request',
           time: point.time,
           price: point.price,
         });
-        setDrawingMode(id, null);
+        returnToCursor(s);
         return;
       }
-    if (s.overlay.mode === 'measure') {
-      handleMeasureClick(s, point);
-      return;
-    }
+      if (s.overlay.mode === 'measure') {
+        handleMeasureClick(s, point);
+        return;
+      }
       handleDrawingClick(s, point);
     });
     overlay.addEventListener('mousemove', (event) => {
@@ -230,20 +245,18 @@ window.TickViewChart = (function () {
       const pane = getPaneGeometry(s);
       const x = event.clientX - pane.hostLeft - pane.offsetX;
       const y = event.clientY - pane.hostTop - pane.offsetY;
-      const time = s.chart.timeScale().coordinateToTime(x);
-      const price = s.candleSeries.coordinateToPrice(y);
-      if (time === null || price === null) return;
-      s.overlay.previewPoint = { time: Number(time), price: Number(price) };
+      const isBrush = s.overlay.mode === 'brush';
+      // Štětec kreslí volně (bez přichycení na bary), ostatní nástroje jako klik
+      const point = isBrush ? pixelToPoint(s, x, y) : snapPoint(s, x, y);
+      if (!point) return;
+      s.overlay.previewPoint = point;
       // Štětec: body se při tažení přidávají do rozepsané kresby
-      if (s.overlay.mode === 'brush' && s.overlay.pending) {
+      if (isBrush && s.overlay.pending) {
         const points = s.overlay.pending.points;
-        const last = points[points.length - 1];
-        if (Math.abs(last.time - Number(time)) > 0 || Math.abs(last.price - Number(price)) > 0) {
-          // Body přidáváme až po ~6 px, aby JSON kresby nebyly zbytečně velké
-          const lastPixel = pointToPixel(s, last);
-          if (!lastPixel || Math.hypot(x - lastPixel.x, y - lastPixel.y) > 6) {
-            points.push({ time: Number(time), price: Number(price) });
-          }
+        const lastPixel = pointToPixel(s, points[points.length - 1]);
+        // Body přidáváme až po ~6 px, aby JSON kresby nebyly zbytečně velké
+        if (!lastPixel || Math.hypot(x - lastPixel.x, y - lastPixel.y) > 6) {
+          points.push(point);
         }
       }
       redrawOverlay(s);
@@ -279,7 +292,7 @@ window.TickViewChart = (function () {
           event.stopPropagation();
           event.preventDefault();
           s.overlay.selected = hit.index;
-          s.overlay.drag = { handle: hit.handle, lastX: x, lastY: y, moved: false };
+          s.overlay.drag = startDrag(s, hit.index, hit.handle, x, y);
           redrawOverlay(s);
           return;
         }
@@ -288,7 +301,7 @@ window.TickViewChart = (function () {
           event.stopPropagation();
           event.preventDefault();
           s.overlay.selected = index;
-          s.overlay.drag = { index: index, handle: 'body', lastX: x, lastY: y, moved: false };
+          s.overlay.drag = startDrag(s, index, 'body', x, y);
           redrawOverlay(s);
         } else if (s.overlay.selected >= 0) {
           selectDrawing(s, -1);
@@ -303,7 +316,7 @@ window.TickViewChart = (function () {
       const pane = getPaneGeometry(s);
       const x = event.clientX - pane.hostLeft - pane.offsetX;
       const y = event.clientY - pane.hostTop - pane.offsetY;
-      dragDrawing(s, drag, x, y, event);
+      dragDrawing(s, drag, x, y);
     });
     window.addEventListener('mouseup', () => {
       const drag = s.overlay.drag;
@@ -318,6 +331,12 @@ window.TickViewChart = (function () {
             points: drawing.points,
             text: drawing.text || null,
           });
+        } else if (drawing) {
+          // Kresba ještě nemá id: čeká-li "add" ve frontě, posunuté body dáme
+          // rovnou do něj, jinak se uloží po přiřazení id (assignDrawingId)
+          const event = s.finishedQueue.find((e) => e.type === 'add' && e.localId === drawing.localId);
+          if (event) event.points = drawing.points;
+          else drawing.dirty = true;
         }
       }
       s.overlay.drag = null;
@@ -354,7 +373,7 @@ window.TickViewChart = (function () {
         const x = event.clientX - pane.hostLeft - pane.offsetX;
         const y = event.clientY - pane.hostTop - pane.offsetY;
         const drawing = s.overlay.drawings[s.overlay.selected];
-        if (drawing && drawing.kind === 'text' && drawing.text) {
+        if (drawing && drawing.kind === 'text' && drawing.id) {
           s.finishedQueue.push({
             type: 'text_edit',
             id: drawing.id,
@@ -428,16 +447,6 @@ window.TickViewChart = (function () {
     document.querySelectorAll('.drawing-contextmenu').forEach((menu) => menu.remove());
   }
 
-  // Odeberie všechny kresby (lokálně + fronta mazání pro backend)
-  function clearAllDrawings(s) {
-    for (const drawing of s.overlay.drawings) {
-      if (drawing.id) s.finishedQueue.push({ type: 'delete', id: drawing.id });
-    }
-    s.overlay.drawings = [];
-    s.overlay.selected = -1;
-    redrawOverlay(s);
-  }
-
   // Flyout nabídka skupiny nástrojů (pozice u tlačítka, jako v TradingView)
   function openToolFlyout(s, groupId, anchorButton) {
     closeFlyout();
@@ -471,58 +480,98 @@ window.TickViewChart = (function () {
     document.querySelectorAll('.tool-flyout').forEach((flyout) => flyout.remove());
   }
 
-  // Geometrie plátna grafu vůči hostu (offsety os) – cache se obnovuje při volání
+  // Geometrie cenové plochy grafu vůči hostu: vlevo případná levá cenová osa,
+  // vpravo pravá osa, dole časová osa (rozměry bere přímo z API grafu)
   function getPaneGeometry(s) {
-    s.paneCanvas = s.paneCanvas || s.mainHost.querySelector('canvas');
-    const paneRect = s.paneCanvas ? s.paneCanvas.getBoundingClientRect() : null;
     const hostRect = s.mainHost.getBoundingClientRect();
+    const timeScale = s.chart.timeScale();
     return {
       hostLeft: hostRect.left,
       hostTop: hostRect.top,
-      offsetX: paneRect ? paneRect.left - hostRect.left : 0,
-      offsetY: paneRect ? paneRect.top - hostRect.top : 0,
-      width: paneRect ? paneRect.width : s.mainHost.clientWidth,
-      height: paneRect ? paneRect.height : s.mainHost.clientHeight,
+      offsetX: s.chart.priceScale('left').width(),
+      offsetY: 0,
+      width: timeScale.width(),
+      height: Math.max(0, hostRect.height - timeScale.height()),
     };
   }
 
   // Převede (čas, cena) na pixely v souřadnicích plátna grafu
+  // Kresby ukládají čas v sekundách UTC; graf ale umí převést na pixely jen
+  // časy existujících svíček. Čas proto převádíme na logický index (pořadí
+  // svíčky): uvnitř dat lineárně mezi sousedními svíčkami (díry – víkend,
+  // noc), mimo data (vpravo do budoucna, vlevo do minulosti) krokem timeframu.
+
+  // Čas (s) → logický index; null, když graf nemá data
+  function timeToLogical(s, time) {
+    const candles = s.candles;
+    const n = candles.length;
+    if (!n) return null;
+    if (time <= candles[0].time) return (time - candles[0].time) / s.stepSeconds;
+    if (time >= candles[n - 1].time) return n - 1 + (time - candles[n - 1].time) / s.stepSeconds;
+    // Binární hledání svíček lo/hi, mezi kterými čas leží
+    let lo = 0;
+    let hi = n - 1;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (candles[mid].time <= time) lo = mid;
+      else hi = mid;
+    }
+    return lo + (time - candles[lo].time) / (candles[hi].time - candles[lo].time);
+  }
+
+  // Logický index → čas (s, celé číslo); inverze timeToLogical
+  function logicalToTime(s, logical) {
+    const candles = s.candles;
+    const n = candles.length;
+    if (!n) return null;
+    if (logical <= 0) return Math.round(candles[0].time + logical * s.stepSeconds);
+    if (logical >= n - 1) return Math.round(candles[n - 1].time + (logical - (n - 1)) * s.stepSeconds);
+    const lo = Math.floor(logical);
+    const fraction = logical - lo;
+    return Math.round(candles[lo].time + fraction * (candles[lo + 1].time - candles[lo].time));
+  }
+
+  // Čas → x souřadnice v plátně grafu (i mimo existující svíčky)
+  function timeToX(s, time) {
+    const logical = timeToLogical(s, time);
+    return logical === null ? null : s.chart.timeScale().logicalToCoordinate(logical);
+  }
+
+  // Převede (čas, cena) na pixely v souřadnicích plátna grafu
   function pointToPixel(s, point) {
-    const px = s.chart.timeScale().timeToCoordinate(point.time);
+    const px = timeToX(s, point.time);
     const py = s.candleSeries.priceToCoordinate(point.price);
     return px === null || py === null ? null : { x: px, y: py };
   }
 
-  // Převod pixel → (čas, cena); s magnetem přichytí k času/ceně nejbližší svíčky
+  // Převod pixel → (čas, cena) bez přichycení (štětec)
+  function pixelToPoint(s, x, y) {
+    const logical = s.chart.timeScale().coordinateToLogical(x);
+    const price = s.candleSeries.coordinateToPrice(y);
+    if (logical === null || price === null) return null;
+    const time = logicalToTime(s, logical);
+    return time === null ? null : { time: time, price: Number(price) };
+  }
+
+  // Převod pixel → (čas, cena): čas se přichytí na nejbližší bar (i vpravo za
+  // daty); s magnetem se cena přichytí k nejbližší OHLC hodnotě svíčky
   function snapPoint(s, x, y) {
-    const time = s.chart.timeScale().coordinateToTime(x);
+    const logical = s.chart.timeScale().coordinateToLogical(x);
     let price = s.candleSeries.coordinateToPrice(y);
-    if (time === null || price === null) return null;
-    let snappedTime = Number(time);
-    if (s.overlay.magnet) {
-      // Najdeme nejbližší svíčku podle času (časy v s.candles jsou v sekundách)
-      let nearest = null;
-      for (const candle of s.candles) {
-        if (!nearest || Math.abs(candle.time - time) < Math.abs(nearest.time - time)) {
-          nearest = candle;
-        }
+    if (logical === null || price === null || !s.candles.length) return null;
+    const index = Math.round(logical);
+    const candle = s.candles[index];
+    if (s.overlay.magnet && candle) {
+      // Cena k nejbližší OHLC hodnotě svíčky pod kurzorem (tolerance ~12 px)
+      let best = null;
+      for (const candidate of [candle.open, candle.high, candle.low, candle.close]) {
+        const py = s.candleSeries.priceToCoordinate(candidate);
+        if (py === null) continue;
+        if (!best || Math.abs(py - y) < Math.abs(best.py - y)) best = { price: candidate, py: py };
       }
-      if (nearest) {
-        // Přichytíme cenu k nejbližší OHLC hodnotě svíčky (tolerance ~12 px)
-        const candidates = [nearest.open, nearest.high, nearest.low, nearest.close];
-        let best = null;
-        for (const candidate of candidates) {
-          const py = s.candleSeries.priceToCoordinate(candidate);
-          if (py === null) continue;
-          if (!best || Math.abs(py - y) < Math.abs(best.py - y)) {
-            best = { price: candidate, py: py };
-          }
-        }
-        if (best && Math.abs(best.py - y) <= 12) price = best.price;
-        snappedTime = nearest.time;
-      }
+      if (best && Math.abs(best.py - y) <= 12) price = best.price;
     }
-    return { time: snappedTime, price: Number(price) };
+    return { time: logicalToTime(s, index), price: Number(price) };
   }
 
   // Synchronizuje viditelný rozsah mezi hlavním grafem a panely indikátorů
@@ -629,7 +678,53 @@ window.TickViewChart = (function () {
   function setIndicators(id, payload) {
     const s = state.get(id);
     if (!s) return;
-    s.lastIndicatorPayload = payload;
+    // Úplný payload si pamatujeme pro přestavbu panelů po změně motivu
+    if (!payload.tail) s.lastIndicatorPayload = payload;
+    // Stejná sada čar a panelů (typicky živý přepočet) → jen nová data v
+    // existujících sériích; panely se nepřestavují a graf nebliká
+    // Payload s příznakem "tail" (živý přepočet) obsahuje jen poslední body,
+    // které se do sérií doplní přes update(); ten umí jen poslední nebo novější
+    // bod, proto starší body vynecháme (všechny série mají stejné časy svíček)
+    const structure = indicatorStructure(payload);
+    const lastTime = s.indicatorLastTime;
+    if (structure === s.indicatorStructure) {
+      const apply = (series, data) => {
+        if (payload.tail) data.filter((point) => point.time >= lastTime).forEach((point) => series.update(point));
+        else series.setData(data);
+      };
+      (payload.overlays || []).forEach((overlay, index) => apply(s.overlaySeries[index], overlay.data));
+      for (const pane of payload.panes || []) {
+        const existing = s.panesMap.get(pane.paneId);
+        pane.series.forEach((spec, index) => apply(existing.series[index], spec.data));
+      }
+    } else if (payload.tail) {
+      // Zkrácený payload k jiné sadě indikátorů (mezitím změněné) nelze použít
+      return;
+    } else {
+      rebuildIndicators(s, payload);
+    }
+    const payloadLastTime = indicatorPayloadLastTime(payload);
+    s.indicatorLastTime = payload.tail ? Math.max(lastTime, payloadLastTime) : payloadLastTime;
+  }
+
+  // Čas posledního bodu v payloadu indikátorů (−∞, když je prázdný)
+  function indicatorPayloadLastTime(payload) {
+    const series = (payload.overlays || []).concat(...(payload.panes || []).map((pane) => pane.series));
+    const data = series.length ? series[0].data : [];
+    return data.length ? data[data.length - 1].time : -Infinity;
+  }
+
+  // Otisk struktury indikátorů (názvy čar, panely a počty jejich sérií)
+  function indicatorStructure(payload) {
+    const overlays = (payload.overlays || []).map((overlay) => overlay.name);
+    const panes = (payload.panes || []).map((pane) => pane.paneId + ':' + pane.series.length);
+    return JSON.stringify([overlays, panes]);
+  }
+
+  // Odstraní a znovu vytvoří všechny čáry a panely indikátorů (i po změně motivu)
+  function rebuildIndicators(s, payload) {
+    const id = s.elementId;
+    s.indicatorStructure = indicatorStructure(payload);
     clearIndicators(id);
     const theme = THEMES[s.themeName];
     // Overlay čáry v hlavním grafu (SMA, EMA, Bollinger)
@@ -651,27 +746,38 @@ window.TickViewChart = (function () {
   }
 
   // Nahradí celý dataset svíček (načtení historie)
+  // Seřadí svíčky podle času a odstraní duplicity (platí poslední výskyt) –
+  // Lightweight Charts vyžaduje rostoucí časové značky bez duplicit
+  function sortUniqueCandles(candles) {
+    const clean = [];
+    for (const candle of [...candles].sort((a, b) => a.time - b.time)) {
+      if (clean.length && clean[clean.length - 1].time === candle.time) clean[clean.length - 1] = candle;
+      else clean.push(candle);
+    }
+    return clean;
+  }
+
+  // Nastaví svíčky i objemy grafu ze s.candles (barva objemu podle směru svíčky)
+  function applySeriesData(s) {
+    s.candleSeries.setData(s.candles);
+    s.volumeSeries.setData(
+      s.candles.map((candle) => ({ time: candle.time, value: candle.volume, color: volumeColor(candle) }))
+    );
+  }
+
   function setCandles(id, candles, opts) {
     const s = state.get(id);
     if (!s) return;
-    // Lightweight Charts vyžaduje rostoucí časové značky bez duplicit
-    const sorted = [...candles].sort((a, b) => a.time - b.time);
-    const clean = [];
-    s.byTime = new Map();
-    for (const candle of sorted) {
-      if (clean.length && clean[clean.length - 1].time === candle.time) {
-        clean[clean.length - 1] = candle;
-      } else {
-        clean.push(candle);
-      }
-      s.byTime.set(candle.time, candle);
-    }
+    const clean = sortUniqueCandles(candles);
+    s.byTime = new Map(clean.map((candle) => [candle.time, candle]));
     s.candles = clean;
     s.lastCandle = clean.length ? clean[clean.length - 1] : null;
-    s.candleSeries.setData(clean);
-    s.volumeSeries.setData(
-      clean.map((candle) => ({ time: candle.time, value: candle.volume, color: volumeColor(candle) }))
-    );
+    s.stepSeconds = (opts && opts.stepSeconds) || 60;
+    // Nový dataset (jiný symbol/timeframe): starší historii lze znovu donačítat
+    s.olderLoading = false;
+    s.olderExhausted = false;
+    s.olderRetryAt = 0;
+    applySeriesData(s);
     // Zobrazit konec grafu (posledních N svíček), ne celou historii zmenšenou na minimum
     const visible = (opts && opts.visibleBars) || 150;
     s.chart.timeScale().setVisibleLogicalRange({
@@ -679,6 +785,38 @@ window.TickViewChart = (function () {
       to: clean.length + 4,
     });
     renderLegend(s, s.lastCandle);
+  }
+
+  // Požádá Python o starší svíčky, když se graf posunul blízko začátku dat
+  function maybeRequestOlder(s, range) {
+    if (!range || !s.candles.length || s.olderLoading || s.olderExhausted) return;
+    if (range.from > OLDER_THRESHOLD_BARS || Date.now() < s.olderRetryAt) return;
+    s.olderLoading = true;
+    s.finishedQueue.push({ type: 'load_older', before: s.candles[0].time });
+  }
+
+  // Přidá starší svíčky na začátek grafu; viditelný rozsah se posune tak,
+  // aby graf zůstal na stejném místě. Prázdný seznam = nic nového
+  // (exhausted: starší data nejsou, jinak se to zkusí znovu za chvíli)
+  function prependCandles(id, candles, exhausted) {
+    const s = state.get(id);
+    if (!s) return;
+    s.olderLoading = false;
+    const first = s.candles.length ? s.candles[0].time : Infinity;
+    const older = sortUniqueCandles(candles.filter((candle) => candle.time < first));
+    if (!older.length) {
+      if (exhausted) s.olderExhausted = true;
+      else s.olderRetryAt = Date.now() + OLDER_RETRY_MS;
+      return;
+    }
+    const range = s.chart.timeScale().getVisibleLogicalRange();
+    s.candles = older.concat(s.candles);
+    for (const candle of older) s.byTime.set(candle.time, candle);
+    applySeriesData(s);
+    if (range) {
+      s.chart.timeScale().setVisibleLogicalRange({ from: range.from + older.length, to: range.to + older.length });
+    }
+    redrawOverlay(s);
   }
 
   // Inkrementální doplnění/aktualizace svíčky (živá data) – series.update, ne celý dataset
@@ -694,10 +832,15 @@ window.TickViewChart = (function () {
       s.candles[s.candles.length - 1] = candle;
     } else {
       s.candles.push(candle);
-      s.byTime.set(candle.time, candle);
     }
+    s.byTime.set(candle.time, candle);
     s.lastCandle = candle;
     if (!s.hovering) renderLegend(s, candle);
+  }
+
+  // Dávka živých svíček (např. doplněná díra po výpadku + nová svíčka) jedním voláním
+  function updateCandles(id, candles) {
+    for (const candle of candles) updateCandle(id, candle);
   }
 
   // Přepnutí tmavého/světlého motivu grafu
@@ -718,12 +861,10 @@ window.TickViewChart = (function () {
       wickUpColor: theme.up,
       wickDownColor: theme.down,
     });
-    // Objemy překreslit, aby měly správné barvy po přepnutí motivu
-    s.volumeSeries.setData(
-      s.candles.map((candle) => ({ time: candle.time, value: candle.volume, color: volumeColor(candle) }))
-    );
+    // Svíčky a objemy překreslit, aby měly správné barvy po přepnutí motivu
+    applySeriesData(s);
     // Panely indikátorů přegenerovat v novém motivu
-    if (s.lastIndicatorPayload) setIndicators(id, s.lastIndicatorPayload);
+    if (s.lastIndicatorPayload) rebuildIndicators(s, s.lastIndicatorPayload);
   }
 
   // ---------- kreslení (modelováno po TradingView) ----------
@@ -776,6 +917,7 @@ window.TickViewChart = (function () {
   }
 
   // Nahradí kresby zobrazené k symbolu (načtené z backendu)
+  // Nahradí kresby zobrazené k symbolu (načtené z backendu při načtení symbolu)
   function setDrawings(id, drawings) {
     const s = state.get(id);
     if (!s) return;
@@ -787,17 +929,31 @@ window.TickViewChart = (function () {
       text: d.text || null,
     }));
     s.overlay.selected = -1;
+    s.overlay.drag = null;
     redrawOverlay(s);
+  }
+
+  // Přidá novou kresbu do grafu a do fronty k uložení; id z databáze jí
+  // dodatečně přiřadí Python přes assignDrawingId (podle lokálního id)
+  function queueNewDrawing(s, drawing) {
+    drawing.localId = s.nextLocalId++;
+    s.overlay.drawings.push(drawing);
+    redrawOverlay(s);
+    s.finishedQueue.push({
+      type: 'add',
+      localId: drawing.localId,
+      kind: drawing.kind,
+      points: drawing.points,
+      color: drawing.color,
+      text: drawing.text || null,
+    });
   }
 
   // Přidá/aktualizuje textovou kresbu (po potvrzení v dialogu)
   function addText(id, time, price, text) {
     const s = state.get(id);
     if (!s) return;
-    const drawing = { kind: 'text', points: [{ time: Number(time), price: Number(price) }], color: s.overlay.color, text: text };
-    s.overlay.drawings.push(drawing);
-    redrawOverlay(s);
-    s.finishedQueue.push({ type: 'add', ...drawing });
+    queueNewDrawing(s, { kind: 'text', points: [{ time: Number(time), price: Number(price) }], color: s.overlay.color, text: text });
   }
 
   function updateText(id, drawingId, text) {
@@ -814,15 +970,9 @@ window.TickViewChart = (function () {
   function trashDrawings(id) {
     const s = state.get(id);
     if (!s || s.locked) return 0;
-    if (s.overlay.selected >= 0) {
-      removeDrawing(s, s.overlay.selected);
-      selectDrawing(s, -1);
-      return 1;
-    }
-    // Smazat vše: každá kresba s id jde do fronty pro backend
-    for (const drawing of s.overlay.drawings) {
-      if (drawing.id) s.finishedQueue.push({ type: 'delete', id: drawing.id });
-    }
+    if (deleteSelected(s)) return 1;
+    // Smazat vše: každá kresba jde do fronty pro backend
+    for (const drawing of s.overlay.drawings) queueDeletion(s, drawing);
     const count = s.overlay.drawings.length;
     s.overlay.drawings = [];
     s.overlay.selected = -1;
@@ -835,10 +985,17 @@ window.TickViewChart = (function () {
     const drawing = s.overlay.drawings[index];
     if (!drawing) return false;
     s.overlay.drawings.splice(index, 1);
-    if (drawing.id) s.finishedQueue.push({ type: 'delete', id: drawing.id });
+    queueDeletion(s, drawing);
     if (s.overlay.selected === index) s.overlay.selected = -1;
     redrawOverlay(s);
     return true;
+  }
+
+  // Smazání kresby pro backend: uložená jde do fronty jako "delete"; u dosud
+  // neuložené se zruší čekající "add" (už vyzvednutou smaže assignDrawingId)
+  function queueDeletion(s, drawing) {
+    if (drawing.id) s.finishedQueue.push({ type: 'delete', id: drawing.id });
+    else s.finishedQueue = s.finishedQueue.filter((e) => !(e.type === 'add' && e.localId === drawing.localId));
   }
 
   // Označí kresbu (index) nebo zruší označení (-1)
@@ -856,7 +1013,8 @@ window.TickViewChart = (function () {
     return false;
   }
 
-  // Počet kliků potřebných pro každý nástroj (1 = jednoklikové, 3 = kanál/pitchfork)
+  // Počet kliků potřebných pro každý nástroj (1 = jednoklikové, 3 = kanál/pitchfork,
+  // ostatní 2); text, sticker a měřič mají vlastní obsluhu kliku
   const DRAWING_CLICKS = {
     hline: 1,
     vline: 1,
@@ -865,9 +1023,6 @@ window.TickViewChart = (function () {
     channel: 3,
     pitchfork: 3,
     brush: 0,
-    text: 1,
-    sticker: 1,
-    measure: 2,
   };
 
   // Zpracuje klik při aktivním kreslení; jednoklikové nástroje hline, vline,
@@ -922,19 +1077,19 @@ window.TickViewChart = (function () {
   function finishDrawing(s, drawing) {
     s.overlay.pending = null;
     s.overlay.previewPoint = null;
-    const colored = { kind: drawing.kind, points: drawing.points, color: s.overlay.color };
-    s.overlay.drawings.push(colored);
-    redrawOverlay(s);
     // Hotové kresby se hromadí ve frontě a backend si je vyzvedává stránkovým
-    // timerem přes popFinishedDrawing (DOM eventy z Vue komponenty nejsou
-    // spolehlivé; fronta zvládne i více kreseb mezi dvěma ticky)
-    s.finishedQueue.push({ type: 'add', ...colored });
-    // TradingView: bez zapnutého režimu tužky se po nakreslení vrací kurzor
-    if (!s.keepTool) {
-      s.overlay.mode = null;
-      s.overlay.canvas.classList.remove('drawing-active');
-      s.finishedQueue.push({ type: 'tool', mode: null });
-    }
+    // timerem přes popEvents (DOM eventy z Vue komponenty nejsou spolehlivé;
+    // fronta zvládne i více kreseb mezi dvěma ticky)
+    queueNewDrawing(s, { kind: drawing.kind, points: drawing.points, color: s.overlay.color });
+    returnToCursor(s);
+  }
+
+  // TradingView: bez zapnutého režimu tužky se po nakreslení vrací kurzor
+  // (Python se o tom dozví událostí "tool" a zvýrazní skupinu kurzoru)
+  function returnToCursor(s) {
+    if (s.keepTool) return;
+    setDrawingMode(s.elementId, null);
+    s.finishedQueue.push({ type: 'tool', mode: null });
   }
 
   // Zapne/vypne režim tužky (nástroj zůstává vybraný i po nakreslení)
@@ -944,7 +1099,7 @@ window.TickViewChart = (function () {
     s.keepTool = !!on;
   }
 
-  // Zamče/odemkne kresby (zabrání editaci i mazání)
+  // Zamkne/odemkne kresby (zabrání editaci i mazání)
   function setLocked(id, on) {
     const s = state.get(id);
     if (!s) return;
@@ -960,22 +1115,36 @@ window.TickViewChart = (function () {
   function addSticker(id, time, price, emoji) {
     const s = state.get(id);
     if (!s) return;
-    const drawing = {
+    queueNewDrawing(s, {
       kind: 'sticker',
       points: [{ time: Number(time), price: Number(price) }],
       color: s.overlay.color,
       text: emoji,
-    };
-    s.overlay.drawings.push(drawing);
-    redrawOverlay(s);
-    s.finishedQueue.push({ type: 'add', ...drawing });
+    });
   }
 
-  // Vyzvedne jednu událost kreslení z fronty (nebo null, když je prázdná)
-  function popFinishedDrawing(id) {
+  // Vyzvedne všechny čekající události grafu (kresby, nástroje, akce) a frontu vyprázdní
+  function popEvents(id) {
     const s = state.get(id);
-    if (!s || !s.finishedQueue.length) return null;
-    return s.finishedQueue.shift();
+    if (!s || !s.finishedQueue.length) return [];
+    return s.finishedQueue.splice(0, s.finishedQueue.length);
+  }
+
+  // Python uložil novou kresbu: přiřadí jí id z databáze. Kresba mezitím
+  // smazaná se smaže i v databázi, posunutá se uloží s novými body
+  function assignDrawingId(id, localId, drawingId) {
+    const s = state.get(id);
+    if (!s) return;
+    const drawing = s.overlay.drawings.find((d) => d.localId === localId);
+    if (!drawing) {
+      s.finishedQueue.push({ type: 'delete', id: drawingId });
+      return;
+    }
+    drawing.id = drawingId;
+    if (drawing.dirty) {
+      drawing.dirty = false;
+      s.finishedQueue.push({ type: 'update', id: drawingId, points: drawing.points, text: drawing.text || null });
+    }
   }
 
   // Vzdálenost bodu od úsečky (pro test, zda kurzor míří na kresbu)
@@ -1006,17 +1175,10 @@ window.TickViewChart = (function () {
 
   // Překrytí: najde kresbu pod kurzorem (index v s.overlay.drawings) nebo -1
   function hitTest(s, x, y) {
-    const timeScale = s.chart.timeScale();
-    const series = s.candleSeries;
-    const toPixel = (point) => {
-      const px = timeScale.timeToCoordinate(point.time);
-      const py = series.priceToCoordinate(point.price);
-      return px === null || py === null ? null : { x: px, y: py };
-    };
     const threshold = 6;
     for (let i = s.overlay.drawings.length - 1; i >= 0; i--) {
       const drawing = s.overlay.drawings[i];
-      const points = drawing.points.map(toPixel);
+      const points = drawing.points.map((point) => pointToPixel(s, point));
       if (points.some((p) => p === null)) continue;
       if (drawing.kind === 'hline') {
         if (Math.abs(y - points[0].y) <= threshold) return i;
@@ -1106,34 +1268,44 @@ window.TickViewChart = (function () {
   }
 
   // Tažení kresby: úchop = posun koncového bodu, body = posun celé kresby
+  // Začátek tažení: kresba, úchop (index bodu nebo 'body'), výchozí pozice
+  // kurzoru a kopie bodů – posun se vždy počítá od začátku tažení (bez driftu)
+  function startDrag(s, index, handle, x, y) {
+    const drawing = s.overlay.drawings[index];
+    return {
+      index: index,
+      handle: handle,
+      startX: x,
+      startY: y,
+      origin: drawing ? drawing.points.map((point) => ({ time: point.time, price: point.price })) : [],
+      moved: false,
+    };
+  }
+
+  // Tažení kresby: úchop = posun koncového bodu, body = posun celé kresby
   function dragDrawing(s, drag, x, y) {
     const drawing = s.overlay.drawings[drag.index];
     if (!drawing) return;
-    const snapped = snapPoint(s, x, y);
-    if (!snapped) return;
     if (drag.handle === 'body') {
-      // Posun celé kresby o rozdíl pixelů (přepočet přes čas/cenu)
-      const prevTime = s.chart.timeScale().coordinateToTime(drag.lastX);
-      const prevPrice = s.candleSeries.coordinateToPrice(drag.lastY);
-      const newTime = s.chart.timeScale().coordinateToTime(x);
+      // Posun celé kresby o celé bary (logický index) a o rozdíl ceny
+      const timeScale = s.chart.timeScale();
+      const startLogical = timeScale.coordinateToLogical(drag.startX);
+      const newLogical = timeScale.coordinateToLogical(x);
+      const startPrice = s.candleSeries.coordinateToPrice(drag.startY);
       const newPrice = s.candleSeries.coordinateToPrice(y);
-      if (prevTime === null || newTime === null || prevPrice === null || newPrice === null) return;
-      const dTime = Number(newTime) - Number(prevTime);
-      const dPrice = Number(newPrice) - Number(prevPrice);
-      for (const point of drawing.points) {
-        point.time = Number(point.time) + dTime;
-        point.price = point.price + dPrice;
-      }
+      if (startLogical === null || newLogical === null || startPrice === null || newPrice === null) return;
+      const dBars = Math.round(newLogical - startLogical);
+      const dPrice = newPrice - startPrice;
+      drawing.points = drag.origin.map((point) => ({
+        time: logicalToTime(s, timeToLogical(s, point.time) + dBars),
+        price: point.price + dPrice,
+      }));
     } else {
-      // Posun koncového bodu (úchop 0/1)
-      const point = drawing.points[drag.handle];
-      if (point) {
-        point.time = snapped.time;
-        point.price = snapped.price;
-      }
+      // Posun koncového bodu (úchop) na bar a cenu pod kurzorem
+      const snapped = snapPoint(s, x, y);
+      if (!snapped || !drawing.points[drag.handle]) return;
+      drawing.points[drag.handle] = snapped;
     }
-    drag.lastX = x;
-    drag.lastY = y;
     drag.moved = true;
     redrawOverlay(s);
   }
@@ -1142,12 +1314,11 @@ window.TickViewChart = (function () {
   function renderHandles(ctx, s, drawing) {
     if (s.overlay.selected !== s.overlay.drawings.indexOf(drawing)) return;
     if (drawing.kind === 'brush' || drawing.kind === 'text') return;
-    const timeScale = s.chart.timeScale();
-    const series = s.candleSeries;
     for (const point of drawing.points) {
-      const px = timeScale.timeToCoordinate(point.time);
-      const py = series.priceToCoordinate(point.price);
-      if (px === null || py === null) continue;
+      const pixel = pointToPixel(s, point);
+      if (!pixel) continue;
+      const px = pixel.x;
+      const py = pixel.y;
       ctx.fillStyle = s.themeName === 'dark' ? '#d1d4dc' : '#131722';
       ctx.strokeStyle = drawing.color || '#2962ff';
       ctx.lineWidth = 1;
@@ -1184,14 +1355,8 @@ window.TickViewChart = (function () {
       const p2 = measure.points[1];
       const diff = p2.price - p1.price;
       const pct = p1.price ? (diff / p1.price) * 100 : 0;
-      let bars = 0;
-      let idx1 = -1;
-      let idx2 = -1;
-      s.candles.forEach((candle, index) => {
-        if (idx1 < 0 && candle.open_time >= p1.time) idx1 = index;
-        if (idx2 < 0 && candle.open_time >= p2.time) idx2 = index;
-      });
-      if (idx1 >= 0 && idx2 >= 0) bars = Math.abs(idx2 - idx1);
+      // Počet barů = rozdíl logických indexů (i mimo rozsah dat)
+      const bars = Math.round(Math.abs(timeToLogical(s, p2.time) - timeToLogical(s, p1.time)));
       const label =
         (diff >= 0 ? '+' : '') + formatPrice(diff) + ' (' + (pct >= 0 ? '+' : '') + pct.toFixed(2) + ' %) · ' + bars + ' barů';
       ctx.font = '12px sans-serif';
@@ -1216,8 +1381,6 @@ window.TickViewChart = (function () {
 
   // Nakreslí jednu kresbu; preview = rozepsaná kresba sledující kurzor
   function drawShape(ctx, s, drawing, paneWidth, paneHeight) {
-    const timeScale = s.chart.timeScale();
-    const series = s.candleSeries;
     let points = drawing.points;
     // Druhý bod rozepsané kresby se přizpůsobí aktuální pozici kurzoru
     if (drawing.preview && s.overlay.previewPoint && points.length === 1) {
@@ -1226,13 +1389,9 @@ window.TickViewChart = (function () {
 
     const color = drawing.color || '#2962ff';
     ctx.lineWidth = 1.5;
-    ctx.strokeStyle = drawing.preview ? color : color;
+    ctx.strokeStyle = color;
 
-    const toPixel = (point) => {
-      const px = timeScale.timeToCoordinate(point.time);
-      const py = series.priceToCoordinate(point.price);
-      return px === null || py === null ? null : { x: px, y: py };
-    };
+    const toPixel = (point) => pointToPixel(s, point);
 
     if (drawing.kind === 'hline') {
       const p = toPixel(points[0]);
@@ -1245,7 +1404,7 @@ window.TickViewChart = (function () {
       return;
     }
     if (drawing.kind === 'vline') {
-      const x = timeScale.timeToCoordinate(points[0].time);
+      const x = timeToX(s, points[0].time);
       if (x === null) return;
       ctx.beginPath();
       ctx.moveTo(x, 0);
@@ -1261,21 +1420,6 @@ window.TickViewChart = (function () {
       ctx.font = '13px sans-serif';
       ctx.textBaseline = 'bottom';
       ctx.fillText(drawing.text || 'Text', p.x + 4, p.y - 4);
-      renderHandles(ctx, s, drawing);
-      return;
-    }
-    if (points.length < 2) {
-      renderHandles(ctx, s, drawing);
-      return;
-    }
-    const p1 = toPixel(points[0]);
-    const p2 = toPixel(points[1]);
-    if (!p1 || !p2) return;
-    if (drawing.kind === 'trend') {
-      ctx.beginPath();
-      ctx.moveTo(p1.x, p1.y);
-      ctx.lineTo(p2.x, p2.y);
-      ctx.stroke();
       renderHandles(ctx, s, drawing);
       return;
     }
@@ -1313,6 +1457,21 @@ window.TickViewChart = (function () {
       ctx.fillText(drawing.text || '😀', p.x, p.y);
       ctx.textAlign = 'left';
       ctx.textBaseline = 'alphabetic';
+      renderHandles(ctx, s, drawing);
+      return;
+    }
+    if (points.length < 2) {
+      renderHandles(ctx, s, drawing);
+      return;
+    }
+    const p1 = toPixel(points[0]);
+    const p2 = toPixel(points[1]);
+    if (!p1 || !p2) return;
+    if (drawing.kind === 'trend') {
+      ctx.beginPath();
+      ctx.moveTo(p1.x, p1.y);
+      ctx.lineTo(p2.x, p2.y);
+      ctx.stroke();
       renderHandles(ctx, s, drawing);
       return;
     }
@@ -1538,38 +1697,14 @@ window.TickViewChart = (function () {
     ctx.restore();
   }
 
-  // Diagnostika: přístup k internímu stavu grafu (jen pro testy)
-  function debugState(id) {
-    const s = state.get(id);
-    if (!s) return null;
-    return {
-      mode: s.overlay.mode,
-      drawings: s.overlay.drawings.length,
-      pending: !!s.overlay.pending,
-      selected: s.overlay.selected,
-      lastClick: s.lastClick,
-      queue: s.finishedQueue.length,
-      magnet: s.overlay.magnet,
-      hidden: s.overlay.hidden,
-    };
-  }
-
-  // Diagnostika: přístup k internímu stavu grafu (jen pro testy)
-  function _chart(id) {
-    return state.get(id)?.chart || null;
-  }
-
-  function _series(id) {
-    return state.get(id)?.candleSeries || null;
-  }
-
   return {
     init: init,
     setCandles: setCandles,
-    updateCandle: updateCandle,
+    prependCandles: prependCandles,
+    updateCandles: updateCandles,
+    assignDrawingId: assignDrawingId,
     setTheme: setTheme,
     setIndicators: setIndicators,
-    clearIndicators: clearIndicators,
     setDrawingMode: setDrawingMode,
     setDrawings: setDrawings,
     setDrawingColor: setDrawingColor,
@@ -1582,9 +1717,6 @@ window.TickViewChart = (function () {
     setKeepTool: setKeepTool,
     setLocked: setLocked,
     addSticker: addSticker,
-    popFinishedDrawing: popFinishedDrawing,
-    debugState: debugState,
-    _chart: _chart,
-    _series: _series,
+    popEvents: popEvents,
   };
 })();

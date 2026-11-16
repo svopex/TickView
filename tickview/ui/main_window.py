@@ -1,24 +1,38 @@
 """Hlavní stránka TickView: vyhledání symbolu, timeframy, graf, indikátory, kreslení, živý stream."""
 
 import asyncio
+import json
+import time
 import uuid
 
 from nicegui import context, ui
 
-from tickview.config import load_config, save_config
+from tickview.config import load_config, update_config_section
 from tickview.logic.cache import KlineCache, fetch_history
-from tickview.logic.indicators import INDICATOR_DEFS, PARAM_LABELS, compute_indicators
+from tickview.logic.indicators import (
+    INDICATOR_DEFS,
+    PARAM_LABELS,
+    compute_indicators,
+    load_saved_indicators,
+    normalize_params,
+    tail_payload,
+)
 from tickview.providers import PROVIDERS, get_provider
-from tickview.providers.base import TIMEFRAME_MS, utc_now_ms
+from tickview.providers.base import TIMEFRAME_MS, Candle, StreamStatus, is_closed, utc_now_ms
 from tickview.ui.lightweight_chart import LightweightChart
 
 # Kolik svíček historie se načte pro jedno zobrazení (a uloží do cache)
 DEFAULT_BARS = 600
 # Kolik posledních svíček je vidět po načtení grafu
 VISIBLE_BARS = 150
+# Kolikrát se při donačítání historie zdvojnásobí okno, když je prázdné
+# (víkend, noc u akcií); pak se historie považuje za vyčerpanou
+OLDER_LOAD_ATTEMPTS = 4
+# Jak často nejvýš se z živých svíček přepočítají indikátory (sekundy)
+LIVE_INDICATOR_REFRESH_S = 2.0
 
 # Verze statických souborů pro cache-busting v prohlížeči (při změně CSS/JS zvýšit)
-STATIC_VERSION = "0.4.6"
+STATIC_VERSION = "0.5.3"
 
 
 def register(cache: KlineCache) -> None:
@@ -42,7 +56,10 @@ async def _build_index(cache: KlineCache) -> None:
     dark = (await cache.get_setting("theme", "dark")) != "light"
     last_symbol = await cache.get_setting("last_symbol", "binance:BTCUSDT") or "binance:BTCUSDT"
     last_timeframe = await cache.get_setting("last_timeframe", "1h") or "1h"
-    ui.dark_mode(dark)
+    # Aktivní indikátory z minula (neplatné položky se vynechají)
+    saved_indicators = load_saved_indicators(await cache.get_setting("indicators"))
+    # Handle si držíme: každé volání ui.dark_mode() by vytvořilo nový prvek
+    dark_mode = ui.dark_mode(dark)
 
     # Stav zobrazeného symbolu; load_seq chrání proti překříženým odpovědím
     state: dict = {
@@ -51,13 +68,18 @@ async def _build_index(cache: KlineCache) -> None:
         "symbol": None,
         "timeframe": last_timeframe,
         "load_seq": 0,
+        # Pořadí hledání: pomalejší starší hledání nesmí přepsat novější návrhy
+        "search_seq": 0,
         # Zámek řadí vykreslení: starší (pomalejší) odpověď nesmí přepsat
         # novější data po rychlém přepnutí timeframu
         "load_lock": asyncio.Lock(),
         "stream_task": None,
         "badge_live": None,
-        "indicators": [],
+        "indicators": saved_indicators,
+        # Svíčky v grafu (podklad indikátorů); živý stream je průběžně doplňuje
         "candles": None,
+        # Monotonic čas posledního přepočtu indikátorů ze živých svíček
+        "indicators_refreshed_at": 0.0,
         "drawing_mode": None,
     }
 
@@ -72,17 +94,25 @@ async def _build_index(cache: KlineCache) -> None:
     async def search_symbols() -> None:
         # Vyhledání napříč zdroji; výsledky se ukazují jako návrhy pod polem
         query = (search_input.value or "").strip()
+        state["search_seq"] += 1
+        seq = state["search_seq"]
         state["suggestions"] = []
         state["highlight"] = 0
         if not query:
             hide_suggestions()
             return
+        # Zdroje se dotazují souběžně – pomalý zdroj (Yahoo, nedostupná TWS)
+        # nesmí zdržet ostatní; pořadí výsledků odpovídá pořadí PROVIDERS
+        responses = await asyncio.gather(
+            *(provider.search(query) for provider in PROVIDERS), return_exceptions=True
+        )
+        if seq != state["search_seq"]:
+            # Mezitím uživatel psal dál – zastaralé výsledky zahodíme
+            return
         results: list[dict] = []
-        for provider in PROVIDERS:
-            try:
-                found = await provider.search(query)
-            except Exception as exc:
-                show_status(f"Zdroj {provider.name} není dostupný: {exc}", error=True)
+        for provider, found in zip(PROVIDERS, responses):
+            if isinstance(found, BaseException):
+                show_status(f"Zdroj {provider.name} není dostupný: {found}", error=True)
                 continue
             for symbol_info in found[:6]:
                 key = f"{symbol_info.provider_id}:{symbol_info.symbol}"
@@ -125,20 +155,22 @@ async def _build_index(cache: KlineCache) -> None:
                 item = ui.label(suggestion["label"]).classes(classes)
                 item.on("click", make_load_from_search(suggestion["key"]))
 
+    async def add_key_to_watchlist(key: str) -> None:
+        # Přidá symbol "zdroj:symbol" do watchlistu, jen když tam ještě není
+        provider_id, _, symbol = key.partition(":")
+        if key in watch_rows:
+            show_status(f"{symbol} už ve watchlistu je ({provider_id}).")
+            return
+        await cache.watchlist_add(provider_id, symbol)
+        await rebuild_watchlist()
+        show_status(f"{symbol} přidán do watchlistu ({provider_id}).")
+
     def make_load_from_search(key: str):
         # Klik na návrh: přidá do watchlistu (jen když tam ještě není), načte graf
         async def _handler(_event):
-            provider_id, _, symbol = key.partition(":")
-            existing = await cache.watchlist_list()
-            already = any(row["source"] == provider_id and row["symbol"] == symbol for row in existing)
-            if not already:
-                await cache.watchlist_add(provider_id, symbol)
-                await rebuild_watchlist()
-                show_status(f"{symbol} přidán do watchlistu ({provider_id}).")
-            else:
-                show_status(f"{symbol} už v watchlistu je.")
-            await load_symbol(key)
             hide_suggestions()
+            await add_key_to_watchlist(key)
+            await load_symbol(key)
 
         return _handler
 
@@ -156,16 +188,8 @@ async def _build_index(cache: KlineCache) -> None:
             show_status("Nejdřív hledejte symbol, poté ho Enterem přidáte do watchlistu.")
             return
         suggestion = suggestions[min(state["highlight"], len(suggestions) - 1)]
-        provider_id, _, symbol = suggestion["key"].partition(":")
-        existing = await cache.watchlist_list()
-        already = any(row["source"] == provider_id and row["symbol"] == symbol for row in existing)
-        if already:
-            show_status(f"{symbol} už v watchlistu je ({provider_id}).")
-        else:
-            await cache.watchlist_add(provider_id, symbol)
-            await rebuild_watchlist()
-            show_status(f"{symbol} přidán do watchlistu ({provider_id}).")
         hide_suggestions()
+        await add_key_to_watchlist(suggestion["key"])
 
     async def load_symbol(key) -> None:
         if not key or ":" not in str(key):
@@ -216,34 +240,108 @@ async def _build_index(cache: KlineCache) -> None:
             source_badge.text = text
             source_badge.update()
 
+    def merge_live_candle(candle: Candle) -> None:
+        # Promítne živou svíčku do state["candles"] (podklad indikátorů):
+        # stejná svíčka se nahradí, novější se připojí, starší se ignoruje
+        candles = state.get("candles")
+        if not candles:
+            return
+        if candle.open_time == candles[-1].open_time:
+            candles[-1] = candle
+        elif candle.open_time > candles[-1].open_time:
+            candles.append(candle)
+
+    async def push_indicators(tail: bool = False) -> None:
+        # Přepočet indikátorů nad state["candles"] (ve vlákně – pandas nad tisíci
+        # svíček by zdržel smyčku událostí); tail=True pošle jen poslední body
+        # (živý přepočet), jinak celé série
+        state["indicators_refreshed_at"] = time.monotonic()
+        payload = await asyncio.to_thread(
+            compute_indicators, list(state["indicators"]), list(state.get("candles") or [])
+        )
+        await chart.set_indicators(tail_payload(payload) if tail else payload)
+
+    def show_loaded_status(provider, symbol: str, timeframe: str) -> None:
+        # Souhrn načteného grafu ve stavové liště
+        count = len(state.get("candles") or [])
+        show_status(f"{symbol} · {timeframe} · {count} svíček · zdroj {provider.name}")
+
     async def consume_stream(provider, symbol: str, timeframe: str, seq: int) -> None:
-        """Konzumuje živý stream zdroje a doplňuje svíčky do grafu a cache."""
+        """Konzumuje živý stream zdroje: doplňuje svíčky do grafu, cache a indikátorů.
+
+        Stavové zprávy zdroje (výpadek / obnovení spojení) promítá do štítku
+        a stavové lišty; díru po výpadku (chybějící svíčky mezi poslední
+        známou a právě přišlou) doplní přes cache a historii zdroje.
+        """
         step_ms = TIMEFRAME_MS[timeframe]
+        live = provider.is_live_for(timeframe)
         market_closed_warned = False
         try:
-            async for candle in provider.stream(symbol, timeframe):
+            async for item in provider.stream(symbol, timeframe):
                 if seq != state["load_seq"]:
                     # Mezitím se přepnulo zobrazení – stream ukončíme
                     return
-                set_badge(provider.is_live)
-                await chart.update_candle(candle)
-                # Do cache ukládáme jen uzavřené svíčky (uplynulé období);
-                # rozepsanou svíčku vrátí příště historie ze sítě v plné podobě
-                if candle.open_time + step_ms <= utc_now_ms():
-                    await cache.store(provider.id, symbol, timeframe, [candle])
-                    # Nejnovější svíčka už je uzavřená a žádná nová nepřišla
-                    # → trh je pravděpodobně zavřený (hlásíme jen jednou)
-                    if not market_closed_warned:
-                        market_closed_warned = True
+                if isinstance(item, StreamStatus):
+                    # Výpadek / obnovení spojení se zdrojem
+                    set_badge(live if item.connected else False)
+                    if item.connected:
+                        show_status(f"{symbol}: {item.message}")
+                    else:
                         show_status(
-                            f"{symbol}: trh je pravděpodobně zavřený – živá data nepřibývají"
+                            f"Živý stream {symbol} přerušen, čekám na znovupřipojení: {item.message}",
+                            error=True,
                         )
+                    continue
+                candle = item
+                set_badge(live)
+                batch = [candle]
+                known = state.get("candles") or []
+                new_candle = bool(known) and candle.open_time > known[-1].open_time
+                if known and candle.open_time > known[-1].open_time + step_ms:
+                    # Mezi poslední známou a novou svíčkou chybí data (výpadek
+                    # websocketu, uspání počítače…) – doplníme je přes cache
+                    last_open = known[-1].open_time
+                    try:
+                        gap = await fetch_history(
+                            provider, cache, symbol, timeframe, last_open + step_ms, candle.open_time - 1
+                        )
+                    except Exception:
+                        # Doplnění se nepovedlo – díru doplní příští načtení grafu
+                        gap = []
+                    if seq != state["load_seq"]:
+                        return
+                    batch = [c for c in gap if last_open < c.open_time < candle.open_time] + batch
+                # Graf jedním voláním, podklad indikátorů a cache (jen uzavřená
+                # živá svíčka; doplněnou díru uložil už fetch_history)
+                await chart.update_candles(batch)
+                for batch_candle in batch:
+                    merge_live_candle(batch_candle)
+                now_ms = utc_now_ms()
+                if is_closed(candle, step_ms, now_ms):
+                    await cache.store(provider.id, symbol, timeframe, [candle])
+                # Indikátory: po doplnění díry celé, jinak jen poslední body a
+                # nejvýš jednou za LIVE_INDICATOR_REFRESH_S (nová svíčka hned)
+                if state["indicators"]:
+                    if len(batch) > 1:
+                        await push_indicators()
+                    elif new_candle or time.monotonic() - state["indicators_refreshed_at"] >= LIVE_INDICATOR_REFRESH_S:
+                        await push_indicators(tail=True)
+                # Nejnovější svíčka je starší než celé další období → nová
+                # nepřibývá, trh je pravděpodobně zavřený (hlásíme jen jednou).
+                # Uzavřená svíčka sama o sobě nestačí: websocket (Binance, Alpaca)
+                # ji posílá těsně po konci období i při otevřeném trhu.
+                if not market_closed_warned and candle.open_time + 2 * step_ms <= now_ms:
+                    market_closed_warned = True
+                    show_status(
+                        f"{symbol}: trh je pravděpodobně zavřený – živá data nepřibývají"
+                    )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            # Neočekávaná chyba mimo zdroj (zdroje výpadky hlásí přes StreamStatus)
             if seq == state["load_seq"]:
                 set_badge(False)
-                show_status(f"Živý stream přerušen, čekám na znovupřipojení: {exc}", error=True)
+                show_status(f"Živý stream ukončen chybou: {exc}", error=True)
 
     def cancel_stream() -> None:
         task = state.get("stream_task")
@@ -290,7 +388,7 @@ async def _build_index(cache: KlineCache) -> None:
             async with state["load_lock"]:
                 if seq != state["load_seq"]:
                     return
-                await chart.set_candles(candles, visible_bars=VISIBLE_BARS)
+                await chart.set_candles(candles, TIMEFRAME_MS[timeframe], visible_bars=VISIBLE_BARS)
                 state["candles"] = candles
                 # Přepočet aktivních indikátorů nad novými daty
                 await refresh_indicators()
@@ -298,21 +396,74 @@ async def _build_index(cache: KlineCache) -> None:
             await reload_drawings()
             if seq != state["load_seq"]:
                 return
-            show_status(
-                f"{symbol} · {timeframe} · {len(candles)} svíček · zdroj {provider.name}"
-            )
+            show_loaded_status(provider, symbol, timeframe)
             # Historie načtena → spustíme živý stream pro aktuální zobrazení
             start_stream()
         except Exception as exc:
             show_status(f"Načtení dat selhalo: {exc}", error=True)
 
+    async def load_older(before_s) -> None:
+        """Donačte starší svíčky před první svíčkou grafu (posun grafu doleva).
+
+        Prázdné okno (víkend, noc u akcií) se posune dál do minulosti a
+        zdvojnásobí; když nic nevrátí ani poslední pokus, graf historii označí
+        za vyčerpanou.
+        """
+        provider = state.get("provider")
+        symbol = state.get("symbol")
+        timeframe = state.get("timeframe")
+        seq = state["load_seq"]
+        if provider is None or not symbol or before_s is None:
+            return
+        step_ms = TIMEFRAME_MS[timeframe]
+        end_ms = int(before_s) * 1000 - 1
+        span_ms = DEFAULT_BARS * step_ms
+        older: list[Candle] = []
+        try:
+            for _ in range(OLDER_LOAD_ATTEMPTS):
+                older = await fetch_history(provider, cache, symbol, timeframe, end_ms - span_ms, end_ms)
+                if older or seq != state["load_seq"]:
+                    break
+                # Prázdný úsek už znovu nestahujeme – další pokus začne před ním
+                end_ms -= span_ms
+                span_ms *= 2
+        except Exception as exc:
+            if seq == state["load_seq"]:
+                show_status(f"Starší data {symbol} se nepodařilo načíst: {exc}", error=True)
+                # Nic nepřidáno, historie ale není vyčerpaná – graf to zkusí později
+                await chart.prepend_candles([], exhausted=False)
+            return
+        async with state["load_lock"]:
+            if seq != state["load_seq"]:
+                return
+            await chart.prepend_candles(older, exhausted=not older)
+            if not older:
+                show_status(f"{symbol} ({timeframe}): starší data nejsou k dispozici.")
+                return
+            first_open = state["candles"][0].open_time if state.get("candles") else None
+            state["candles"] = [
+                c for c in older if first_open is None or c.open_time < first_open
+            ] + (state.get("candles") or [])
+            if state["indicators"]:
+                await push_indicators()
+            show_loaded_status(provider, symbol, timeframe)
+
+    def start_load_older(before_s) -> None:
+        # Donačítání běží na pozadí, aby nezdrželo zpracování ostatních událostí grafu
+        async def run() -> None:
+            try:
+                await load_older(before_s)
+            except Exception as exc:
+                show_status(f"Starší data se nepodařilo načíst: {exc}", error=True)
+
+        asyncio.create_task(run())
+
     async def toggle_theme(value: bool) -> None:
-        # Bez argumentu ui.dark_mode() vrátí existující handle aktuálního klienta
-        ui.dark_mode().set_value(value)
+        dark_mode.set_value(value)
         await chart.set_theme(value)
         await cache.set_setting("theme", "dark" if value else "light")
 
-    # ---------- kreslení (krok 5 + lišta ve stylu TradingView) ----------
+    # ---------- kreslení (lišta ve stylu TradingView) ----------
 
     # Druhy kresby, které backend ukládá (cursor/measure = režimy bez ukládání)
     DRAWING_KINDS = [
@@ -382,7 +533,9 @@ async def _build_index(cache: KlineCache) -> None:
     EMOJIS = ["😀", "🚀", "💰", "📈", "📉", "👍", "⚡", "🎯"]
 
     async def set_drawing_mode(mode) -> None:
-        # Aktivní nástroj zvýrazníme na skupině, do které patří (jako v TradingView)
+        # Aktivní nástroj zvýrazníme na skupině, do které patří (jako v TradingView);
+        # None (JS po dokončení kresby vrací kurzor) znamená režim kurzoru
+        mode = mode or "cursor"
         state["drawing_mode"] = mode
         for group in DRAWING_GROUPS:
             button = drawing_buttons.get(group["id"])
@@ -393,11 +546,10 @@ async def _build_index(cache: KlineCache) -> None:
                 add="drawing-btn-active" if mode in group_modes else "",
                 remove="" if mode in group_modes else "drawing-btn-active",
             )
-        await chart.set_drawing_mode(None if mode in (None, "cursor") else mode)
+        await chart.set_drawing_mode(None if mode == "cursor" else mode)
 
     async def set_drawing_color(color: str) -> None:
         # Barva nových kreseb; aktivní paletu zvýrazníme
-        state["drawing_color"] = color
         for hex_color, button in swatch_buttons.items():
             button.classes(add="swatch-active" if hex_color == color else "", remove="" if hex_color == color else "swatch-active")
         await chart.set_drawing_color(color)
@@ -436,10 +588,10 @@ async def _build_index(cache: KlineCache) -> None:
         await chart.set_drawings_hidden(state["hidden"])
 
     async def trash_drawings() -> None:
-        # Koš: smaže označenou kresbu, jinak všechny
+        # Koš: smaže označenou kresbu, jinak všechny; do databáze se smazání
+        # propíše přes události "delete" ve frontě grafu (viz on_drawing_finished)
         removed = await chart.trash_drawings()
         if removed:
-            await reload_drawings()
             show_status(f"Smazáno kreseb: {removed}.")
 
     # ---------- textové kresby ----------
@@ -474,22 +626,29 @@ async def _build_index(cache: KlineCache) -> None:
         drawings = await cache.load_drawings(provider_id, symbol, timeframe)
         await chart.set_drawings(drawings)
 
+    def drawing_points(payload: dict) -> list[dict]:
+        # Body kresby z události grafu (čas v sekundách UTC + cena)
+        return [
+            {"time": int(p["time"]), "price": float(p["price"])}
+            for p in (payload.get("points") or [])
+        ]
+
     async def on_drawing_finished() -> None:
-        # Stránkový timer vyzvedne události kreslení z grafu (fronta: přidání /
-        # smazání pravým klikem) a projeví je v databázi
+        # Stránkový timer vyzvedne události z grafu (kresby, nástroje, akce,
+        # donačtení historie) a projeví je v databázi a v UI. Graf má stav kreseb
+        # aktuální sám – nové kresbě jen pošleme id z databáze, nic se nenačítá znovu
         provider_id = state.get("provider_id")
         symbol = state.get("symbol")
         timeframe = state.get("timeframe")
         if not provider_id or not symbol:
             return
-        changed = False
-        for _ in range(20):
-            payload = await ui.run_javascript(
-                f'return window.TickViewChart.popFinishedDrawing("{chart.js_id}");'
-            )
+        for payload in await chart.pop_events():
             if not isinstance(payload, dict):
-                break
-            if payload.get("type") == "tool":
+                continue
+            if payload.get("type") == "load_older":
+                # Graf se posunul k začátku dat – donačteme starší svíčky
+                start_load_older(payload.get("before"))
+            elif payload.get("type") == "tool":
                 await set_drawing_mode(payload.get("mode"))
             elif payload.get("type") == "action":
                 action = payload.get("action")
@@ -513,55 +672,37 @@ async def _build_index(cache: KlineCache) -> None:
                 drawing_id = payload.get("id")
                 if drawing_id:
                     await cache.delete_drawing(provider_id, symbol, timeframe, int(drawing_id))
-                    changed = True
                     show_status("Kresba smazána.")
             elif payload.get("type") == "update":
                 drawing_id = payload.get("id")
                 if drawing_id:
-                    points = [
-                        {"time": int(p["time"]), "price": float(p["price"])}
-                        for p in (payload.get("points") or [])
-                    ]
                     await cache.update_drawing(
-                        provider_id, symbol, timeframe, int(drawing_id), points, payload.get("text")
+                        provider_id, symbol, timeframe, int(drawing_id),
+                        drawing_points(payload), payload.get("text"),
                     )
-                    changed = True
             elif payload.get("type") == "text_request":
                 await open_text_dialog(payload.get("time"), payload.get("price"))
-            elif payload.get("type") == "text_edit":
+            elif payload.get("type") == "text_edit" and payload.get("id"):
+                # Bez id (kresba ještě není v DB) by se uložení chovalo jako nový text na (0, 0)
                 await open_text_dialog(0, 0.0, edit_id=payload.get("id"), current=payload.get("text") or "")
             elif payload.get("type") == "add" and payload.get("kind") in DRAWING_KINDS:
-                points = [
-                    {"time": int(p["time"]), "price": float(p["price"])}
-                    for p in (payload.get("points") or [])
-                ]
-                await cache.add_drawing(
+                drawing_id = await cache.add_drawing(
                     provider_id,
                     symbol,
                     timeframe,
                     payload["kind"],
-                    points,
+                    drawing_points(payload),
                     payload.get("color"),
                     payload.get("text"),
                 )
-                changed = True
+                # Graf si kresbu spáruje podle lokálního id (další úpravy už jdou s id)
+                if payload.get("localId") is not None:
+                    await chart.assign_drawing_id(payload["localId"], drawing_id)
                 show_status(
                     f"Kresba uložena ({DRAWING_LABELS[payload['kind']]}) k {symbol} ({timeframe})"
                 )
-        if changed:
-            await reload_drawings()
 
-    async def clear_drawings() -> None:
-        provider_id = state.get("provider_id")
-        symbol = state.get("symbol")
-        timeframe = state.get("timeframe")
-        if not provider_id or not symbol:
-            return
-        await cache.clear_drawings(provider_id, symbol, timeframe)
-        await chart.set_drawings([])
-        show_status("Kresby smazány.")
-
-    # ---------- watchlist (krok 6) ----------
+    # ---------- watchlist ----------
 
     # Krátké kódy zdrojů pro watchlist (aby sloupec nebyl široký)
     PROVIDER_CODES = {"binance": "BIN", "yahoo": "YAH", "alpaca": "ALP", "ibkr": "IBK"}
@@ -626,8 +767,7 @@ async def _build_index(cache: KlineCache) -> None:
         symbol = state.get("symbol")
         if not provider_id or not symbol:
             return
-        await cache.watchlist_add(provider_id, symbol)
-        await rebuild_watchlist()
+        await add_key_to_watchlist(f"{provider_id}:{symbol}")
 
     async def rebuild_watchlist() -> None:
         # Přestaví řádky watchlistu podle databáze
@@ -669,17 +809,18 @@ async def _build_index(cache: KlineCache) -> None:
         await set_drawing_mode("cursor")
         await load_symbol(last_symbol)
 
-    # ---------- nastavení API klíčů (krok 7 – volitelný zdroj Alpaca) ----------
+    # ---------- nastavení API klíčů (volitelný zdroj Alpaca) ----------
 
     async def save_settings() -> None:
-        # Uloží klíče do config.yaml v kořenu projektu (necommituje se)
-        config = load_config()
-        config["alpaca"] = {
-            "endpoint": "https://paper-api.alpaca.markets/v2",
+        # Uloží klíče do config.yaml v kořenu projektu (necommituje se); zbytek
+        # souboru včetně komentářů a vlastního endpointu zůstane beze změny
+        values = {
             "api_key": (settings_key.value or "").strip(),
             "secret": (settings_secret.value or "").strip(),
         }
-        save_config(config)
+        if not (load_config().get("alpaca") or {}).get("endpoint"):
+            values = {"endpoint": "https://paper-api.alpaca.markets/v2", **values}
+        update_config_section("alpaca", values)
         settings_dialog.close()
         show_status(
             "Alpaca klíče uloženy do config.yaml – zdroj se aktivuje po restartu aplikace."
@@ -695,11 +836,13 @@ async def _build_index(cache: KlineCache) -> None:
     # ---------- indikátory ----------
 
     async def refresh_indicators() -> None:
-        # Přepočítá všechny aktivní indikátory nad aktuálními svíčkami
-        candles = state.get("candles") or []
-        payload = compute_indicators(state["indicators"], candles)
-        await chart.set_indicators(payload)
+        # Přepočítá všechny aktivní indikátory a přestaví lištu jejich čipů
+        await push_indicators()
         rebuild_indicator_chips()
+
+    async def save_indicators() -> None:
+        # Aktivní indikátory přetrvají restart (nastavení v SQLite)
+        await cache.set_setting("indicators", json.dumps(state["indicators"]))
 
     def rebuild_indicator_chips() -> None:
         # Lišta čipů aktivních indikátorů (klik na × odstraní)
@@ -709,38 +852,48 @@ async def _build_index(cache: KlineCache) -> None:
             return
         indicator_bar.classes(remove="hidden")
 
-        def make_remove(index: int):
+        def make_remove(indicator_id: str):
             async def _remove(_event):
-                del state["indicators"][index]
+                state["indicators"] = [
+                    spec for spec in state["indicators"] if spec["id"] != indicator_id
+                ]
+                await save_indicators()
                 await refresh_indicators()
 
             return _remove
 
         with indicator_bar:
             ui.label("Indikátory:").classes("indicator-label")
-            for index, spec in enumerate(state["indicators"]):
+            for spec in state["indicators"]:
                 title = INDICATOR_DEFS[spec["kind"]]["title"] + " " + " ".join(
                     str(v) for v in spec["params"].values()
                 )
-                ui.button(title, icon="close", on_click=make_remove(index)).props(
+                ui.button(title, icon="close", on_click=make_remove(spec["id"])).props(
                     "flat dense size=sm"
                 ).classes("indicator-chip")
 
     async def submit_indicator() -> None:
-        # Přečte parametry z dialogu a přidá indikátor do aktivních
+        # Přečte a ověří parametry z dialogu a přidá indikátor do aktivních;
+        # při neplatné hodnotě dialog zůstane otevřený s upozorněním
         kind = dialog_state["kind"]
-        params = {}
-        for name, default in INDICATOR_DEFS[kind]["params"].items():
-            value = dialog_params[name].value
-            params[name] = default if value is None else value
+        try:
+            params = normalize_params(
+                kind, {name: field.value for name, field in dialog_params.items()}
+            )
+        except ValueError as exc:
+            ui.notify(str(exc), type="warning")
+            return
         state["indicators"].append(
             {"id": uuid.uuid4().hex[:8], "kind": kind, "params": params}
         )
         indicator_dialog.close()
+        await save_indicators()
         await refresh_indicators()
 
     def rebuild_dialog_params(kind: str) -> None:
-        # Pole parametrů se mění podle typu indikátoru
+        # Pole parametrů se mění podle typu indikátoru; zvolený typ si
+        # zapamatujeme pro submit_indicator
+        dialog_state["kind"] = kind
         dialog_params.clear()
         dialog_params_container.clear()
         with dialog_params_container:
@@ -751,7 +904,6 @@ async def _build_index(cache: KlineCache) -> None:
 
     def open_indicator_dialog() -> None:
         # Výchozí hodnoty parametrů při každém otevření
-        dialog_state["kind"] = "sma"
         dialog_kind_select.value = "sma"
         rebuild_dialog_params("sma")
         indicator_dialog.open()
