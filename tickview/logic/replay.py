@@ -96,16 +96,21 @@ def default_contract_size(kind: str) -> float:
     return 100_000.0 if kind == "forex" else 1.0
 
 
-def normalize_settings(data, kind: str = "") -> dict:
+def normalize_settings(data, kind: str = "", contract_size: Optional[float] = None) -> dict:
     """Zkontroluje nastavení session; chybějící a neplatné hodnoty doplní výchozími.
 
     Parametry:
         data: uložené / zadané nastavení (dict nebo cokoli jiného).
-        kind: druh instrumentu (výchozí velikost lotu u forexu).
+        kind: druh instrumentu (výchozí velikost lotu u forexu, u futures krok
+              velikosti pozice 1 = celé kontrakty).
+        contract_size: výchozí velikost kontraktu od zdroje (násobitel futures);
+                       None = podle druhu instrumentu.
     """
     data = data if isinstance(data, dict) else {}
     settings = dict(DEFAULT_SETTINGS)
-    settings["contract_size"] = default_contract_size(kind)
+    settings["contract_size"] = contract_size or default_contract_size(kind)
+    if kind == "futures":
+        settings["lot_step"] = 1.0
     currency = str(data.get("account_currency") or "").upper()
     if len(currency) == 3 and currency.isalpha():
         settings["account_currency"] = currency

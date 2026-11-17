@@ -65,6 +65,16 @@ SAVE_INTERVAL_S = 5.0
 MIN_TICK_S = 0.05
 
 
+
+def settings_for(provider: DataProvider, symbol: str, data) -> dict:
+    """Nastavení session zkontrolované s výchozími hodnotami instrumentu od zdroje.
+
+    Parametry:
+        provider, symbol: instrument session (druh a velikost kontraktu).
+        data: uložené / zadané nastavení.
+    """
+    return normalize_settings(data, provider.symbol_kind(symbol), provider.contract_size(symbol))
+
 class ReplayFeed:
     """Základní svíčky session: od začátku session po kurzor a přednačtené za ním.
 
@@ -323,7 +333,7 @@ class ReplayController:
         if timeframe is None:
             self.on_status(f"{symbol}: pro zvolený čas nejsou dostupná data replaye.", True)
             return None
-        normalized = normalize_settings(settings, provider.symbol_kind(symbol))
+        normalized = settings_for(provider, symbol, settings)
         return await self.cache.create_replay_session(name, provider_id, symbol, timeframe, candle.open_time, normalized)
 
     async def open(self, session_id: int, session_filter=None) -> bool:
@@ -343,7 +353,7 @@ class ReplayController:
         except KeyError:
             self.on_status(f"Neznámý zdroj session: {row['source']}", True)
             return False
-        settings = normalize_settings(row["settings"], provider.symbol_kind(row["symbol"]))
+        settings = settings_for(provider, row["symbol"], row["settings"])
         self.on_status(f"Načítám session {row['name']}…", False)
         transform = session_filter(row["base_tf"]) if session_filter else None
         feed = ReplayFeed(self.cache, provider, row["symbol"], row["base_tf"], transform)
@@ -644,7 +654,7 @@ class ReplayController:
         if not self.active:
             return
         self.pause()
-        normalized = normalize_settings(settings, self.provider.symbol_kind(self.session["symbol"]))
+        normalized = settings_for(self.provider, self.session["symbol"], settings)
         warning = ""
         async with self._lock:
             # Kurzy se načítají znovu jen při změně měny účtu nebo pevného kurzu

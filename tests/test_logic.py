@@ -11,7 +11,9 @@ from pathlib import Path
 
 import yaml
 from eventkit import Event
-from ib_async import BarData, BarDataList
+from types import SimpleNamespace
+
+from ib_async import BarData, BarDataList, Future
 
 from tickview.config import update_config_section
 from tickview.logic.cache import KlineCache, fetch_history, uncovered_ranges
@@ -53,6 +55,14 @@ from tickview.providers.base import (
 )
 from tickview.providers import provider_symbol
 from tickview.providers.ibkr import IbkrProvider, forex_parts, forex_suggestions, instrument_suggestions
+from tickview.providers.ibkr_futures import (
+    build_chain,
+    front_leg,
+    future_spec,
+    future_suggestions,
+    leg_segments,
+    roll_time_ms,
+)
 from tickview.providers.yahoo import YahooProvider
 
 
@@ -410,6 +420,72 @@ class ForexTest(unittest.TestCase):
         self.assertIsNone(provider.regular_session("XAGUSD"))
 
 
+def future_detail(local_symbol: str, last_trade: str, contract_month: str, trading_class: str = "ES") -> SimpleNamespace:
+    """Detail futures kontraktu jako z reqContractDetails (jen pole, která čte build_chain)."""
+    contract = Future("ES", last_trade, "CME", localSymbol=local_symbol, multiplier="50",
+                      currency="USD", tradingClass=trading_class)
+    return SimpleNamespace(contract=contract, contractMonth=contract_month, minTick=0.25, longName="E-mini S&P 500")
+
+
+class IbkrFuturesTest(unittest.TestCase):
+    """Kontinuální futures IBKR: symboly, hledání, řetězec kontraktů a roll."""
+
+    def test_symbols_and_suggestions(self) -> None:
+        # Symbol z tabulky, obecný symbol s burzou a symboly, které futures nejsou
+        self.assertEqual(future_spec("FDAX1!").trading_class, "FDAX")
+        generic = future_spec("VIX1!@CFE")
+        self.assertEqual((generic.root, generic.exchange, generic.trading_class), ("VIX", "CFE", ""))
+        self.assertEqual(future_spec("FOO1!@EUREX").currency, "EUR")
+        for symbol in ("ES", "XX1!", "1!", "ES1!@", "EUR.USD", "GC=F"):
+            self.assertIsNone(future_spec(symbol))
+        # Dvouznakový kořen jen přesně, od tří znaků i začátek názvu
+        self.assertEqual(future_suggestions("es"), ["ES1!"])
+        self.assertEqual(future_suggestions("ES1!"), ["ES1!"])
+        self.assertEqual(future_suggestions("E"), [])
+        self.assertEqual(future_suggestions("gold"), ["GC1!", "MGC1!"])
+        self.assertEqual(future_suggestions("DAX"), ["FDAX1!", "FDXM1!"])
+
+    def test_chain_and_segments(self) -> None:
+        spec = future_spec("ES1!")
+        details = [
+            future_detail("ESM6", "20260618", "202606"),
+            future_detail("ESU6", "20260918", "202609"),
+            future_detail("ESH6", "20260320", "202603"),
+            # Jiná obchodní třída a měsíc mimo spec.months se vynechají
+            future_detail("XYZ", "20260918", "202609", trading_class="EW"),
+            future_detail("ESN6", "20260717", "202607"),
+        ]
+        chain = build_chain(details, spec)
+        self.assertEqual([leg.local_symbol for leg in chain], ["ESH6", "ESM6", "ESU6"])
+        self.assertTrue(chain[0].contract.includeExpired)
+        self.assertEqual((chain[0].multiplier, chain[0].min_tick), (50.0, 0.25))
+        # Roll osm dní před posledním obchodním dnem (půlnoc UTC)
+        roll = roll_time_ms("20260618", 8)
+        self.assertEqual(chain[1].roll_ms, roll)
+        self.assertEqual(datetime.fromtimestamp(roll / 1000, tz=timezone.utc).date().isoformat(), "2026-06-10")
+        self.assertEqual(front_leg(chain, roll - 1).local_symbol, "ESM6")
+        self.assertEqual(front_leg(chain, roll).local_symbol, "ESU6")
+        self.assertIsNone(front_leg(chain, chain[-1].roll_ms))
+        # Interval přes roll se rozdělí na úseky jednotlivých kontraktů
+        segments = leg_segments(chain, roll - 1000, roll + 1000)
+        self.assertEqual([(leg.local_symbol, a, b) for leg, a, b in segments],
+                         [("ESM6", roll - 1000, roll - 1), ("ESU6", roll, roll + 1000)])
+        # Před prvním kontraktem řetězce (starší TWS nezná) data nejsou
+        self.assertEqual(leg_segments(chain, 0, 1000), [])
+
+    def test_provider_metadata(self) -> None:
+        provider = IbkrProvider()
+        self.assertEqual(provider.symbol_kind("ES1!"), "futures")
+        self.assertEqual(provider.currencies("FDAX1!"), (None, "EUR"))
+        self.assertEqual(provider.exchange_timezone("GC1!"), "America/Chicago")
+        self.assertIsNone(provider.regular_session("ES1!"))
+        self.assertEqual(provider._what_to_show("ES1!"), "TRADES")
+        self.assertEqual((provider.price_tick("ES1!", 6000), provider.contract_size("ES1!")), (0.25, 50))
+        # Obecný symbol bez načteného řetězce tick ani násobitel nezná, akcie žádný nemají
+        self.assertIsNone(provider.contract_size("VIX1!@CFE"))
+        self.assertIsNone(provider.contract_size("MSFT"))
+
+
 class ProvidersBaseTest(unittest.IsolatedAsyncioTestCase):
     """Omezovač dotazů a smyčka pollingu."""
 
@@ -514,6 +590,18 @@ class IbkrStreamTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("162", status.message)
         with self.assertRaises(StopAsyncIteration):
             await stream.__anext__()
+        self.assertEqual(ib.cancelled, [bars])
+
+    async def test_follow_bars_ends_at_roll(self) -> None:
+        # Po čase rollu futures odběr skončí bez hlášení výpadku a zruší se
+        ib = FakeIB()
+        bars = BarDataList([make_bar(1, 1.0)])
+        bars.reqId = 8
+        latch = FailureLatch()
+        stream = IbkrProvider._follow_bars(ib, bars, True, latch, until_ms=0)
+        items = [item async for item in stream]
+        self.assertEqual([type(item).__name__ for item in items], ["StreamStatus", "Candle"])
+        self.assertFalse(latch.failing)
         self.assertEqual(ib.cancelled, [bars])
 
 

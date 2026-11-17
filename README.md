@@ -565,6 +565,28 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   IB nemá CFD na Russell 2000 – místo něj ETF `IWM` (jako akcie; CFD na IWM
   přes API historii nevrací, cena je stejná, obchoduje se 4:00–20:00 New
   York). Krypto (PAXOS) vyžaduje v IB oprávnění k tržním datům.
+- Futures jako kontinuální front month (jako `ES1!` v TradingView): v tabulce
+  jsou akciové indexy `ES1!`, `MES1!`, `NQ1!`, `MNQ1!`, `YM1!`, `MYM1!`,
+  `RTY1!`, `M2K1!`, `NKD1!`, `FDAX1!`, `FDXM1!`, `FESX1!`, `VX1!`, kovy
+  `GC1!`, `MGC1!`, `SI1!`, `HG1!`, `PL1!`, energie `CL1!`, `MCL1!`, `BZ1!`,
+  `NG1!`, dluhopisy `ZT1!`, `ZF1!`, `ZN1!`, `ZB1!`, `FGBL1!`, zemědělské
+  `ZC1!`, `ZS1!`, `ZW1!`, měny `6E1!`, `6B1!`, `6J1!`, `6A1!`, `6C1!`,
+  `6S1!` a krypto CME `BTC1!`, `MBT1!`, `ETH1!`, `MET1!`. Hledání je nabídne
+  podle kořene (`ES`, `GC`) i názvu (gold, nasdaq, DAX); další futures najde
+  přes TWS (podklad s futures) jako obecný symbol `KOŘEN1!@BURZA`, např.
+  `VIX1!@CFE` – ten lze zadat i ručně. Řada není cenově upravená: každý úsek
+  historie bere kontrakt, který byl tehdy front month (expirované kontrakty
+  s `includeExpired`, TWS je drží zhruba dva roky), takže při rollu může být
+  v grafu cenový skok. Na další kontrakt se přechází N dní před posledním
+  obchodním dnem (indexy 8, kovy 32, dluhopisy 25, zemědělské 18, měny 7,
+  ropa 5, plyn a Brent 3, VIX a krypto 1; obecný symbol 5) a u kovů
+  a komodit jen mezi aktivními měsíci (např. zlato G/J/M/Q/V/Z). Živá svíčka
+  se v okamžiku rollu sama přepne na nový kontrakt. Data TRADES s objemem,
+  čas burzy podle trhu (CME Group Chicago, EUREX Frankfurt), bez filtru RTH;
+  nadpis grafu ukazuje aktuální kontrakt (např. „E-mini S&P 500 · ESZ6“).
+  Bez předplatného futures dat posílá TWS zpožděná data (štítek „zpožděno“).
+  Nová replay session u futures předvyplní velikost kontraktu násobitelem
+  (ES 50, GC 100…) a krok velikosti pozice 1 (celé kontrakty).
 - Kvalifikované kontrakty (conId) se cachují – opakované dotazy scanneru
   a watchlistu nevolají qualifyContracts v TWS znovu.
 - Historie, vyhledávání (matching symbols) i ceny watchlistu jdou přes TWS.
@@ -591,7 +613,7 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
 - `tickview/config.py` – cesty k runtime datům, cache DB, načítání
   konfigurace `config.yaml` a zápis sekce se zachováním komentářů
 - `tickview/providers/base.py` – rozhraní DataProvider (search/history/stream/
-  tickers/describe/close, pásmo burzy, druh instrumentu, tick ceny, hlavní seance), Candle, StreamStatus
+  tickers/describe/close, pásmo burzy, druh instrumentu, tick ceny, velikost kontraktu, hlavní seance), Candle, StreamStatus
   (výpadek/obnovení streamu, případně živá/zpožděná data), SymbolInfo, kanonické timeframy, skládání
   2m/10m z kratších svíček (historie i živě), omezovač dotazů a společná
   smyčka pollingu živých dat
@@ -601,9 +623,12 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
 - `tickview/providers/yahoo.py` – zdroj Yahoo Finance (yfinance): akcie, ETF,
   indexy, forex; historie v to_thread, živá aktualizace pollingem
 - `tickview/providers/ibkr.py` – zdroj Interactive Brokers (TWS API, ib_async):
-  americké akcie, forex IDEALPRO, spotové kovy, indexová a ropná CFD; napojení na TWS 127.0.0.1:7497, clientId
+  americké akcie, forex IDEALPRO, spotové kovy, indexová a ropná CFD, kontinuální futures; napojení na TWS 127.0.0.1:7497, clientId
   30 (při obsazení další), průběžné bary keepUpToDate a zjištění živých /
   zpožděných dat podle předplatného
+- `tickview/providers/ibkr_futures.py` – tabulka kontinuálních futures IBKR,
+  symboly `ES1!` / `KOŘEN1!@BURZA`, sestavení řetězce kontraktů, výpočet
+  rollu a rozdělení historie na úseky front month kontraktů
 - `tickview/providers/alpaca.py` – volitelný zdroj Alpaca (americké akcie):
   historie feed=iex, sdílený živý websocket IEX (1m) / polling (delší
   timeframy), aktivace po zadání klíčů

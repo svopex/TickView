@@ -22,7 +22,6 @@ from tickview.logic.alerts import format_price
 from tickview.logic.styles import MAX_NAME_LENGTH, clean_name
 from tickview.logic.replay import (
     ACCOUNT_CURRENCIES,
-    DEFAULT_SETTINGS,
     EXIT_REASONS,
     ORDER_TYPES,
     QTY_MODES,
@@ -30,14 +29,14 @@ from tickview.logic.replay import (
     SPEEDS,
     STEP_UNITS,
     clean_session_name,
-    default_contract_size,
+    normalize_settings,
     position_size,
     positive_number,
     stats_by_tag,
     trades_csv,
 )
 from tickview.providers.base import TIMEFRAME_MS, utc_now_ms
-from tickview.services.replay import ReplayController
+from tickview.services.replay import ReplayController, settings_for
 from tickview.ui.templates import settings_buttons, settings_header
 
 # Formát pole datetime-local (místní čas serveru = prohlížeče u desktopové aplikace)
@@ -706,13 +705,12 @@ class ReplayUI:
         if not self.new_start.value:
             # Výchozí start: před měsícem
             self.new_start.value = input_datetime(utc_now_ms() - 30 * 86_400_000)
-        # Výchozí účet: tick a velikost lotu podle instrumentu
-        settings = dict(DEFAULT_SETTINGS)
-        kind = pane.provider.symbol_kind(pane.symbol) if pane.provider else ""
-        settings["contract_size"] = default_contract_size(kind)
+        # Výchozí účet: tick, velikost a krok lotu podle instrumentu (u futures
+        # velikost = násobitel kontraktu od zdroje, krok = celé kontrakty)
         candles = pane.candles or []
         tick = pane.provider.price_tick(pane.symbol, candles[-1].close) if pane.provider and candles else None
-        settings["tick"] = tick or (detect_tick(candles) if candles else 0.01)
+        tick = tick or (detect_tick(candles) if candles else 0.01)
+        settings = settings_for(pane.provider, pane.symbol, {"tick": tick}) if pane.provider else normalize_settings({"tick": tick})
         self.new_fields.fill(settings)
         self.new_dialog.open()
 

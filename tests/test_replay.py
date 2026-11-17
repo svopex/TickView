@@ -35,6 +35,16 @@ def settings(**overrides) -> dict:
     return normalize_settings({"initial_balance": 1000, "tick": 0.01, "contract_size": 1, **overrides})
 
 
+class SettingsDefaultsTests(unittest.TestCase):
+    def test_futures_defaults(self):
+        # Futures: velikost kontraktu od zdroje a celé kontrakty; uložená hodnota má přednost
+        futures = normalize_settings({}, "futures", contract_size=50)
+        self.assertEqual((futures["contract_size"], futures["lot_step"]), (50, 1.0))
+        self.assertEqual(normalize_settings({"contract_size": 5}, "futures", 50)["contract_size"], 5)
+        forex = normalize_settings({}, "forex")
+        self.assertEqual((forex["contract_size"], forex["lot_step"]), (100_000.0, 0.01))
+
+
 class EngineFillTests(unittest.TestCase):
     def test_market_buy_fills_at_close_and_hits_target(self):
         engine = ReplayEngine(settings())

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import AsyncIterator, Optional
 
-from ib_async import IB, Contract, Forex, Stock
+from ib_async import IB, Contract, Forex, Future, Stock
 
 from tickview.config import load_config
 from tickview.providers.base import (
@@ -29,6 +29,19 @@ from tickview.providers.base import (
     StreamStatus,
     SymbolInfo,
     poll_seconds_for,
+    utc_now_ms,
+)
+from tickview.providers.ibkr_futures import (
+    FUTURES,
+    FutureLeg,
+    FutureSpec,
+    build_chain,
+    continuous_symbol,
+    front_leg,
+    future_spec,
+    future_suggestions,
+    generic_symbol,
+    leg_segments,
 )
 
 # Výchozí napojení na TWS (demo): host, port a clientId
@@ -78,6 +91,9 @@ CURRENCY_NAMES = {
 FOREX_MAJORS = ["EUR", "USD", "GBP", "JPY", "CHF", "AUD", "CAD", "NZD", "CZK"]
 # Kolik forexových návrhů se nabídne nejvýš
 FOREX_SUGGESTIONS = 6
+# Jak dlouho platí načtený řetězec futures kontraktů (sekundy); nové kontrakty
+# se vypisují zřídka, expirace se počítá z data, ne z cache
+FUTURE_CHAIN_TTL_S = 6 * 3600.0
 
 
 def forex_name(base: str, quote: str) -> str:
@@ -246,6 +262,10 @@ class IbkrProvider(DataProvider):
         self._live_cache: dict[int, bool] = {}
         # Kvalifikované kontrakty podle symbolu (viz _qualified)
         self._contracts: dict[str, Contract] = {}
+        # Řetězce kontraktů kontinuálních futures (symbol -> (monotonic čas, kontrakty))
+        # a zámky jejich načítání
+        self._future_chains: dict[str, tuple[float, list[FutureLeg]]] = {}
+        self._future_chain_locks: dict[str, asyncio.Lock] = {}
         # Omezovač dotazů kvůli TWS pacing limitům
         self._limiter = RateLimiter(min_interval=0.35)
 
@@ -366,6 +386,13 @@ class IbkrProvider(DataProvider):
         """
         if symbol in self._contracts:
             return self._contracts[symbol]
+        # Kontinuální futures: aktuální front month z řetězce (mění se rollem,
+        # proto se necachuje tady, ale řetězec v _future_chain)
+        if spec := future_spec(symbol):
+            leg = await self._front_leg(ib, symbol, spec)
+            if leg is None:
+                raise ValueError(f"TWS nemá pro {symbol} žádný obchodovatelný kontrakt.")
+            return leg.contract
         qualified = await ib.qualifyContractsAsync(self._contract(symbol))
         contract = qualified[0] if qualified else None
         # Neznámý kontrakt (None / bez conId) se necachuje – volající dostane chybu jako dřív
@@ -373,6 +400,53 @@ class IbkrProvider(DataProvider):
             raise ValueError(f"TWS nezná kontrakt {symbol}.")
         self._contracts[symbol] = contract
         return contract
+
+    async def _future_chain(self, ib: IB, symbol: str, spec: FutureSpec) -> list[FutureLeg]:
+        """Řetězec kontraktů kontinuálního futures (i expirované, kvůli historii); cachuje se.
+
+        Prázdný řetězec (neznámý kořen nebo burza) je chyba, aby ji graf ohlásil.
+        """
+        # Souběžné dotazy (historie a nadpis při otevření grafu, více grafů)
+        # čekají na jedno načtení řetězce – dotaz je pro TWS těžký
+        async with self._future_chain_locks.setdefault(symbol, asyncio.Lock()):
+            cached = self._future_chains.get(symbol)
+            if cached and time_module.monotonic() - cached[0] < FUTURE_CHAIN_TTL_S:
+                return cached[1]
+            await self._limiter.acquire()
+            # Expirované kontrakty TWS vrací jen s includeExpired (zhruba dva roky zpět)
+            details = await ib.reqContractDetailsAsync(Future(
+                spec.root, exchange=spec.exchange, currency=spec.currency if spec.trading_class else "",
+                tradingClass=spec.trading_class, includeExpired=True,
+            ))
+            chain = build_chain(details or [], spec)
+            if not chain:
+                raise ValueError(f"TWS nezná futures {symbol} ({spec.root} na {spec.exchange}).")
+            self._future_chains[symbol] = (time_module.monotonic(), chain)
+            return chain
+
+    async def _front_leg(self, ib: IB, symbol: str, spec: FutureSpec) -> Optional[FutureLeg]:
+        # Aktuální front month (řetězec se případně načte z TWS)
+        return front_leg(await self._future_chain(ib, symbol, spec), utc_now_ms())
+
+    def _cached_front_leg(self, symbol: str) -> Optional[FutureLeg]:
+        # Aktuální front month z už načteného řetězce (pro synchronní dotazy UI)
+        cached = self._future_chains.get(symbol)
+        return front_leg(cached[1], utc_now_ms()) if cached else None
+
+    def _future_info(self, symbol: str, description: str = "") -> SymbolInfo:
+        # Návrh kontinuálního futures pro vyhledávání (symbol musí být futures)
+        spec = future_spec(symbol)
+        name = description or spec.name
+        return SymbolInfo(self.id, symbol, f"{symbol} – {name} (futures)", name, "futures", spec.exchange)
+
+    def _future_value(self, symbol: str, spec_field: str, leg_field: str) -> Optional[float]:
+        """Číselný údaj futures z tabulky, u obecného symbolu z detailů načteného
+        kontraktu; None = symbol není futures nebo údaj zatím není známý."""
+        spec = future_spec(symbol)
+        if spec is None:
+            return None
+        leg = self._cached_front_leg(symbol)
+        return getattr(spec, spec_field) or (getattr(leg, leg_field) if leg else 0) or None
 
     @staticmethod
     def _midpoint(symbol: str) -> bool:
@@ -394,6 +468,12 @@ class IbkrProvider(DataProvider):
             return {"name": forex_name(*parts), "exchange": "IDEALPRO"}
         if instrument := IB_INSTRUMENTS.get(symbol):
             return {"name": instrument.name, "exchange": instrument.market}
+        if spec := future_spec(symbol):
+            # Název s aktuálním front month kontraktem ("E-mini S&P 500 · ESZ6")
+            leg = await self._front_leg(await self._ensure_connected(), symbol, spec)
+            # Obecný symbol: název podkladu z TWS místo kořene
+            name = (not spec.trading_class and leg and leg.long_name) or spec.name
+            return {"name": f"{name} · {leg.local_symbol}" if leg else name, "exchange": spec.exchange}
         if symbol in self._describe_cache:
             return self._describe_cache[symbol]
         ib = await self._ensure_connected()
@@ -412,6 +492,8 @@ class IbkrProvider(DataProvider):
         """Forex IDEALPRO ("EUR.USD"), kov / indexové CFD podle IB_INSTRUMENTS, jinak americká akcie."""
         if forex_parts(symbol):
             return "forex"
+        if future_spec(symbol):
+            return "futures"
         instrument = IB_INSTRUMENTS.get(symbol)
         return instrument.kind if instrument else "stock"
 
@@ -420,18 +502,32 @@ class IbkrProvider(DataProvider):
         parts = forex_parts(symbol)
         if parts:
             return parts
+        if spec := future_spec(symbol):
+            # Obecný symbol: měna z detailů kontraktu, když už jsou načtené
+            leg = self._cached_front_leg(symbol)
+            return None, leg.currency if leg and not spec.trading_class else spec.currency
         instrument = IB_INSTRUMENTS.get(symbol)
         return None, instrument.currency if instrument else "USD"
 
     def exchange_timezone(self, symbol: str) -> str:
         """Americké akcie, forex IDEALPRO a kovy se v TWS řídí newyorským časem, CFD londýnským."""
+        if spec := future_spec(symbol):
+            return spec.timezone
         instrument = IB_INSTRUMENTS.get(symbol)
         return instrument.timezone if instrument else US_EQUITY_SESSION[0]
 
     def regular_session(self, symbol: str) -> Optional[tuple[str, str, str]]:
         """Akcie: historie se stahuje i mimo hlavní hodiny (useRTH=False), RTH
-        je 9:30–16:00 New York; forex, kovy a CFD obchodují téměř nepřetržitě."""
-        return None if self._midpoint(symbol) else US_EQUITY_SESSION
+        je 9:30–16:00 New York; forex, kovy, CFD a futures obchodují téměř nepřetržitě."""
+        return None if self._midpoint(symbol) or future_spec(symbol) else US_EQUITY_SESSION
+
+    def price_tick(self, symbol: str, price: float) -> Optional[float]:
+        """Futures: tick z tabulky, u obecného symbolu z detailů kontraktu; jinak se odhadne z dat."""
+        return self._future_value(symbol, "tick", "min_tick")
+
+    def contract_size(self, symbol: str) -> Optional[float]:
+        """Futures: násobitel kontraktu (hodnota bodu) z tabulky nebo z detailů kontraktu."""
+        return self._future_value(symbol, "multiplier", "multiplier")
 
     @classmethod
     def _what_to_show(cls, symbol: str) -> str:
@@ -450,8 +546,9 @@ class IbkrProvider(DataProvider):
         return f"{days} D"
 
     async def search(self, query: str, limit: int = 30) -> list[SymbolInfo]:
-        """Vyhledá forexové páry (podle dotazu, bez TWS) a akcie/ETF přes TWS
-        matching symbols (prefixová shoda).
+        """Vyhledá forexové páry, kovy, CFD a futures z tabulky (podle dotazu,
+        bez TWS) a akcie/ETF a další futures přes TWS matching symbols
+        (prefixová shoda).
 
         Forexové páry se nabízí i bez běžící TWS; chyba připojení se ohlásí
         jen tehdy, když dotaz žádnému páru neodpovídá.
@@ -465,7 +562,11 @@ class IbkrProvider(DataProvider):
         # pár nebo instrument („EUR.USD“, „XAUUSD“) se v TWS už nehledá
         results: list[SymbolInfo] = [self._forex_info(pair) for pair in forex_suggestions(q)]
         results += [self._instrument_info(symbol) for symbol in instrument_suggestions(q)]
-        if forex_parts(q) or q in IB_INSTRUMENTS:
+        results += [self._future_info(symbol) for symbol in future_suggestions(q)]
+        # Přesně zadaný obecný futures symbol ("VIX1!@CFE") se nabídne i bez TWS
+        if (spec := future_spec(q)) and not spec.trading_class:
+            results.append(self._future_info(q))
+        if forex_parts(q) or q in IB_INSTRUMENTS or spec:
             return results
         try:
             ib = await self._ensure_connected()
@@ -490,6 +591,17 @@ class IbkrProvider(DataProvider):
                     seen.add(pair)
                     results.append(self._forex_info(pair))
                 continue
+            # Podklad s futures (index, komodita…) → kontinuální front month:
+            # z tabulky, pokud tam kořen s burzou je, jinak obecný symbol
+            exchange = getattr(contract, "primaryExchange", "") or getattr(contract, "exchange", "") or ""
+            if "FUT" in (getattr(description, "derivativeSecTypes", None) or []) and contract.symbol and exchange:
+                known = next((key for key, spec in FUTURES.items()
+                              if spec.root == contract.symbol and spec.exchange == exchange), None)
+                future_symbol = continuous_symbol(known) if known else generic_symbol(contract.symbol, exchange)
+                if future_symbol not in seen:
+                    seen.add(future_symbol)
+                    long_name = getattr(contract, "description", "") or ""
+                    results.append(self._future_info(future_symbol, "" if known else long_name))
             # Jinak jen akcie/ETF; duplicity napříč burzami sloučíme podle symbolu
             if sec_type != "STK":
                 continue
@@ -500,7 +612,6 @@ class IbkrProvider(DataProvider):
             # Název firmy: novější TWS ho posílá v description, starší v longName
             long_name = getattr(contract, "description", "") or getattr(contract, "longName", "") or ""
             label = f"{symbol} – {long_name}" if long_name else symbol
-            exchange = getattr(contract, "primaryExchange", "") or getattr(contract, "exchange", "") or ""
             results.append(SymbolInfo(self.id, symbol, label, long_name, "stock", exchange))
             if len(results) >= min(limit, 12):
                 break
@@ -512,16 +623,23 @@ class IbkrProvider(DataProvider):
         """Stáhne historii svíček z TWS (akcie TRADES, forex MIDPOINT; včetně
         obchodování mimo hlavní hodiny)."""
         ib = await self._ensure_connected()
-        # Kvalifikace doplní conId a ověří, že kontrakt existuje
-        contract = await self._qualified(ib, symbol)
-        delta_seconds = max(60, (end_ms - start_ms) // 1000)
-        end_dt = datetime.fromtimestamp(end_ms / 1000, tz=timezone.utc)
-        bars = await self._request_bars(
-            ib, contract, symbol, timeframe, end_dt, self._duration(delta_seconds)
-        )
-        candles = [candle for bar in bars if (candle := self._bar_to_candle(bar))]
-        # TWS může vrátit data mimo požadovaný interval – ořízneme a seřadíme
-        candles = [c for c in candles if start_ms <= c.open_time <= end_ms]
+        if spec := future_spec(symbol):
+            # Kontinuální futures: každý úsek z kontraktu, který byl tehdy front
+            # month (expirované s includeExpired); ceny se mezi kontrakty neupravují
+            chain = await self._future_chain(ib, symbol, spec)
+            segments = [(leg.contract, a, b) for leg, a, b in leg_segments(chain, start_ms, end_ms)]
+        else:
+            # Kvalifikace doplní conId a ověří, že kontrakt existuje
+            segments = [(await self._qualified(ib, symbol), start_ms, end_ms)]
+        candles: list[Candle] = []
+        for contract, seg_start, seg_end in segments:
+            delta_seconds = max(60, (seg_end - seg_start) // 1000)
+            end_dt = datetime.fromtimestamp(seg_end / 1000, tz=timezone.utc)
+            bars = await self._request_bars(
+                ib, contract, symbol, timeframe, end_dt, self._duration(delta_seconds)
+            )
+            # TWS může vrátit data mimo požadovaný úsek – ořízneme
+            candles += [c for bar in bars if (c := self._bar_to_candle(bar)) and seg_start <= c.open_time <= seg_end]
         candles.sort(key=lambda c: c.open_time)
         return candles
 
@@ -645,6 +763,10 @@ class IbkrProvider(DataProvider):
             try:
                 ib = await self._ensure_connected()
                 contract = await self._qualified(ib, symbol)
+                # Futures: odběr front month kontraktu skončí v okamžiku rollu
+                # a smyčka se přihlásí k následujícímu kontraktu
+                leg = self._cached_front_leg(symbol)
+                roll_ms = leg.roll_ms if leg else None
                 live, bars = await asyncio.gather(
                     self._probe_live_data(ib, contract),
                     self._request_bars(
@@ -677,24 +799,31 @@ class IbkrProvider(DataProvider):
                     yield item
                 return
 
-            async for item in self._follow_bars(ib, bars, live, latch):
+            async for item in self._follow_bars(ib, bars, live, latch, roll_ms):
                 yield item
+            # Roll futures: hned nové přihlášení (už k následujícímu kontraktu)
+            if roll_ms is not None and utc_now_ms() >= roll_ms:
+                continue
             # Odběr skončil chybou nebo odpojením → krátká pauza a nové přihlášení
             await asyncio.sleep(STREAM_RETRY_S)
 
     @staticmethod
-    async def _follow_bars(ib: IB, bars, live: bool, latch: FailureLatch) -> AsyncIterator[StreamItem]:
+    async def _follow_bars(
+        ib: IB, bars, live: bool, latch: FailureLatch, until_ms: Optional[int] = None
+    ) -> AsyncIterator[StreamItem]:
         """Posílá změny průběžných barů jednoho keepUpToDate odběru.
 
         Nejdřív pošle stav (live) a poslední svíčku, pak každou změnu; při
         nové svíčce i konečnou podobu předchozí. Skončí po chybě odběru nebo
-        odpojení TWS (výpadek ohlásí přes latch); odběr vždy zruší.
+        odpojení TWS (výpadek ohlásí přes latch), případně bez hlášení
+        v čase until_ms (roll futures); odběr vždy zruší.
 
         Parametry:
             ib: připojená instance IB, ke které odběr patří.
             bars: BarDataList z reqHistoricalData(keepUpToDate=True).
             live: zda jde o živá (předplacená) data – pro štítek v UI.
             latch: stav výpadků streamu (výpadek se hlásí jen jednou).
+            until_ms: kdy odběr skončit (UTC ms, roll futures); None = bez limitu.
         """
         # Callbacky ib_async jen nastaví příznak změny, případně důvod konce
         # odběru; více aktualizací mezi průchody smyčky se tak sloučí
@@ -733,7 +862,12 @@ class IbkrProvider(DataProvider):
                     yield candle
                 if end_reason is not None:
                     break
-                await changed.wait()
+                # Čekání na změnu, nejdéle do konce odběru (roll futures)
+                timeout = None if until_ms is None else max(0.0, (until_ms - utc_now_ms()) / 1000)
+                try:
+                    await asyncio.wait_for(changed.wait(), timeout)
+                except asyncio.TimeoutError:
+                    return
                 changed.clear()
             if status := latch.fail(f"průběžné bary přerušeny – {end_reason}"):
                 yield status

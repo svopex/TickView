@@ -428,6 +428,10 @@ class DataProvider(ABC):
         """
         return None
 
+    def contract_size(self, symbol: str) -> Optional[float]:
+        """Velikost kontraktu (hodnota bodu u futures) pro replay; None = výchozí podle druhu instrumentu."""
+        return None
+
     def regular_session(self, symbol: str) -> Optional[tuple[str, str, str]]:
         """Hlavní obchodní seance pro filtr RTH: (pásmo, "HH:MM" od, "HH:MM" do).
 
