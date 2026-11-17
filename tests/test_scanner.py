@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 from tests.test_logic import FakeProvider
 from tickview.indicators import registry
-from tickview.indicators.api import Context, Indicator, Param, Result, Signal
+from tickview.indicators.api import SCANNER_SYMBOLS, Context, Indicator, Param, Result, Signal, scanner_params
 from tickview.indicators.compute import compute_indicators, normalize_indicators
 from tickview.logic.cache import KlineCache, fetch_recent
 from tickview.logic.reminders import ReminderTracker, normalize_reminder, parse_hhmm
@@ -20,8 +20,11 @@ from tickview.logic.scanner import (
     alert_message,
     bar_hits,
     current_bar_close,
-    normalize_scanner,
+    error_row,
+    layout_jobs,
+    make_job,
     overview_payload,
+    parse_symbol,
     status_kind,
     status_text,
     symbol_row,
@@ -47,6 +50,15 @@ class ParamTest(unittest.TestCase):
         positive = Param.float("mult", 2.0, "Násobek", min=0, max=10, exclusive_min=True)
         with self.assertRaises(ValueError):
             positive.normalize(0)
+
+    def test_symbol(self) -> None:
+        symbol = Param.symbol("s", "")
+        self.assertEqual(symbol.normalize(" Yahoo:EURUSD=X "), "yahoo:EURUSD=X")
+        self.assertEqual(symbol.normalize("BTCUSDT"), "BTCUSDT")
+        self.assertEqual(symbol.normalize(""), "")
+        for bad in ("EUR USD", "yahoo:"):
+            with self.assertRaises(ValueError):
+                symbol.normalize(bad)
 
     def test_other_kinds(self) -> None:
         self.assertIs(Param.bool("b", True).normalize(0), False)
@@ -147,7 +159,7 @@ class FakeSignals(Indicator):
     id = "test_signals"
     title = name = "Signals"
     has_signals = True
-    params = [Param.int("length", 5, min=1, max=50)]
+    params = [Param.int("length", 5, min=1, max=50), *scanner_params(["fake:HIT", "MISS", "nope:X"])]
 
     def compute(self, df, params, ctx: Context) -> Result:
         if ctx.symbol != "HIT":
@@ -162,7 +174,7 @@ class ScannerLogicTest(unittest.TestCase):
     def test_symbol_row(self) -> None:
         signals = [Signal(3, "long", 3), Signal(1, "long", 1, "ENG"), Signal(0, "short", 0, "ONE")]
         row = symbol_row("y", "EURUSD", signals, 2, 1000)
-        self.assertEqual((row["long"], row["short"], row["long_label"]), (1, 0, "ENG"))
+        self.assertEqual((row["long"], row["short"]), (1, 0))
         self.assertEqual(status_text(row), "LONG(1) + SHORT(0)")
         self.assertEqual(status_kind(row), "both")
         empty = symbol_row("y", "GBPUSD", signals, 1, 1000)
@@ -196,13 +208,29 @@ class ScannerLogicTest(unittest.TestCase):
         self.assertEqual(window.check(300, 4.0, 1, 0, 5, commit=False), 5)
         self.assertEqual(window.check(300, 4.0, 1, 0, 5), 5)
 
-    def test_normalize_scanner(self) -> None:
-        config = normalize_scanner({"timeframe": "7m", "bars": 99, "watchlist_id": True,
-                                    "alert": {"minutes1": -1, "notify": {"webhook": "ftp://x"}}})
-        self.assertEqual((config["timeframe"], config["bars"], config["watchlist_id"]), ("1h", 2, None))
-        self.assertEqual(config["alert"]["minutes1"], 10)
-        self.assertEqual(config["alert"]["notify"]["webhook"], "")
-        self.assertEqual(config["params"]["bars_to_process"], 360)
+    def test_jobs_from_layout(self) -> None:
+        self.assertEqual(parse_symbol("yahoo:EURUSD=X", "binance"), ("yahoo", "EURUSD=X"))
+        self.assertEqual(parse_symbol("BTCUSDT", "binance"), ("binance", "BTCUSDT"))
+        self.assertIsNone(parse_symbol(" ", "binance"))
+        params = registry.get_indicator("svopex_ttw").defaults()
+        spec = {"kind": "svopex_ttw", "params": params, "visible": True}
+        job, table = make_job(spec, "binance")
+        self.assertTrue(table)
+        self.assertEqual(job["config"]["symbols"][0], ("yahoo", "^NDX"))
+        self.assertEqual(job["config"]["timeframe"], "1h")
+        # Skrytý indikátor bez alertu, tabulka „nezobrazovat“ bez alertu a bez symbolů = bez úlohy
+        self.assertEqual(make_job({**spec, "visible": False}, "binance"), (None, False))
+        self.assertIsNone(make_job({**spec, "params": {**params, "scan_table_position": "off"}}, "binance")[0])
+        alert_only = make_job({**spec, "visible": False, "params": {**params, "scan_alert": True}}, "binance")
+        self.assertEqual((alert_only[0] is not None, alert_only[1]), (True, False))
+        no_symbols = {**params, **{f"scan_symbol_{index}": "" for index in range(1, SCANNER_SYMBOLS + 1)}}
+        self.assertIsNone(make_job({**spec, "params": no_symbols}, "binance")[0])
+        # Indikátor bez vstupů scanneru nic neskenuje; shodné instance ve dvou grafech = jedna úloha
+        self.assertIsNone(make_job({"kind": "sma", "params": {"length": 20}}, "binance")[0])
+        pane = {"symbol": "binance:BTCUSDT", "indicators": [spec]}
+        jobs, tables = layout_jobs({"panes": [pane, pane, {"symbol": "binance:X", "indicators": []}]})
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(tables, [job["key"], job["key"], None])
 
 
 class RemindersTest(unittest.TestCase):
@@ -277,21 +305,25 @@ class ScannerServiceTest(unittest.IsolatedAsyncioTestCase):
         self.tmp.cleanup()
 
     async def test_scan_and_alert(self) -> None:
-        list_id = (await self.cache.watchlists())[0]["id"]
-        for source, symbol in (("fake", "HIT"), ("fake", "MISS"), ("nope", "X")):
-            await self.cache.watchlist_add(list_id, source, symbol)
-        await self.scanner.update_config({
-            "enabled": True, "indicator": FakeSignals.id, "watchlist_id": list_id, "timeframe": "1h", "bars": 2,
-            "alert": {"enabled": True, "minutes1": 60, "minutes2": 0, "notify": {"toast": True}},
-        })
-        await self.scanner.scan()
-        rows = {row["symbol"]: row for row in self.scanner.results["rows"] if row["symbol"] in ("HIT", "MISS", "X")}
+        # Úloha z uloženého rozložení: instance indikátoru se vstupy scanneru (MISS bez prefixu = zdroj grafu)
+        params = FakeSignals().normalize_params({"scan_alert": True, "scan_alert_minutes1": 60,
+                                                 "scan_alert_minutes2": 0})
+        layout = {"panes": [{"symbol": "fake:EURUSD", "timeframe": "1h",
+                             "indicators": [{"kind": FakeSignals.id, "params": params}]}]}
+        self.scanner.set_layout(layout)
+        self.assertEqual(len(self.scanner.jobs), 1)
+        job = next(iter(self.scanner.jobs.values()))
+        await self.scanner.scan(job)
+        rows = {row["symbol"]: row for row in self.scanner.result(job["key"])["rows"]}
         self.assertEqual((rows["HIT"]["long"], rows["HIT"]["short"]), (0, 1))
         self.assertEqual((rows["MISS"]["long"], rows["MISS"]["short"]), (None, None))
         self.assertIn("Neznámý zdroj", rows["X"]["error"])
+        # Tabulka pro graf s indikátorem
+        overview = self.scanner.table(0)
+        self.assertEqual(overview["rows"][0]["symbol"], "HIT")
         # Práh 60 min je vždy splněný – alert odejde jednou za svíčku
-        await self.scanner._check_alert()
-        await self.scanner._check_alert()
+        await self.scanner._check_alert(job)
+        await self.scanner._check_alert(job)
         self.assertEqual(len(self.engine.sent), 1)
         self.assertIn("HIT LONG", self.engine.sent[0]["message"])
         self.assertEqual(self.engine.sent[0]["source"], "scanner")
@@ -373,8 +405,8 @@ class SignalAlertTest(unittest.TestCase):
                                                       "params": {"length": 999}, "minutes": 7}}
         spec = normalize_alert(data)
         # Neplatné parametry = výchozí, zpráva se zástupným textem signálu
-        self.assertEqual(spec["target"], {"type": "indicator", "kind": FakeSignals.id, "params": {"length": 5},
-                                          "minutes": 7})
+        self.assertEqual(spec["target"], {"type": "indicator", "kind": FakeSignals.id,
+                                          "params": FakeSignals().defaults(), "minutes": 7})
         self.assertEqual(spec["message"], "HIT, 1h Signals {{signal}}")
         self.assertEqual(describe_alert(spec), "Signals: Signál Long · 7 min před zavřením svíčky")
         for bad in ({"condition": "crossing"}, {"trigger": "per_minute"},
@@ -410,14 +442,23 @@ class OverviewTest(unittest.TestCase):
     """Data přehledu scanneru v grafu."""
 
     def test_payload(self) -> None:
-        config = normalize_scanner({"enabled": True, "timeframe": "1h"})
+        params = registry.get_indicator("svopex_ttw").defaults()
+        job = make_job({"kind": "svopex_ttw", "params": params}, "yahoo")[0]
         rows = [symbol_row("y", "EURUSD", [Signal(0, "long", 0)], 2, 0), symbol_row("y", "GBPUSD", [], 2, 0)]
-        data = overview_payload(config, {"rows": rows, "scanned_at": 1, "error": ""})
+        data = overview_payload(job, {"rows": rows, "scanned_at": 1})
         self.assertEqual(data["title"], "Svopex TTW (1h)")
         self.assertEqual(data["rows"], [{"symbol": "EURUSD", "text": "LONG(0)", "kind": "long"}])
-        self.assertEqual(overview_payload({**config, "enabled": False}, {"rows": [], "scanned_at": None,
-                                                                         "error": ""})["note"][:7], "scanner")
-        self.assertIsNone(overview_payload({**config, "overview": {"position": "off", "size": "normal"}}, {}))
+        # Bez skrytí prefixu se ukáže i zdroj; bez výsledku poznámka
+        full = make_job({"kind": "svopex_ttw", "params": {**params, "scan_strip_prefix": False}}, "yahoo")[0]
+        self.assertEqual(overview_payload(full, {"rows": rows, "scanned_at": 1})["rows"][0]["symbol"], "y:EURUSD")
+        self.assertEqual(overview_payload(job, None)["note"], "počítám…")
+        self.assertEqual(overview_payload(job, None, (12, 37))["note"], "počítám… 12/37")
+        # Chybné symboly se při „jen se signálem“ sloučí do jednoho řádku
+        broken = [error_row("ibkr", "EUR.USD", "TWS neběží"), error_row("ibkr", "GBP.USD", "TWS neběží")]
+        summary = overview_payload(job, {"rows": rows + broken, "scanned_at": 1})["rows"]
+        self.assertEqual(summary[-1], {"symbol": "2 symboly bez dat", "text": "chyba", "kind": "error"})
+        off = {**job, "config": {**job["config"], "position": "off"}}
+        self.assertIsNone(overview_payload(off, None))
 
 
 class IndicatorAlertEngineTest(unittest.IsolatedAsyncioTestCase):

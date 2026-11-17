@@ -1,121 +1,117 @@
-"""Logika scanneru: nastavení, stav symbolu ze signálů, texty a alert před zavřením svíčky.
+"""Logika scanneru: úlohy ze vstupů indikátoru, stav symbolu ze signálů, texty a alert.
 
-Scanner pro každý symbol zvoleného seznamu spočítá indikátor se signály
-(např. Svopex TTW) na zvoleném timeframu a zobrazí, na které z posledních
-svíček je long / short signál. Alert pošle X minut před zavřením svíčky
-jednu souhrnnou zprávu se seznamem trhů, které mají signál na právě běžící
-svíčce (index 0). Modul obsahuje jen čisté funkce a stav alertu bez I/O;
-stahování dat a odesílání řeší tickview/services/scanner.py.
+Scanner se nastavuje jako v Pine skriptu Svopex TTW přímo ve vstupech
+indikátoru (skupiny Scanner – viz scanner_params v tickview/indicators/api.py).
+Každá instance takového indikátoru v rozložení grafů je jedna úloha: pro
+každý vyplněný symbol spočítá indikátor se stejnými parametry na timeframu
+scanu a zjistí, na které z posledních svíček je long / short signál. Výsledek
+se ukáže jako tabulka v grafu s indikátorem; alert pošle X minut před
+zavřením svíčky jednu souhrnnou zprávu se seznamem trhů, které mají signál na
+právě běžící svíčce (index 0). Modul obsahuje jen čisté funkce a stav alertu
+bez I/O; stahování dat a odesílání řeší tickview/services/scanner.py.
 """
 
 import json
 from typing import Optional
 
-from tickview.indicators.api import Param
-from tickview.indicators.compute import instance_params
-from tickview.indicators.registry import all_indicators, get_indicator
-from tickview.logic.alerts import DEFAULT_NOTIFY, MAX_ALERT_MINUTES, normalize_notify
+from tickview.indicators.api import SCANNER_SYMBOLS, split_symbol
+from tickview.indicators.registry import get_indicator
 from tickview.logic.styles import plural
-from tickview.providers.base import TIMEFRAME_MS
-
-# Klíč nastavení se scannerem (JSON)
-SCANNER_SETTINGS_KEY = "scanner"
-# Kolik posledních svíček nejvýš sledovat
-MAX_SCAN_BARS = 20
-# Přehled (tabulka scanneru) v grafech s indikátorem scanneru – pozice a velikost písma jako v Pine
-OVERVIEW_POSITIONS = {
-    "top_right": "Vpravo nahoře",
-    "top_left": "Vlevo nahoře",
-    "middle_right": "Vpravo uprostřed",
-    "bottom_right": "Vpravo dole",
-    "bottom_left": "Vlevo dole",
-    "off": "Nezobrazovat",
-}
-OVERVIEW_SIZES = {"tiny": "Drobné", "small": "Malé", "normal": "Normální", "large": "Velké"}
-
-DEFAULT_SCANNER: dict = {
-    "enabled": False,
-    "indicator": "svopex_ttw",
-    "params": {},
-    "watchlist_id": None,
-    "timeframe": "1h",
-    "bars": 2,
-    "only_hits": True,
-    "overview": {"position": "top_right", "size": "normal"},
-    "alert": {"enabled": False, "minutes1": 10, "minutes2": 5, "notify": dict(DEFAULT_NOTIFY)},
-}
 
 
-def signal_indicators() -> dict[str, str]:
-    """Indikátory, které vrací signály (volby scanneru): id -> název."""
-    return {kind: indicator.name for kind, indicator in all_indicators().items() if indicator.has_signals}
+def parse_symbol(text: str, default_source: str) -> Optional[tuple[str, str]]:
+    """Symbol ze vstupu scanneru jako (zdroj, symbol); prázdný vstup = None.
 
-
-def _int_in(value, default: int, low: int, high: int) -> int:
-    """Celé číslo v rozsahu; jinak (i chybějící) výchozí hodnota."""
-    if isinstance(value, bool):
-        return default
-    try:
-        return Param.int("value", default, min=low, max=high).normalize(value)
-    except ValueError:
-        return default
-
-
-def scanner_title(config: dict) -> str:
-    """Zkratka indikátoru scanneru do textů (nenačtený indikátor = jeho id)."""
-    indicator = get_indicator(config["indicator"])
-    return indicator.title if indicator else config["indicator"]
-
-
-def normalize_scanner(data) -> dict:
-    """Zkontroluje nastavení scanneru; neplatné části nahradí výchozími.
-
-    Parametry indikátoru projdou jako u instance v grafu (instance_params).
+    Parametry:
+        text: "zdroj:SYMBOL" nebo jen "SYMBOL".
+        default_source: zdroj grafu pro symbol bez prefixu.
     """
-    source = data if isinstance(data, dict) else {}
-    kind = source.get("indicator") if isinstance(source.get("indicator"), str) else DEFAULT_SCANNER["indicator"]
-    params = instance_params(kind, source.get("params"))
-    watchlist_id = source.get("watchlist_id")
-    if isinstance(watchlist_id, bool) or not isinstance(watchlist_id, int):
-        watchlist_id = None
-    timeframe = source.get("timeframe") if source.get("timeframe") in TIMEFRAME_MS else DEFAULT_SCANNER["timeframe"]
-    overview = source.get("overview") if isinstance(source.get("overview"), dict) else {}
-    default_overview = DEFAULT_SCANNER["overview"]
-    alert = source.get("alert") if isinstance(source.get("alert"), dict) else {}
-    default_alert = DEFAULT_SCANNER["alert"]
-    try:
-        notify = normalize_notify(alert.get("notify"))
-    except ValueError:
-        notify = dict(DEFAULT_NOTIFY)
+    text = (text or "").strip()
+    if not text:
+        return None
+    source, symbol = split_symbol(text)
+    return source or default_source, symbol
+
+
+def scan_config(params: dict, default_source: str) -> dict:
+    """Nastavení scanneru ze (normalizovaných) parametrů instance indikátoru.
+
+    Vrací {"timeframe", "bars", "position", "size", "only_hits",
+    "strip_prefix", "symbols": [(zdroj, symbol)], "alert": {"enabled",
+    "minutes1", "minutes2", "notify"}}; opakovaný symbol se počítá jednou.
+    """
+    symbols: list[tuple[str, str]] = []
+    for index in range(1, SCANNER_SYMBOLS + 1):
+        parsed = parse_symbol(params.get(f"scan_symbol_{index}", ""), default_source)
+        if parsed and parsed not in symbols:
+            symbols.append(parsed)
     return {
-        "enabled": bool(source.get("enabled", False)),
-        "indicator": kind,
-        "params": params,
-        "watchlist_id": watchlist_id,
-        "timeframe": timeframe,
-        "bars": _int_in(source.get("bars"), DEFAULT_SCANNER["bars"], 1, MAX_SCAN_BARS),
-        "only_hits": bool(source.get("only_hits", True)),
-        "overview": {
-            "position": overview["position"] if overview.get("position") in OVERVIEW_POSITIONS
-            else default_overview["position"],
-            "size": overview["size"] if overview.get("size") in OVERVIEW_SIZES else default_overview["size"],
-        },
+        "timeframe": params["scan_timeframe"],
+        "bars": params["scan_bars"],
+        "position": params["scan_table_position"],
+        "size": params["scan_text_size"],
+        "only_hits": params["scan_only_hits"],
+        "strip_prefix": params["scan_strip_prefix"],
+        "symbols": symbols,
         "alert": {
-            "enabled": bool(alert.get("enabled", False)),
-            "minutes1": _int_in(alert.get("minutes1"), default_alert["minutes1"], 0, MAX_ALERT_MINUTES),
-            "minutes2": _int_in(alert.get("minutes2"), default_alert["minutes2"], 0, MAX_ALERT_MINUTES),
-            "notify": notify,
+            "enabled": params["scan_alert"],
+            "minutes1": params["scan_alert_minutes1"],
+            "minutes2": params["scan_alert_minutes2"],
+            "notify": {"telegram": params["scan_alert_telegram"], "toast": params["scan_alert_toast"],
+                       "sound": params["scan_alert_sound"], "webhook": ""},
         },
     }
 
 
-def load_scanner(raw: Optional[str]) -> dict:
-    """Načte nastavení scanneru z JSON (poškozené = výchozí)."""
-    try:
-        data = json.loads(raw or "{}")
-    except ValueError:
-        data = {}
-    return normalize_scanner(data)
+def make_job(spec: dict, default_source: str) -> tuple[Optional[dict], bool]:
+    """Úloha scanneru pro instanci indikátoru v grafu a zda instance ukazuje tabulku.
+
+    Instance skenuje, když indikátor má vstupy scanneru, aspoň jeden symbol
+    a buď viditelnou tabulku (viditelný indikátor, pozice ≠ nezobrazovat),
+    nebo zapnutý alert. Klíč úlohy je stejný pro shodné instance ve více
+    grafech, takže se počítají jednou.
+
+    Parametry:
+        spec: instance {"kind", "params", "visible"} s normalizovanými parametry.
+        default_source: zdroj grafu (pro symboly bez prefixu).
+
+    Vrací (úloha {"key", "kind", "title", "params", "config"} nebo None, tabulka).
+    """
+    indicator = get_indicator(spec["kind"])
+    if indicator is None or not indicator.has_scanner:
+        return None, False
+    params = spec["params"]
+    config = scan_config(params, default_source)
+    table = bool(config["symbols"]) and spec.get("visible", True) and config["position"] != "off"
+    if not (table or (config["symbols"] and config["alert"]["enabled"])):
+        return None, False
+    # Klíč: indikátor, parametry výpočtu (bez vstupů scanneru) a nastavení scanneru
+    scanner_names = {param.name for param in indicator.params if param.scanner}
+    compute_params = {name: value for name, value in params.items() if name not in scanner_names}
+    key = json.dumps([spec["kind"], compute_params, config], sort_keys=True)
+    return {"key": key, "kind": spec["kind"], "title": indicator.title, "params": params, "config": config}, table
+
+
+def layout_jobs(layout: dict) -> tuple[dict[str, dict], list[Optional[str]]]:
+    """Úlohy scanneru ze všech grafů rozložení (logic.layouts.normalize_layout).
+
+    Vrací (klíč -> úloha, klíč úlohy tabulky pro každý graf v pořadí rozložení
+    nebo None); graf ukazuje tabulku první instance, která ji má zobrazit
+    (jako table v Pine skriptu – víc tabulek by se v jednom rohu překrývalo).
+    """
+    jobs: dict[str, dict] = {}
+    tables: list[Optional[str]] = []
+    for pane in layout["panes"]:
+        default_source = split_symbol(pane["symbol"])[0]
+        table_key = None
+        for spec in pane["indicators"]:
+            job, table = make_job(spec, default_source)
+            if job:
+                jobs[job["key"]] = job
+                if table and table_key is None:
+                    table_key = job["key"]
+        tables.append(table_key)
+    return jobs, tables
 
 
 def symbol_row(source: str, symbol: str, signals: list, bars: int, last_open_ms: Optional[int]) -> dict:
@@ -127,13 +123,11 @@ def symbol_row(source: str, symbol: str, signals: list, bars: int, last_open_ms:
         bars: kolik posledních svíček sledovat.
         last_open_ms: otevření poslední svíčky (ms UTC), None = bez dat.
 
-    Vrací {"key", "source", "symbol", "long", "short", "long_label",
-    "short_label", "last_open", "error"}; long/short = index svíčky (0 =
-    běžící) nebo None.
+    Vrací {"key", "symbol", "long", "short", "last_open", "error"};
+    long/short = index svíčky (0 = běžící) nebo None.
     """
     row = {
-        "key": f"{source}:{symbol}", "source": source, "symbol": symbol,
-        "long": None, "short": None, "long_label": "", "short_label": "",
+        "key": f"{source}:{symbol}", "symbol": symbol, "long": None, "short": None,
         "last_open": last_open_ms, "error": "",
     }
     for signal in sorted(signals, key=lambda item: item.bars_ago):
@@ -142,7 +136,6 @@ def symbol_row(source: str, symbol: str, signals: list, bars: int, last_open_ms:
         # Hledá se od nejnovější svíčky – uloží se nejčerstvější signál směru
         if row[signal.direction] is None:
             row[signal.direction] = signal.bars_ago
-            row[f"{signal.direction}_label"] = signal.label
     return row
 
 
@@ -179,43 +172,56 @@ def status_kind(row: dict) -> str:
 
 
 def visible_rows(rows: list[dict], only_hits: bool) -> list[dict]:
-    """Řádky tabulky: při „jen se signálem“ jen trhy se signálem (chyby se ukazují vždy)."""
-    return [row for row in rows if not only_hits or has_signal(row) or row.get("error")]
+    """Řádky tabulky: při „jen se signálem“ jen trhy se signálem (bez chybných symbolů)."""
+    return [row for row in rows if not only_hits or (has_signal(row) and not row.get("error"))]
 
 
-def overview_payload(config: dict, results: dict) -> Optional[dict]:
-    """Data přehledu (tabulky scanneru) pro graf; None = přehled se nezobrazuje.
+def row_label(row: dict, strip_prefix: bool) -> str:
+    """Popisek symbolu v tabulce a alertu: "SYMBOL", nebo "zdroj:SYMBOL" bez skrytí prefixu."""
+    return row["symbol"] if strip_prefix else row["key"]
+
+
+def overview_payload(job: dict, results: Optional[dict], progress: Optional[tuple[int, int]] = None) -> Optional[dict]:
+    """Data tabulky scanneru pro graf; None = tabulka se nezobrazuje.
 
     Tabulka jako v Pine skriptu: hlavička „Svopex TTW (1h) | Signál (svíčka)“,
     řádky symbol + stav (barva podle směru); místo řádků poznámka, když
-    scanner neběží, nemá seznam nebo žádný trh nemá signál.
+    výsledek ještě není nebo žádný trh nemá signál.
+
+    Parametry:
+        job: úloha scanneru (make_job).
+        results: poslední výsledek úlohy {"rows", "scanned_at"} (None = ještě nepočítáno).
+        progress: průběh běžícího přepočtu (hotové symboly, všechny) do poznámky „počítám…“.
     """
-    overview = config["overview"]
-    if overview["position"] == "off":
+    config = job["config"]
+    if config["position"] == "off":
         return None
     note = ""
     rows: list[dict] = []
-    if not config["enabled"]:
-        note = "scanner je vypnutý (záložka Scanner)"
-    elif results["error"]:
-        note = results["error"]
-    elif not results["scanned_at"]:
-        note = "počítám…"
+    if not results or not results["scanned_at"]:
+        note = f"počítám… {progress[0]}/{progress[1]}" if progress else "počítám…"
     else:
         rows = [
-            {"symbol": row["symbol"], "text": "chyba" if row.get("error") else status_text(row) or "—",
+            {"symbol": row_label(row, config["strip_prefix"]),
+             "text": "chyba" if row.get("error") else status_text(row) or "—",
              "kind": status_kind(row)}
             for row in visible_rows(results["rows"], config["only_hits"])
         ]
+        # Při „jen se signálem“ se chybné symboly (např. neběžící TWS) sloučí do
+        # jednoho řádku, aby nezahltily tabulku
+        errors = sum(1 for row in results["rows"] if row.get("error"))
+        if config["only_hits"] and errors:
+            rows.append({"symbol": f"{plural(errors, 'symbol', 'symboly', 'symbolů')} bez dat",
+                         "text": "chyba", "kind": "error"})
         if not rows:
             note = "žádný signál"
     return {
-        "title": f"{scanner_title(config)} ({config['timeframe']})",
+        "title": f"{job['title']} ({config['timeframe']})",
         "header": "Signál (svíčka)",
         "rows": rows,
         "note": note,
-        "position": overview["position"],
-        "size": overview["size"],
+        "position": config["position"],
+        "size": config["size"],
     }
 
 
@@ -231,13 +237,13 @@ def current_bar_close(rows: list[dict], step_ms: int, now_ms: int) -> int:
     return now_ms - now_ms % step_ms + step_ms
 
 
-def bar_hits(rows: list[dict]) -> list[tuple[str, str]]:
+def bar_hits(rows: list[dict], strip_prefix: bool = True) -> list[tuple[str, str]]:
     """Trhy se signálem na běžící svíčce (index 0): [(symbol, "LONG" / "SHORT" / "LONG+SHORT")]."""
     hits = []
     for row in rows:
         long0, short0 = row["long"] == 0, row["short"] == 0
         if long0 or short0:
-            hits.append((row["symbol"], "LONG+SHORT" if long0 and short0 else "LONG" if long0 else "SHORT"))
+            hits.append((row_label(row, strip_prefix), "LONG+SHORT" if long0 and short0 else "LONG" if long0 else "SHORT"))
     return hits
 
 

@@ -12,7 +12,7 @@ indicator.py, který definuje INDICATOR (instanci třídy indikátoru).
 """
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Optional, Sequence
 
 import pandas as pd
@@ -54,7 +54,8 @@ class Param:
 
     Atributy:
         name: klíč parametru v uloženém nastavení (neměnit – rozbije uložená nastavení).
-        kind: typ pole – "int", "float", "bool", "color", "select", "string", "timeframe".
+        kind: typ pole – "int", "float", "bool", "color", "select", "string", "timeframe",
+            "symbol" (symbol "zdroj:SYMBOL" nebo jen "SYMBOL" = zdroj grafu).
         default: výchozí hodnota.
         label: popisek v dialogu.
         group: skupina (sekce dialogu); prázdná = bez nadpisu.
@@ -62,6 +63,7 @@ class Param:
         min, max, step: rozsah a krok číselných polí.
         exclusive_min: dolní mez desetinného čísla je vyloučená (násobky musí být kladné).
         options: volby výběru [(hodnota, popisek)] u typu "select".
+        scanner: vstup scanneru (scanner_params) – výpočet indikátoru neovlivňuje.
     """
 
     name: str
@@ -75,6 +77,7 @@ class Param:
     step: Optional[float] = None
     exclusive_min: bool = False
     options: tuple = ()
+    scanner: bool = False
 
     # Továrny jednotlivých typů – kratší deklarace v indikátorech
 
@@ -114,6 +117,11 @@ class Param:
     def timeframe(name: str, default: str, label: str = "", **extra) -> "Param":
         """Timeframe aplikace (1m … 1W)."""
         return Param(name, "timeframe", default, label, options=tuple((tf, tf) for tf in TIMEFRAMES), **extra)
+
+    @staticmethod
+    def symbol(name: str, default: str, label: str = "", **extra) -> "Param":
+        """Symbol jako input.symbol v Pine: "zdroj:SYMBOL", jen "SYMBOL" (zdroj grafu) nebo prázdné."""
+        return Param(name, "symbol", default, label, **extra)
 
     def normalize(self, value: Any) -> Any:
         """Ověří a převede hodnotu z dialogu nebo z uloženého nastavení.
@@ -155,13 +163,79 @@ class Param:
             if value not in allowed:
                 raise ValueError(f"{label}: neplatná volba.")
             return value
+        if self.kind == "symbol":
+            # Symbol: bez mezer, zdroj (před dvojtečkou) malými písmeny
+            text = str(value).strip()
+            if any(char.isspace() for char in text) or len(text) > 60 or text.endswith(":"):
+                raise ValueError(f"{label}: zadejte symbol ve tvaru zdroj:SYMBOL.")
+            source, symbol = split_symbol(text)
+            return f"{source.lower()}:{symbol}" if source else text
         # Text: oříznutý a omezený na rozumnou délku
         return str(value).strip()[:200]
+
+
+def split_symbol(text: str) -> tuple[str, str]:
+    """Rozloží "zdroj:SYMBOL" na (zdroj, symbol); bez prefixu je zdroj prázdný."""
+    source, colon, symbol = text.partition(":")
+    return (source, symbol) if colon else ("", text)
 
 
 def _fmt(number: float) -> str:
     """Číslo do chybové zprávy bez zbytečné desetinné části."""
     return f"{number:g}"
+
+
+# ---------- vstupy scanneru (jako skupina Scanner v Pine skriptu Svopex TTW) ----------
+
+# Skupiny vstupů scanneru v dialogu nastavení
+G_SCANNER = "Scanner"
+G_SCANNER_ALERT = "Scanner – alert před zavřením svíčky"
+G_SCANNER_SYMBOLS = "Scanner – symboly"
+# Počet polí symbolů scanneru (jako v Pine) a nejvyšší sledovaný počet posledních svíček
+SCANNER_SYMBOLS = 40
+MAX_SCAN_BARS = 20
+# Pozice tabulky scanneru v grafu a velikost písma (hodnoty jako v Pine)
+TABLE_POSITIONS = ("top_right", "top_left", "middle_right", "bottom_right", "bottom_left", ("off", "nezobrazovat"))
+TABLE_SIZES = ("tiny", "small", "normal", "large")
+
+
+def scanner_params(default_symbols: Sequence[str] = (), timeframe: str = "1h") -> list["Param"]:
+    """Vstupy scanneru, které indikátor se signály připojí ke svým parametrům.
+
+    Scanner (TickView, tickview/services/scanner.py) spočítá indikátor se
+    stejnými parametry pro každý vyplněný symbol na timeframu scanu, ukáže
+    tabulku v grafu s indikátorem a volitelně pošle alert před zavřením
+    svíčky – stejně jako request.security a table v Pine skriptu.
+
+    Parametry:
+        default_symbols: výchozí symboly ("zdroj:SYMBOL"), zbylá pole jsou prázdná.
+        timeframe: výchozí timeframe scanu.
+    """
+    params = [
+        Param.timeframe("scan_timeframe", timeframe, "Timeframe scanu", group=G_SCANNER),
+        Param.int("scan_bars", 2, "Počet posledních svíček pro signál", min=1, max=MAX_SCAN_BARS, group=G_SCANNER,
+                  tooltip="0 = běžící svíčka; signál starší než zadaný počet svíček se v tabulce neukáže."),
+        Param.select("scan_table_position", "top_right", "Pozice tabulky", options=TABLE_POSITIONS,
+                     group=G_SCANNER, tooltip="Při „nezobrazovat“ se symboly počítají jen kvůli alertu."),
+        Param.bool("scan_only_hits", True, "Zobrazit pouze trhy se signálem", group=G_SCANNER),
+        Param.select("scan_text_size", "normal", "Velikost textu", options=TABLE_SIZES, group=G_SCANNER),
+        Param.bool("scan_strip_prefix", True, "Skrýt prefix zdroje", group=G_SCANNER),
+        Param.bool("scan_alert", False, "Posílat alert před zavřením svíčky", group=G_SCANNER_ALERT,
+                   tooltip="Jedna souhrnná zpráva se seznamem trhů se signálem na běžící svíčce timeframu scanu."),
+        Param.int("scan_alert_minutes1", 10, "1. upozornění (min před zavřením)", min=0, max=1440,
+                  group=G_SCANNER_ALERT, tooltip="0 = vypnuto; každý práh nejvýš jednou za svíčku."),
+        Param.int("scan_alert_minutes2", 5, "2. upozornění (min před zavřením)", min=0, max=1440,
+                  group=G_SCANNER_ALERT, tooltip="0 = vypnuto; každý práh nejvýš jednou za svíčku."),
+        Param.bool("scan_alert_telegram", True, "Telegram", group=G_SCANNER_ALERT),
+        Param.bool("scan_alert_toast", True, "Oznámení v aplikaci", group=G_SCANNER_ALERT),
+        Param.bool("scan_alert_sound", False, "Zvuk", group=G_SCANNER_ALERT),
+    ]
+    symbols = list(default_symbols)[:SCANNER_SYMBOLS]
+    symbols += [""] * (SCANNER_SYMBOLS - len(symbols))
+    params += [Param.symbol(f"scan_symbol_{index}", symbol, f"Symbol {index}", group=G_SCANNER_SYMBOLS)
+               for index, symbol in enumerate(symbols, start=1)]
+    # Příznak vstupu scanneru: has_scanner a klíč úlohy scanneru (parametry výpočtu bez nich)
+    return [replace(param, scanner=True) for param in params]
 
 
 @dataclass(frozen=True)
@@ -293,7 +367,7 @@ class Indicator:
         title_params: parametry, jejichž hodnoty se připojí k názvu v legendě
             (None = všechny číselné).
         uses_color: instance má hlavní barvu (pole Barva v dialogu).
-        has_signals: indikátor vrací signály (lze ho použít ve scanneru).
+        has_signals: indikátor vrací signály (alert na signál, scanner).
         api_version: verze rozhraní, pro kterou je indikátor napsaný.
     """
 
@@ -330,6 +404,11 @@ class Indicator:
         raise NotImplementedError
 
     # ---------- pomocné metody (TickView je volá, indikátor je nepřepisuje) ----------
+
+    @property
+    def has_scanner(self) -> bool:
+        """Indikátor má vstupy scanneru (připojil scanner_params)."""
+        return any(param.scanner for param in self.params)
 
     def defaults(self) -> dict:
         """Výchozí hodnoty všech parametrů."""

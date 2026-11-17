@@ -1,4 +1,4 @@
-"""Pole notifikací (Telegram, toast, zvuk, webhook) pro scanner a časové připomínky."""
+"""Pole notifikací (Telegram, toast, zvuk, webhook) pro časové připomínky."""
 
 from nicegui import ui
 

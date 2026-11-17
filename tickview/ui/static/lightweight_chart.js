@@ -29,6 +29,8 @@ window.TickViewChart = (function () {
   const OLDER_THRESHOLD_BARS = 30;
   // Pauza před dalším pokusem, když donačtení starších dat selhalo (ms)
   const OLDER_RETRY_MS = 10000;
+  // Jak blízko (px) musí být kurzor u kresby, čáry alertu nebo indikátoru, aby ji zasáhl
+  const HIT_TOLERANCE_PX = 6;
 
   // Stav jednotlivých instancí grafu (id kontejneru -> stav)
   const state = new Map();
@@ -948,8 +950,9 @@ window.TickViewChart = (function () {
     });
 
     // Pravý klik v režimu kurzoru (jako v TradingView): nad kresbou ji vybere
-    // a nabídne Settings / smazání, nad čárou indikátoru jeho Settings,
-    // skrytí a odebrání, jinde Settings grafu (např. zobrazení objemu)
+    // a nabídne Settings / smazání, nad čárou alertu jeho úpravu a smazání,
+    // nad čárou indikátoru jeho Settings, skrytí a odebrání, jinde Settings
+    // grafu (např. zobrazení objemu)
     mainHost.addEventListener(
       'contextmenu',
       (event) => {
@@ -961,6 +964,11 @@ window.TickViewChart = (function () {
         redrawOverlay(s);
         if (index >= 0) {
           showContextMenu(event.clientX, event.clientY, drawingMenuItems(s, s.overlay.drawings[index]));
+          return;
+        }
+        const alertLine = hitAlertLine(s, y);
+        if (alertLine) {
+          showContextMenu(event.clientX, event.clientY, alertMenuItems(s, alertLine));
           return;
         }
         const group = hitIndicator(s, x, y);
@@ -1279,6 +1287,26 @@ window.TickViewChart = (function () {
     return items;
   }
 
+  // Cena leží svisle do HIT_TOLERANCE_PX od kurzoru (zásah čáry alertu / indikátoru)
+  function nearPrice(s, price, y) {
+    const py = s.candleSeries.priceToCoordinate(price);
+    return py !== null && Math.abs(py - y) <= HIT_TOLERANCE_PX;
+  }
+
+  // Čára cenového alertu blízko kurzoru, nebo null
+  function hitAlertLine(s, y) {
+    return (s.alertLines || []).find((line) => line.id && nearPrice(s, line.price, y)) || null;
+  }
+
+  // Položky menu čáry alertu: úprava a smazání (vyřídí Python podle id alertu)
+  function alertMenuItems(s, line) {
+    const push = (action) => () => s.finishedQueue.push({ type: 'alert_action', action: action, id: line.id });
+    return [
+      ['Upravit alert…', push('edit'), 'edit'],
+      ['Smazat alert', push('delete'), 'delete', 'danger'],
+    ];
+  }
+
   // Položky menu indikátoru: Settings, skrytí/zobrazení a odebrání
   function indicatorMenuItems(s, groupId) {
     const payload = s.lastIndicatorPayload || {};
@@ -1314,9 +1342,7 @@ window.TickViewChart = (function () {
       if (!groupVisible(s.lastIndicatorPayload || {}, meta.group)) continue;
       const maps = s.indicatorValues.get(meta.group) || [];
       const value = maps[meta.index] ? maps[meta.index].get(candle.time) : undefined;
-      if (value === undefined) continue;
-      const py = s.candleSeries.priceToCoordinate(value);
-      if (py !== null && Math.abs(py - y) <= 6) return meta.group;
+      if (value !== undefined && nearPrice(s, value, y)) return meta.group;
     }
     return null;
   }
@@ -2585,7 +2611,7 @@ window.TickViewChart = (function () {
 
   // Překrytí: najde kresbu pod kurzorem (index v s.overlay.drawings) nebo -1
   function hitTest(s, x, y) {
-    const threshold = 6;
+    const threshold = HIT_TOLERANCE_PX;
     for (let i = s.overlay.drawings.length - 1; i >= 0; i--) {
       const drawing = s.overlay.drawings[i];
       const points = drawing.points.map((point) => pointToPixel(s, point));

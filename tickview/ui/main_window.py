@@ -43,7 +43,7 @@ from tickview.logic.indicator_templates import (
     template_indicators,
     update_indicator_template,
 )
-from tickview.indicators.api import CATEGORIES, Param
+from tickview.indicators.api import CATEGORIES, Param, split_symbol
 from tickview.indicators.compute import (
     indicator_color,
     indicator_title,
@@ -52,7 +52,14 @@ from tickview.indicators.compute import (
     normalize_params,
 )
 from tickview.indicators.registry import all_indicators, get_indicator, load_errors
-from tickview.logic.layouts import LAYOUT_SECTIONS, LAYOUTS, SYNC_OPTIONS, load_layout, resize_panes
+from tickview.logic.layouts import (
+    LAYOUT_SECTIONS,
+    LAYOUT_SETTINGS_KEY,
+    LAYOUTS,
+    SYNC_OPTIONS,
+    load_layout,
+    resize_panes,
+)
 from tickview.logic.styles import (
     CHART_DEFAULTS,
     CHART_TYPE_SECTIONS,
@@ -89,7 +96,6 @@ from tickview.logic.styles import (
     normalize_visibility,
     plural,
 )
-from tickview.logic.scanner import overview_payload
 from tickview.logic.sessions import (
     SESSION_ETH,
     SESSION_RTH,
@@ -109,7 +115,6 @@ from tickview.ui.color_button import ColorButton
 from tickview.ui.icons import ICONS, svg
 from tickview.ui.param_form import ParamForm
 from tickview.ui.reminders_dialog import RemindersDialog
-from tickview.ui.scanner_panel import ScannerPanel
 from tickview.ui.templates import TemplateMenu, load_default_template, settings_buttons, settings_header
 
 # Hledání symbolu: kolik výsledků jednoho zdroje a kolik celkem se zobrazí
@@ -160,7 +165,7 @@ def provider_code(source: str) -> str:
 
 
 # Obsahy pravého panelu ("" = panel skrytý, zůstane jen pravá lišta)
-RIGHT_PANELS = ("watchlist", "alerts", "scanner", "")
+RIGHT_PANELS = ("watchlist", "alerts", "")
 
 
 def register(cache: KlineCache, alert_engine: AlertEngine, scanner: ScannerService, reminders: ReminderService) -> None:
@@ -169,7 +174,7 @@ def register(cache: KlineCache, alert_engine: AlertEngine, scanner: ScannerServi
     Parametry:
         cache: úložiště svíček, nastavení, kreseb a alertů.
         alert_engine: vyhodnocování alertů na pozadí (stránka se k němu přihlásí).
-        scanner: scanner signálů na pozadí (záložka Scanner).
+        scanner: scanner signálů na pozadí (tabulka v grafu s indikátorem se vstupy scanneru).
         reminders: časové připomínky na pozadí (dialog v panelu Alerty).
     """
 
@@ -212,7 +217,7 @@ async def _build_index(
     # graf a stav každého grafu; bez uložené konfigurace jeden graf ze
     # starších nastavení
     layout_config = load_layout(
-        await cache.get_setting("layout"),
+        await cache.get_setting(LAYOUT_SETTINGS_KEY),
         legacy={
             "symbol": last_symbol,
             "timeframe": last_timeframe,
@@ -313,7 +318,9 @@ async def _build_index(
         "index": "Indexy",
     }
     # Stav dialogu: kategorie, zdroj, výsledky, zvýrazněný řádek, pořadí hledání
+    # a režim výběru (funkce, která zvolený symbol zapíše do pole indikátoru)
     search_state: dict = {
+        "pick": None,
         "category": "all",
         "source": "all",
         "results": [],
@@ -428,9 +435,14 @@ async def _build_index(
                 search_state["rows"].append(row)
 
     def make_pick_symbol(key: str):
-        # Klik na výsledek: zavře hledání a načte graf symbolu (jako v TradingView)
+        # Klik na výsledek: zavře hledání a načte graf symbolu (jako v TradingView);
+        # v režimu výběru (pole symbolu ve vstupech indikátoru) symbol jen předá
         async def _handler(_event=None):
             symbol_search_dialog.close()
+            pick = search_state["pick"]
+            if pick:
+                pick(key)
+                return
             await load_symbol(key)
 
         return _handler
@@ -481,6 +493,22 @@ async def _build_index(
             # Dialog už je otevřený (rychlé psaní nad grafem) – znaky připojíme
             symbol_search_input.value = (symbol_search_input.value or "") + text
             return
+        await show_symbol_search(text)
+
+    async def pick_symbol(current: str, on_pick) -> None:
+        """Hledání symbolu pro pole symbolu ve vstupech indikátoru: zvolený
+        "zdroj:SYMBOL" dostane on_pick, graf se nemění.
+
+        Parametry:
+            current: text pole (hledá se symbol bez prefixu zdroje).
+            on_pick: funkce, která zvolený symbol zapíše do pole.
+        """
+        await show_symbol_search(split_symbol(current)[1] or None, on_pick)
+
+    async def show_symbol_search(text: str | None, on_pick=None) -> None:
+        # Společné otevření dialogu hledání (text None = aktuální symbol označený
+        # k přepsání); on_pick = režim výběru pro pole symbolu, None = načtení do grafu
+        search_state["pick"] = on_pick
         symbol_search_input.value = (active().symbol or "") if text is None else text
         search_state["category"] = "all"
         symbol_search_dialog.open()
@@ -500,18 +528,18 @@ async def _build_index(
         show_status(f"{symbol} přidán do seznamu {list_name} ({provider_id}).")
 
     async def save_layout() -> None:
-        """Uloží rozložení, synchronizaci, aktivní graf a stav všech grafů (přetrvá restart)."""
-        await cache.set_setting(
-            "layout",
-            json.dumps(
-                {
-                    "layout": state["layout"],
-                    "sync": state["sync"],
-                    "active": state["active"],
-                    "panes": [pane.config() for pane in panes],
-                }
-            ),
-        )
+        """Uloží rozložení, synchronizaci, aktivní graf a stav všech grafů (přetrvá restart).
+
+        Scanner si z rozložení vezme úlohy (instance indikátorů se vstupy scanneru).
+        """
+        layout = {
+            "layout": state["layout"],
+            "sync": state["sync"],
+            "active": state["active"],
+            "panes": [pane.config() for pane in panes],
+        }
+        await cache.set_setting(LAYOUT_SETTINGS_KEY, json.dumps(layout))
+        scanner.set_layout(layout)
 
     def refresh_active_ui() -> None:
         """Horní lišta, watchlist a stavová lišta podle aktivního grafu."""
@@ -1288,7 +1316,7 @@ async def _build_index(
     # ten se před zpracováním stane aktivním (dialogy pak míří na něj)
     USER_EVENTS = {
         "indicator", "text_request", "sticker_request", "drawing_settings", "chart_settings",
-        "volume", "symbol_search", "alert_request",
+        "volume", "symbol_search", "alert_request", "alert_action",
     }
 
     async def process_chart_events() -> None:
@@ -1383,6 +1411,11 @@ async def _build_index(
             # Pravý klik: alert na ceně pod kurzorem, nebo na čáře kresby
             drawing_id = payload.get("drawingId")
             await open_alert_dialog(price=payload.get("price"), drawing_id=int(drawing_id) if drawing_id else None)
+        elif event_type == "alert_action" and payload.get("action") in ("edit", "delete"):
+            # Pravý klik na čáru alertu: úprava nebo smazání (alert mohl mezitím zmizet)
+            alert = await cache.get_alert(int(payload.get("id") or 0))
+            if alert:
+                await make_alert_action(payload["action"], alert)()
         elif event_type == "add" and payload.get("kind") in DRAWING_KINDS:
             # Styl nové kresby (výchozí šablona typu nebo dialog Text) zkontrolujeme
             style = normalize_drawing_style(payload, payload["kind"])
@@ -1729,13 +1762,12 @@ async def _build_index(
     # ---------- indikátory ----------
 
     def push_overview(targets: list[ChartPane] | None = None) -> None:
-        """Přehled scanneru (tabulka) do grafů s viditelným indikátorem scanneru (např. Svopex TTW)."""
-        data = overview_payload(scanner.config, scanner.results)
+        """Tabulka scanneru do grafů s viditelným indikátorem se vstupy scanneru (např. Svopex TTW).
+
+        Tabulku grafu určuje scanner podle uloženého rozložení (pořadí grafů).
+        """
         for pane in targets if targets is not None else panes:
-            shown = any(
-                spec["kind"] == scanner.config["indicator"] and spec.get("visible", True) for spec in pane.indicators
-            )
-            pane.chart.set_overview(data if shown else None)
+            pane.chart.set_overview(scanner.table(panes.index(pane)))
 
     async def indicators_changed() -> None:
         # Po každé změně sady indikátorů aktivního grafu: uložit (konfigurace
@@ -1929,7 +1961,9 @@ async def _build_index(
             show_status(f"Indikátor {spec['kind']} se nenačetl – zkontrolujte jeho soubor.", error=True)
             return
         settings_state["id"] = indicator_id
-        settings_title.text = f"{indicator.name} ({indicator.title})"
+        # Titulek jako v TradingView: název, zkratka jen když se liší
+        settings_title.text = indicator.name if indicator.title == indicator.name else f"{indicator.name} ({indicator.title})"
+        settings_ind_tabs.value = inputs_tab
         fill_indicator_settings(spec["kind"], spec["params"])
         index = active().indicators.index(spec)
         settings_color.value = indicator_color(spec, index)
@@ -2456,8 +2490,6 @@ async def _build_index(
         await cache.set_setting("right_panel", state["right_panel"])
         paint_right_panel()
         await render_alerts_panel()
-        if state["right_panel"] == "scanner":
-            await scanner_panel.render()
 
     def paint_right_panel() -> None:
         # Viditelnost panelu a jeho sekcí, zvýraznění tlačítek pravé lišty
@@ -2465,7 +2497,6 @@ async def _build_index(
         right_panel.set_visibility(bool(current))
         watchlist_section.set_visibility(current == "watchlist")
         alerts_section.set_visibility(current == "alerts")
-        scanner_section.set_visibility(current == "scanner")
         mark_active(right_buttons, current, "active")
         paint_alerts_tab()
 
@@ -2754,9 +2785,7 @@ async def _build_index(
 
     # ---------- UI ----------
 
-    # Záložka Scanner (klik na řádek načte symbol do aktivního grafu) a dialog
-    # časových připomínek (nabídka ⋯ v panelu Alerty)
-    scanner_panel = ScannerPanel(cache, scanner, load_symbol)
+    # Dialog časových připomínek (nabídka ⋯ v panelu Alerty)
     reminders_dialog = RemindersDialog(reminders)
 
     with ui.column().classes("page-root w-full") as page_root:
@@ -2977,15 +3006,12 @@ async def _build_index(
                     alert_search.set_visibility(False)
                     alerts_list = ui.column().classes("alerts-list w-full")
                     alert_log_list = ui.column().classes("alerts-list w-full")
-                # Scanner signálů indikátoru přes seznam symbolů (klik na řádek načte symbol)
-                scanner_section = scanner_panel.build()
             # Svislá lišta úplně vpravo: přepínání obsahu pravého panelu
             with ui.column().classes("right-bar"):
                 right_buttons = {}
                 for panel, icon, tooltip in (
                     ("watchlist", "format_list_bulleted", "Watchlist"),
                     ("alerts", "alarm", "Alerty"),
-                    ("scanner", "radar", "Scanner"),
                 ):
                     with ui.button(color=None, on_click=lambda panel=panel: toggle_right_panel(panel)).props(
                         "flat dense"
@@ -3055,15 +3081,19 @@ async def _build_index(
             indicator_list = ui.column().classes("ind-list")
 
     # Dialog nastavení jedné instance indikátoru (ozubené kolečko v legendě)
-    with ui.dialog() as indicator_settings_dialog, ui.card().classes("tv-settings"):
+    # se záložkami Inputs / Style jako v TradingView
+    with ui.dialog() as indicator_settings_dialog, ui.card().classes("tv-settings indicator-settings"):
         settings_title = settings_header(indicator_settings_dialog)
-        ui.label("Inputs").classes("tv-settings-section")
-        settings_form = ParamForm(ui.column().classes("indicator-dialog-params w-full"))
-        with ui.column().classes("w-full") as settings_style:
-            ui.label("Style").classes("tv-settings-section")
-            with ui.row().classes("tv-settings-row"):
-                ui.label("Barva").classes("tv-settings-label")
-                settings_color = ColorButton(indicator_color({}, 0), title="Barva indikátoru")
+        with ui.tabs().props("dense no-caps align=left indicator-color=primary").classes("tv-tabs w-full") as settings_ind_tabs:
+            inputs_tab = ui.tab("inputs", label="Inputs")
+            settings_style = ui.tab("style", label="Style")
+        with ui.tab_panels(settings_ind_tabs, value=inputs_tab).props("animated=false").classes("tv-tab-panels w-full"):
+            with ui.tab_panel(inputs_tab).classes("tv-tab-panel"):
+                settings_form = ParamForm(ui.column().classes("indicator-dialog-params w-full"), pick_symbol)
+            with ui.tab_panel(settings_style).classes("tv-tab-panel"):
+                with ui.row().classes("param-row w-full"):
+                    ui.label("Barva").classes("param-label")
+                    settings_color = ColorButton(indicator_color({}, 0), title="Barva indikátoru")
         with ui.row().classes("tv-settings-actions w-full"):
             indicator_templates = TemplateMenu(
                 cache,
@@ -3370,22 +3400,12 @@ async def _build_index(
     alert_engine.add_listener(on_alert_event)
     ui.timer(0.3, refresh_alerts_ui, once=True)
 
-    def on_scanner_event(event: dict) -> None:
-        # Nový výsledek scanneru obnoví přehled v grafech a tabulku v zobrazené
-        # záložce Scanner; začátek průchodu mění jen informační řádek záložky
-        if event.get("running"):
-            if state["right_panel"] == "scanner":
-                with page_root:
-                    scanner_panel.update_info()
-            return
+    def on_scanner_event(_event: dict) -> None:
+        # Nový výsledek scanneru obnoví tabulky v grafech
         with page_root:
             push_overview()
-        if state["right_panel"] == "scanner":
-            background_tasks.create(scanner_panel.render())
 
     scanner.add_listener(on_scanner_event)
-    if state["right_panel"] == "scanner":
-        ui.timer(0.3, scanner_panel.render, once=True)
 
     def on_disconnect() -> None:
         # Při odpojení klienta ukončíme živé streamy jeho grafů a odhlásíme ho od alertů a scanneru

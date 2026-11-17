@@ -494,7 +494,7 @@ class ChartPane:
     def push_alert_lines(self, alerts: list[dict]) -> None:
         """Čárkované čáry aktivních cenových alertů symbolu grafu (všechny timeframy)."""
         lines = [
-            {"price": alert["target"]["price"], "title": "Alert"}
+            {"id": alert["id"], "price": alert["target"]["price"], "title": "Alert"}
             for alert in alerts
             if alert["active"]
             and alert["source"] == self.provider_id

@@ -42,6 +42,8 @@ class LightweightChart(ui.element):
         self._chart_style = chart_style or dict(CHART_DEFAULTS)
         self._chart_type = chart_type
         self._on_ready = on_ready
+        # Naposledy poslaná data tabulky scanneru (stejná se neposílají znovu)
+        self._overview: dict | None = None
         # Graf inicializujeme až po prvním vykreslení stránky v prohlížeči
         ui.timer(0.1, self._init_in_browser, once=True)
 
@@ -211,7 +213,13 @@ class LightweightChart(ui.element):
         self._call("setFavoritesVisible", visible)
 
     def set_overview(self, data: dict | None) -> None:
-        """Přehled scanneru v grafu (logic.scanner.overview_payload); None = skrýt."""
+        """Tabulka scanneru v grafu (logic.scanner.overview_payload); None = skrýt.
+
+        Stejná data se znovu neposílají (scanner hlásí výsledky všem grafům).
+        """
+        if data == self._overview:
+            return
+        self._overview = data
         self._call("setOverview", data)
 
     def set_volume_visible(self, visible: bool) -> None:

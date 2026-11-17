@@ -63,6 +63,9 @@ SYNC_OPTIONS: dict[str, tuple[str, str]] = {
 }
 DEFAULT_SYNC: dict[str, bool] = {key: False for key in SYNC_OPTIONS}
 
+# Klíč nastavení s konfigurací rozložení (JSON)
+LAYOUT_SETTINGS_KEY = "layout"
+
 # Výchozí symbol a timeframe grafu bez uložené konfigurace
 DEFAULT_SYMBOL = "binance:BTCUSDT"
 DEFAULT_TIMEFRAME = "1h"

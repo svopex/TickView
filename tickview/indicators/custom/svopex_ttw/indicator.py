@@ -9,16 +9,17 @@ Indexy svíček jsou jako v Pine: 0 = poslední (rozpracovaná) svíčka, 1 =
 předchozí atd. Svíčky mimo dostupnou historii mají hodnotu NaN – porovnání
 s NaN je nepravdivé stejně jako porovnání s na v Pine.
 
-Scanner, tabulka, alerty před zavřením svíčky a noční upozornění z Pine
-skriptu sem nepatří – v TickView jsou to obecné funkce (záložka Scanner,
-Časové připomínky), které používají signály tohoto indikátoru.
+Scanner (tabulka v grafu a alert před zavřením svíčky) má indikátor jako
+v Pine ve vstupech (skupiny Scanner – scanner_params z API); počítá ho
+TickView nad symboly z těchto vstupů. Noční upozornění z Pine jsou obecné
+Časové připomínky.
 """
 
 import math
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-from tickview.indicators.api import Context, Indicator, Param, Result, Segment, Signal
+from tickview.indicators.api import Context, Indicator, Param, Result, Segment, Signal, scanner_params
 
 NAN = math.nan
 
@@ -40,6 +41,50 @@ TIMEZONE_OPTIONS = [
     ("Europe/London", "Londýn (Europe/London)"),
     ("America/New_York", "New York (America/New_York)"),
 ]
+
+# Výchozí symboly scanneru – symboly 1–37 z Pine skriptu (OANDA) ve zdrojích
+# TickView: forex z Interactive Brokers (páry ve tvaru IB, základní měna podle
+# konvence IB), indexy, kovy a ropa z Yahoo (IB provider umí jen forex
+# a americké akcie), bitcoin z Binance; pole 38–40 jsou prázdná jako v Pine
+DEFAULT_SCAN_SYMBOLS = (
+    "yahoo:^NDX",        # NAS100USD
+    "yahoo:GC=F",        # XAUUSD
+    "ibkr:EUR.USD",
+    "yahoo:^DJI",        # US30USD
+    "yahoo:^GSPC",       # SPX500USD
+    "yahoo:^RUT",        # US2000USD
+    "yahoo:^GDAXI",      # DE30EUR
+    "yahoo:CL=F",        # WTICOUSD
+    "yahoo:SI=F",        # XAGUSD
+    "binance:BTCUSDT",   # BTCUSD
+    "ibkr:GBP.USD",
+    "ibkr:USD.JPY",
+    "ibkr:USD.CHF",
+    "ibkr:AUD.USD",
+    "ibkr:USD.CAD",
+    "ibkr:NZD.USD",
+    "ibkr:EUR.GBP",
+    "ibkr:EUR.JPY",
+    "ibkr:EUR.CHF",
+    "ibkr:EUR.AUD",
+    "ibkr:EUR.CAD",
+    "ibkr:EUR.NZD",
+    "ibkr:GBP.JPY",
+    "ibkr:GBP.CHF",
+    "ibkr:GBP.AUD",
+    "ibkr:GBP.CAD",
+    "ibkr:GBP.NZD",
+    "ibkr:AUD.JPY",
+    "ibkr:AUD.CHF",
+    "ibkr:AUD.CAD",
+    "ibkr:AUD.NZD",
+    "ibkr:CAD.JPY",
+    "ibkr:CAD.CHF",
+    "ibkr:NZD.JPY",
+    "ibkr:NZD.CHF",
+    "ibkr:NZD.CAD",
+    "ibkr:CHF.JPY",
+)
 
 # Skupiny parametrů (sekce dialogu) – pořadí jako v Pine
 G_SIGNAL = "Detekce signálu"
@@ -145,6 +190,8 @@ class SvopexTTW(Indicator):
         Param.color("double_top_color", "#00ced1", "Barva double top", group=G_DISPLAY),
         Param.color("two_color_middle_color", "#b8860b", "Barva prostřední části dvoubarevné linky",
                     group=G_DISPLAY),
+        # Scanner přes symboly (tabulka v grafu, alert před zavřením svíčky)
+        *scanner_params(DEFAULT_SCAN_SYMBOLS),
     ]
 
     def required_bars(self, params: dict) -> int:
