@@ -92,6 +92,14 @@ class FreshCandles:
         return fresh
 
 
+def merge_candle(candles: list["Candle"], candle: "Candle") -> None:
+    """Promítne živou svíčku do seznamu (vzestupně): stejná se nahradí, novější připojí, starší ignoruje."""
+    if candles and candle.open_time == candles[-1].open_time:
+        candles[-1] = candle
+    elif not candles or candle.open_time > candles[-1].open_time:
+        candles.append(candle)
+
+
 def aggregate_candles(candles: list["Candle"], step_ms: int) -> list["Candle"]:
     """Sloučí kratší svíčky do delšího timeframu (např. 1m → 2m, 5m → 10m).
 
@@ -363,6 +371,9 @@ class DataProvider(ABC):
     def exchange_timezone(self, symbol: str) -> str:
         """IANA časové pásmo burzy instrumentu (volba „Exchange“ u času grafu)."""
         return "UTC"
+
+    def reload_config(self) -> None:
+        """Znovu načte svou sekci config.yaml po uložení Settings (výchozí: změna až po restartu)."""
 
     def symbol_kind(self, symbol: str) -> str:
         """Druh instrumentu (viz SYMBOL_KINDS) pro indikátory; prázdný = neznámý."""

@@ -215,6 +215,11 @@ window.TickViewChart = (function () {
     const kind = CHART_TYPE_SERIES[s.chartType] || 'Candlestick';
     s.candleSeries = s.chart['add' + kind + 'Series'](mainSeriesOptions(s));
     s.candleSeries.setData(mainData(s));
+    // Změnu měřítka cenové osy (tažení osy, autoscale při nových datech) graf
+    // žádnou událostí neohlásí; prázdné primitivum série ale dostane
+    // updateAllViews při každém překreslení grafu – overlay (úsečky indikátorů,
+    // kresby) se tak pohybuje společně s grafem
+    s.candleSeries.attachPrimitive({ updateAllViews: () => scheduleOverlayRedraw(s) });
     // Čáry alertů i značky indikátorů patřily odstraněné sérii – na nové je vytvoříme znovu
     s.alertPriceLines = [];
     applyAlertLines(s);
@@ -1195,6 +1200,7 @@ window.TickViewChart = (function () {
   function destroy(id) {
     const s = state.get(id);
     if (!s) return;
+    cancelAnimationFrame(s.overlayFrame);
     clearIndicators(id);
     s.observers.forEach((observer) => observer.disconnect());
     try {
@@ -1275,13 +1281,16 @@ window.TickViewChart = (function () {
 
   // Položky menu indikátoru: Settings, skrytí/zobrazení a odebrání
   function indicatorMenuItems(s, groupId) {
-    const visible = groupVisible(s.lastIndicatorPayload || {}, groupId);
+    const payload = s.lastIndicatorPayload || {};
+    const visible = groupVisible(payload, groupId);
+    const group = (payload.groups || []).find((item) => item.id === groupId);
     const push = (action) => () => s.finishedQueue.push({ type: 'indicator', action: action, id: groupId });
-    return [
-      ['Settings…', push('settings'), 'settings'],
-      [visible ? 'Skrýt' : 'Zobrazit', push('toggle'), visible ? 'visibility_off' : 'visibility'],
-      ['Odebrat indikátor', push('remove'), 'delete', 'danger'],
-    ];
+    const items = [['Settings…', push('settings'), 'settings']];
+    // Indikátor se signály (Svopex TTW) nabízí alert na signál
+    if (group && group.signals) items.push(['Přidat alert…', push('alert'), 'alarm_add']);
+    items.push([visible ? 'Skrýt' : 'Zobrazit', push('toggle'), visible ? 'visibility_off' : 'visibility']);
+    items.push(['Odebrat indikátor', push('remove'), 'delete', 'danger']);
+    return items;
   }
 
   // Položky menu grafu: alert na ceně pod kurzorem (když je známá) a Settings grafu
@@ -1919,6 +1928,39 @@ window.TickViewChart = (function () {
       ctx.stroke();
     }
     ctx.restore();
+  }
+
+  // Přehled scanneru v grafu (tabulka jako v Pine skriptu Svopex TTW): hlavička,
+  // řádky symbol + stav obarvené podle směru, nebo poznámka; null = skrýt
+  function setOverview(id, data) {
+    const s = state.get(id);
+    if (!s) return;
+    if (!data) {
+      if (s.overviewEl) s.overviewEl.remove();
+      s.overviewEl = null;
+      return;
+    }
+    if (!s.overviewEl) {
+      s.overviewEl = el('div');
+      s.mainHost.appendChild(s.overviewEl);
+    }
+    const box = s.overviewEl;
+    box.className = 'lwchart-overview overview-' + data.position + ' overview-' + data.size;
+    box.innerHTML = '';
+    const table = el('table');
+    const head = el('tr', 'overview-head');
+    head.appendChild(el('th', '', data.title));
+    head.appendChild(el('th', '', data.header));
+    table.appendChild(head);
+    // Bez řádků jeden řádek s poznámkou (scanner vypnutý, žádný signál…)
+    const rows = data.rows.length ? data.rows : [{ symbol: data.note, text: '-', kind: 'none' }];
+    for (const row of rows) {
+      const tr = el('tr');
+      tr.appendChild(el('td', 'overview-symbol', row.symbol));
+      tr.appendChild(el('td', 'overview-status overview-' + row.kind, row.text));
+      table.appendChild(tr);
+    }
+    box.appendChild(table);
   }
 
   // Nahradí všechny indikátory: overlay čáry + panely pod hlavním grafem
@@ -3530,6 +3572,15 @@ window.TickViewChart = (function () {
     }
   }
 
+  // Překreslení overlaye v příštím snímku (více požadavků v jednom snímku = jedno překreslení)
+  function scheduleOverlayRedraw(s) {
+    if (s.overlayFrame) return;
+    s.overlayFrame = requestAnimationFrame(() => {
+      s.overlayFrame = 0;
+      if (state.get(s.elementId) === s) redrawOverlay(s);
+    });
+  }
+
   // Překreslí všechny kresby na překryvném canvasu
   function redrawOverlay(s) {
     const canvas = s.overlay.canvas;
@@ -3596,6 +3647,7 @@ window.TickViewChart = (function () {
     assignDrawingId: assignDrawingId,
     setTheme: setTheme,
     setIndicators: setIndicators,
+    setOverview: setOverview,
     setVolumeVisible: setVolumeVisible,
     setTimezone: setTimezone,
     setSymbolInfo: setSymbolInfo,

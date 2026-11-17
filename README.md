@@ -249,10 +249,14 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   Smazat). Log spuštění ukazuje výsledek odeslání (✓ / ✗ Telegram, webhook;
   chyba v tooltipu). Aktivní cenové alerty
   zobrazeného symbolu jsou v grafu oranžové čárkované čáry s popiskem na ose.
-- Telegram pro alerty: ozubené kolečko v horní liště → bot token (od
-  @BotFather, příkaz /newbot), po zprávě botovi tlačítko „Zjistit chat ID“
-  doplní chat, „Odeslat test“ pošle zkušební zprávu; ukládá se do
-  `config.yaml` (sekce `telegram`) a platí hned bez restartu.
+- Settings aplikace (ozubené kolečko v horní liště): všechny sekce
+  `config.yaml` v záložkách. Telegram – bot token (od @BotFather, příkaz
+  /newbot), po zprávě botovi tlačítko „Zjistit chat ID“ doplní chat,
+  „Odeslat test“ pošle zkušební zprávu; platí hned. Interactive Brokers –
+  host, port a client ID, „Otestovat připojení“ (s hodnotami z dialogu);
+  po uložení se zdroj hned přepojí bez restartu. Alpaca – endpoint, API key
+  a secret; projeví se po restartu. Ukládají se jen změněné sekce,
+  komentáře v souboru zůstanou.
 - Měřič jako v TradingView: obdélník modrý při růstu / červený při poklesu,
   šipky středem (cena svisle, čas vodorovně) a štítek s Δcenou, % a počtem
   ticků, počtem barů a délkou úseku a součtem objemu.
@@ -313,7 +317,21 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   signálem na běžící svíčce; notifikace Telegram, oznámení, zvuk, webhook.
   Scanner běží na serveru i bez otevřené stránky, přepočítá se každou minutu
   (tlačítko obnovit hned) a před odesláním alertu si data obnoví. Data
-  bere ze zdrojů symbolů v seznamu (přes cache).
+  bere ze zdrojů symbolů v seznamu (přes cache). Přehled (tabulka jako
+  v Pine skriptu: „Svopex TTW (1h) | Signál (svíčka)“, barva podle směru) se
+  ukazuje přímo v každém grafu s viditelným indikátorem scanneru; pozici
+  (vpravo / vlevo nahoře, vpravo uprostřed, dole, nezobrazovat) a velikost
+  textu nastavíte v nastavení scanneru.
+- Alert na signál indikátoru (jako v TradingView): v dialogu alertu je první
+  pole zdroj podmínky – cena, nebo indikátor se signály v grafu (Svopex TTW
+  s parametry instance; alert si je uloží). Podmínka Signál Long / Short /
+  Long nebo Short, spouštění „X min před zavřením svíčky“ (signál na běžící
+  svíčce, jako alert Pine skriptu), Once Per Bar Close (signál na uzavřené
+  svíčce), Once Per Bar nebo Only Once. Zpráva má zástupný text `{{signal}}`
+  (např. „LONG ENG“). Alert lze vytvořit i pravým klikem na indikátor
+  (legenda) → „Přidat alert…“. Vyhodnocuje server na pozadí: historie
+  symbolu se načte jednou, dál se doplňuje živými svíčkami a indikátor se
+  přepočítá jen tehdy, když může alert spustit.
 - Časové připomínky (panel Alerty → ⋯ → Časové připomínky…): opakovaná
   notifikace v okně od–do (např. 22:30–22:55 po 5 minutách, výzva k uzavření
   pozic před noční seancí) ve zvoleném pásmu a dny v týdnu; zapnutí /
@@ -377,8 +395,8 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
 
 - Zdroj se aktivuje zadáním API klíčů (plán Basic zdarma stačí – používá se
   IEX feed); bez klíčů se do aplikace vůbec nepřidá. Dvě cesty:
-  1. V aplikaci: ozubené kolečko v horní liště → vložit Key a Secret → Uložit
-     → restart aplikace.
+  1. V aplikaci: ozubené kolečko v horní liště → záložka Alpaca → vložit
+     Key a Secret → Ok → restart aplikace.
   2. Přímo: doplnit `config.yaml` v kořenu projektu a restartovat:
 
          alpaca:
@@ -400,7 +418,8 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
 
 - Zdroj `IBKR` se připojuje k běžící TWS (demo) nebo IB Gateway s povoleným
   API. Výchozí hodnoty: host `127.0.0.1`, port `7497` (demo TWS),
-  clientId `30` – lze přepsat v `config.yaml`:
+  clientId `30` – lze změnit v aplikaci (Settings → Interactive Brokers,
+  platí hned) nebo v `config.yaml`:
 
       ibkr:
         host: 127.0.0.1
@@ -519,7 +538,8 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
 - `tickview/ui/static/lightweight_chart.js` – JS komponenta grafu (svíčky,
   objem, nadpis a legenda ve stylu TradingView, motivy, časové pásmo,
   inkrementální update, donačítání historie, panely indikátorů, úsečky
-  a značky indikátorů, kontextová
+  a značky indikátorů (overlay sleduje i změnu měřítka cenové osy), přehled
+  scanneru, kontextová
   menu, kreslicí nástroje na překryvném canvasu včetně Long / Short position,
   čáry alertů a zvuk alertu, plovoucí panel oblíbených
   nástrojů, styl svíček; více grafů na stránce – aktivní graf, společná

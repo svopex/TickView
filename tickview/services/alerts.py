@@ -14,16 +14,19 @@ from typing import Callable, Optional
 
 import httpx
 
+from tickview.indicators.compute import context_for, history_bars, run_indicator
+from tickview.indicators.registry import get_indicator
 from tickview.logic.alerts import (
     AlertTracker,
+    SignalAlertTracker,
     is_expired,
     line_price,
     message_context,
     render_message,
 )
-from tickview.logic.cache import KlineCache
+from tickview.logic.cache import KlineCache, fetch_recent
 from tickview.providers import get_provider
-from tickview.providers.base import TIMEFRAME_MS, Candle, StreamStatus, utc_now_ms
+from tickview.providers.base import TIMEFRAME_MS, Candle, StreamStatus, merge_candle, utc_now_ms
 from tickview.services.listeners import Listeners
 from tickview.services.notify import send_telegram, send_webhook, telegram_settings
 
@@ -61,7 +64,11 @@ class AlertEngine(Listeners):
         self._alerts: dict[int, dict] = {}
         # Stav vyhodnocení alertů: id -> (otisk definice, tracker); změněný
         # alert (jiný otisk) dostane nový tracker
-        self._trackers: dict[int, tuple[str, AlertTracker]] = {}
+        self._trackers: dict[int, tuple[str, AlertTracker | SignalAlertTracker]] = {}
+        # Svíčky streamů s alerty na signál indikátoru (historie + živé svíčky,
+        # zkracované na délku první historie) a jejich délka
+        self._candles: dict[StreamKey, list[Candle]] = {}
+        self._candle_limits: dict[StreamKey, int] = {}
         self._watchers: dict[StreamKey, asyncio.Task] = {}
         # Kresby alertů: id kresby -> kresba / None (smazaná); změnu kresby
         # hlásí UI přes drawing_changed
@@ -108,12 +115,15 @@ class AlertEngine(Listeners):
                     sort_keys=True,
                 )
                 if alert_id not in self._trackers or self._trackers[alert_id][0] != fingerprint:
-                    tracker = AlertTracker(alert["condition"], alert["trigger"], TIMEFRAME_MS[alert["timeframe"]])
-                    self._trackers[alert_id] = (fingerprint, tracker)
+                    self._trackers[alert_id] = (fingerprint, self._new_tracker(alert))
             # Stav smazaných / neaktivních alertů zahodíme
             for alert_id in set(self._trackers) - set(self._alerts):
                 del self._trackers[alert_id]
             self._drawings.clear()
+            # Svíčky jen pro streamy, které mají alert na signál indikátoru
+            needed = {self._key(a) for a in self._alerts.values() if a["target"]["type"] == "indicator"}
+            self._candles = {key: candles for key, candles in self._candles.items() if key in needed}
+            self._candle_limits = {key: limit for key, limit in self._candle_limits.items() if key in needed}
             self._sync_watchers()
         self._emit({"type": "alerts_changed"})
 
@@ -124,6 +134,14 @@ class AlertEngine(Listeners):
             self._watchers.pop(key).cancel()
         for key in needed - set(self._watchers):
             self._watchers[key] = asyncio.create_task(self._watch(key))
+
+    @staticmethod
+    def _new_tracker(alert: dict) -> AlertTracker | SignalAlertTracker:
+        """Stav vyhodnocení podle cíle: signál indikátoru, nebo cena / čára."""
+        step_ms = TIMEFRAME_MS[alert["timeframe"]]
+        if alert["target"]["type"] == "indicator":
+            return SignalAlertTracker(alert["condition"], alert["trigger"], step_ms, alert["target"]["minutes"])
+        return AlertTracker(alert["condition"], alert["trigger"], step_ms)
 
     @staticmethod
     def _key(alert: dict) -> StreamKey:
@@ -168,6 +186,14 @@ class AlertEngine(Listeners):
     async def _on_candle(self, key: StreamKey, candle: Candle) -> None:
         """Vyhodnotí svíčku pro všechny aktivní alerty dané trojice."""
         now_ms = utc_now_ms()
+        if key in self._candles:
+            candles = self._candles[key]
+            merge_candle(candles, candle)
+            # Buffer se nezvětšuje donekonečna – indikátor dostává stále stejně dlouhou historii
+            del candles[:-self._candle_limits[key]]
+        # Výsledky výpočtu indikátoru v rámci této svíčky (stejný indikátor a
+        # parametry u více alertů streamu se počítají jen jednou)
+        computed: dict[str, list] = {}
         for alert in [a for a in self._alerts.values() if self._key(a) == key]:
             entry = self._trackers.get(alert["id"])
             if entry is None:
@@ -176,6 +202,9 @@ class AlertEngine(Listeners):
             if is_expired(alert, now_ms):
                 await self._deactivate(alert, "expired")
                 continue
+            if isinstance(tracker, SignalAlertTracker):
+                await self._check_signal(alert, tracker, key, candle, now_ms, computed)
+                continue
             level_at = await self._level_function(alert)
             if level_at is None:
                 await self._deactivate(alert, "error")
@@ -183,6 +212,47 @@ class AlertEngine(Listeners):
             price = tracker.update(candle, now_ms, level_at)
             if price is not None:
                 await self._fire(alert, price, now_ms)
+
+    async def _check_signal(
+        self, alert: dict, tracker: SignalAlertTracker, key: StreamKey, candle: Candle, now_ms: int,
+        computed: dict[str, list],
+    ) -> None:
+        """Alert na signál indikátoru: přepočet indikátoru (jen když může spustit) a vyhodnocení.
+
+        Parametry:
+            computed: signály už spočítané pro tuto svíčku (klíč = indikátor + parametry).
+        """
+        if not tracker.wants_compute(candle, now_ms):
+            return
+        target = alert["target"]
+        indicator = get_indicator(target["kind"])
+        if indicator is None:
+            # Indikátor se nenačetl (chyba v jeho souboru) – alert nelze vyhodnotit
+            await self._deactivate(alert, "error")
+            return
+        provider_id, symbol, timeframe = key
+        cache_key = json.dumps([target["kind"], target["params"]], sort_keys=True)
+        if cache_key not in computed:
+            try:
+                provider = self._provider_lookup(provider_id)
+                if key not in self._candles:
+                    # Historie pro indikátor jednou na stream, dál se doplňuje živými svíčkami
+                    needed = history_bars(indicator, target["params"])
+                    history = await fetch_recent(provider, self._cache, symbol, timeframe, now_ms,
+                                                 min_count=needed, window_bars=needed)
+                    merge_candle(history, candle)
+                    self._candles[key] = history
+                    self._candle_limits[key] = max(len(history), needed)
+                candles = list(self._candles[key])
+                ctx = context_for(provider, symbol, timeframe, candles, live=True, signal_bars=2)
+                result = await asyncio.to_thread(run_indicator, indicator, target["params"], candles, ctx)
+            except Exception:
+                logger.exception("Alert %s: výpočet indikátoru selhal", alert["id"])
+                return
+            computed[cache_key] = result.signals
+        signal = tracker.update(computed[cache_key], candle)
+        if signal:
+            await self._fire(alert, candle.close, now_ms, signal)
 
     async def _level_function(self, alert: dict) -> Optional[Callable[[float], Optional[float]]]:
         """Funkce čas (s) -> úroveň alertu; None, když kresba alertu už neexistuje."""
@@ -236,13 +306,18 @@ class AlertEngine(Listeners):
                 task.cancel()
         self._emit({"type": "alerts_changed"})
 
-    async def _fire(self, alert: dict, price: float, now_ms: int) -> None:
-        """Spuštění alertu: stav v databázi, ohlášení stránkám a odeslání notifikací."""
+    async def _fire(self, alert: dict, price: float, now_ms: int, signal: str = "") -> None:
+        """Spuštění alertu: stav v databázi, ohlášení stránkám a odeslání notifikací.
+
+        Parametry:
+            alert, price, now_ms: spuštěný alert, cena a čas spuštění.
+            signal: popis signálu indikátoru („LONG ENG“) pro zástupný text {{signal}}.
+        """
         try:
             exchange = self._provider_lookup(alert["source"]).name
         except KeyError:
             exchange = alert["source"]
-        message = render_message(alert["message"], message_context(alert, price, exchange, now_ms))
+        message = render_message(alert["message"], message_context(alert, price, exchange, now_ms, signal))
         once = alert["trigger"] == "once"
         if once:
             # Jednorázový alert se po spuštění vypne

@@ -16,7 +16,7 @@ from tickview.indicators.registry import get_indicator
 from tickview.logic.sessions import SESSION_RTH, filter_session, in_session
 from tickview.logic.styles import drawing_visible
 from tickview.providers import get_provider
-from tickview.providers.base import TIMEFRAME_MS, Candle, StreamStatus, is_closed, utc_now_ms
+from tickview.providers.base import TIMEFRAME_MS, Candle, StreamStatus, is_closed, merge_candle, utc_now_ms
 from tickview.ui.lightweight_chart import LightweightChart
 
 # Kolik svíček historie se načte pro jedno zobrazení (a uloží do cache)
@@ -188,15 +188,10 @@ class ChartPane:
     # ---------- indikátory ----------
 
     def merge_live_candle(self, candle: Candle) -> None:
-        # Promítne živou svíčku do self.candles (podklad indikátorů): stejná
-        # svíčka se nahradí, novější se připojí, starší se ignoruje
-        candles = self.candles
-        if not candles:
-            return
-        if candle.open_time == candles[-1].open_time:
-            candles[-1] = candle
-        elif candle.open_time > candles[-1].open_time:
-            candles.append(candle)
+        # Promítne živou svíčku do self.candles (podklad indikátorů); graf bez
+        # načtené historie ji ignoruje
+        if self.candles:
+            merge_candle(self.candles, candle)
 
     def required_bars(self) -> int:
         """Kolik svíček grafu potřebují aktivní indikátory (aspoň VISIBLE_BARS)."""

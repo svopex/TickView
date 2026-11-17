@@ -134,6 +134,16 @@ BAR_SIZES = {
 }
 
 
+def connection_settings(config: dict) -> dict:
+    """Připojovací údaje z konfigurace doplněné výchozími: {"host", "port", "client_id"}."""
+    section = config.get("ibkr") or {}
+    return {
+        "host": str(section.get("host") or DEFAULT_HOST),
+        "port": int(section.get("port") or DEFAULT_PORT),
+        "client_id": int(section.get("client_id") or DEFAULT_CLIENT_ID),
+    }
+
+
 class IbkrProvider(DataProvider):
     """Interactive Brokers (TWS/Gateway) – historie a průběžně aktualizované bary."""
 
@@ -145,10 +155,8 @@ class IbkrProvider(DataProvider):
     is_live = False
 
     def __init__(self) -> None:
-        config = load_config().get("ibkr", {})
-        self._host = config.get("host") or DEFAULT_HOST
-        self._port = int(config.get("port") or DEFAULT_PORT)
-        self._client_id = int(config.get("client_id") or DEFAULT_CLIENT_ID)
+        settings = connection_settings(load_config())
+        self._host, self._port, self._client_id = settings["host"], settings["port"], settings["client_id"]
         self.timeframes = dict(BAR_SIZES)
         self._ib: Optional[IB] = None
         # Souběžné dotazy (hledání, ceny, historie) se připojují jen jednou
@@ -220,11 +228,43 @@ class IbkrProvider(DataProvider):
         except Exception:
             pass
 
-    async def close(self) -> None:
-        """Odpojí se od TWS (při ukončení aplikace)."""
+    def _drop_connection(self) -> None:
+        # Zavře spojení s TWS; další dotaz se připojí znovu
         if self._ib is not None:
             self._disconnect_quietly(self._ib)
             self._ib = None
+
+    async def close(self) -> None:
+        """Odpojí se od TWS (při ukončení aplikace)."""
+        self._drop_connection()
+
+    def reload_config(self) -> None:
+        """Nové připojovací údaje z config.yaml (Settings) bez restartu aplikace.
+
+        Staré spojení se zavře a cooldown po neúspěchu zruší; další dotaz se
+        připojí s novými údaji (živé streamy se samy znovu připojí).
+        """
+        settings = connection_settings(load_config())
+        changed = (settings["host"], settings["port"], settings["client_id"]) != (self._host, self._port, self._client_id)
+        if changed:
+            self._host, self._port, self._client_id = settings["host"], settings["port"], settings["client_id"]
+            self._last_fail = 0.0
+            self._drop_connection()
+
+    @staticmethod
+    async def test_connection(host: str, port: int, client_id: int) -> str:
+        """Zkušební připojení k TWS / IB Gateway s údaji z dialogu; vrátí popis, chyba = výjimka.
+
+        Používá clientId za rozsahem běžného připojení, aby se nestřetlo
+        se spojením, které zdroj právě drží.
+        """
+        ib = IB()
+        try:
+            await ib.connectAsync(host, port, clientId=client_id + CLIENT_ID_ATTEMPTS, timeout=6)
+            accounts = ", ".join(ib.managedAccounts()) or "bez účtu"
+            return f"TWS odpovídá (server verze {ib.client.serverVersion()}, účet {accounts})."
+        finally:
+            IbkrProvider._disconnect_quietly(ib)
 
     @staticmethod
     def _contract(symbol: str) -> Contract:

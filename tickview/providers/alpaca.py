@@ -25,6 +25,8 @@ from tickview.providers.base import (
     SymbolInfo,
 )
 
+# Výchozí Trading API endpoint (papírový účet)
+DEFAULT_ENDPOINT = "https://paper-api.alpaca.markets/v2"
 DATA_BASE_URL = "https://data.alpaca.markets"
 WS_BASE_URL = "wss://stream.data.alpaca.markets/v2/iex"
 # Seznam instrumentů se mění zřídka – v paměti na 24 h
@@ -64,7 +66,7 @@ class AlpacaProvider(DataProvider):
         self._key = config.get("api_key") or ""
         self._secret = config.get("secret") or ""
         # Trading API endpoint z konfigurace (paper-api pro papírový účet)
-        self._endpoint = (config.get("endpoint") or "https://paper-api.alpaca.markets/v2").rstrip("/")
+        self._endpoint = (config.get("endpoint") or DEFAULT_ENDPOINT).rstrip("/")
         self._client: Optional[httpx.AsyncClient] = None
         self._limiter = RateLimiter(min_interval=0.2)
         self._assets: list[SymbolInfo] = []

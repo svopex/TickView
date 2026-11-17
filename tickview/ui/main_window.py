@@ -15,12 +15,17 @@ from tickview.logic.alerts import (
     ALERT_SORTS,
     CONDITIONS,
     DEFAULT_EXPIRATION_MS,
+    DEFAULT_ALERT_MINUTES,
     DEFAULT_NOTIFY,
+    MAX_ALERT_MINUTES,
+    INDICATOR_CONDITIONS,
+    INDICATOR_TRIGGERS,
     LINE_KINDS,
     STATUSES,
     TRIGGERS,
     default_message,
     describe_alert,
+    target_label,
     filter_alerts,
     format_price,
     normalize_alert,
@@ -38,7 +43,7 @@ from tickview.logic.indicator_templates import (
     template_indicators,
     update_indicator_template,
 )
-from tickview.indicators.api import CATEGORIES
+from tickview.indicators.api import CATEGORIES, Param
 from tickview.indicators.compute import (
     indicator_color,
     indicator_title,
@@ -84,13 +89,17 @@ from tickview.logic.styles import (
     normalize_visibility,
     plural,
 )
+from tickview.logic.scanner import overview_payload
 from tickview.logic.sessions import (
     SESSION_ETH,
     SESSION_RTH,
     timezone_options,
 )
 from tickview.providers import PROVIDERS, get_provider
+from tickview.providers.alpaca import DEFAULT_ENDPOINT as ALPACA_DEFAULT_ENDPOINT
 from tickview.providers.base import utc_now_ms
+from tickview.providers.ibkr import DEFAULT_HOST as IBKR_DEFAULT_HOST
+from tickview.providers.ibkr import IbkrProvider, connection_settings
 from tickview.services.alerts import AlertEngine
 from tickview.services.reminders import ReminderService
 from tickview.services.scanner import ScannerService
@@ -1602,15 +1611,45 @@ async def _build_index(
         if pane is active():
             refresh_active_ui()
         pane.push_alert_lines(await cache.alerts(active_only=True))
+        push_overview([pane])
         await pane.reload_chart()
 
-    # ---------- nastavení API klíčů (volitelný zdroj Alpaca) ----------
+    # ---------- Settings: Telegram, Interactive Brokers, Alpaca (config.yaml) ----------
+
+    def ibkr_form_values() -> dict | None:
+        # Připojovací údaje IBKR z dialogu (prázdné pole = výchozí); neplatné číslo ohlásí a vrátí None
+        defaults = connection_settings({})
+        try:
+            port = Param.int("port", defaults["port"], "IBKR port", min=1, max=65535).normalize(settings_ibkr_port.value)
+            client_id = Param.int("client_id", defaults["client_id"], "IBKR client ID", min=0,
+                                  max=2**31 - 1).normalize(settings_ibkr_client.value)
+        except ValueError as exc:
+            ui.notify(str(exc), type="warning")
+            return None
+        return {"host": (settings_ibkr_host.value or "").strip() or IBKR_DEFAULT_HOST, "port": port,
+                "client_id": client_id}
+
+    async def test_ibkr() -> None:
+        # Zkušební připojení k TWS / IB Gateway s hodnotami z dialogu (i neuloženými)
+        values = ibkr_form_values()
+        if values is None:
+            return
+        try:
+            message = await IbkrProvider.test_connection(values["host"], values["port"], values["client_id"])
+        except Exception as exc:
+            ui.notify(f"IBKR: připojení k {values['host']}:{values['port']} selhalo – {exc!r}", type="negative",
+                      multi_line=True)
+            return
+        ui.notify(message, type="positive")
 
     async def save_settings() -> None:
-        # Uloží klíče do config.yaml v kořenu projektu (necommituje se); zbytek
-        # souboru včetně komentářů a vlastního endpointu zůstane beze změny.
-        # Zapisují se jen změněné sekce (Telegram platí hned, Alpaca po restartu)
+        # Uloží nastavení do config.yaml v kořenu projektu (necommituje se); zbytek
+        # souboru včetně komentářů zůstane beze změny. Zapisují se jen změněné
+        # sekce (Telegram a IBKR platí hned, Alpaca po restartu)
         config = load_config()
+        ibkr = ibkr_form_values()
+        if ibkr is None:
+            return
         messages = []
         telegram = {
             "bot_token": (settings_telegram_token.value or "").strip(),
@@ -1619,23 +1658,36 @@ async def _build_index(
         if telegram != dict(zip(("bot_token", "chat_id"), telegram_settings(config))):
             update_config_section("telegram", telegram)
             messages.append("Telegram uložen")
+        if ibkr != connection_settings(config):
+            update_config_section("ibkr", ibkr)
+            messages.append("IBKR uloženo a přepojeno")
         alpaca_config = config.get("alpaca") or {}
         alpaca = {
+            "endpoint": (settings_alpaca_endpoint.value or "").strip() or ALPACA_DEFAULT_ENDPOINT,
             "api_key": (settings_key.value or "").strip(),
             "secret": (settings_secret.value or "").strip(),
         }
-        if alpaca != {key: str(alpaca_config.get(key) or "") for key in alpaca}:
-            if not alpaca_config.get("endpoint"):
-                alpaca = {"endpoint": "https://paper-api.alpaca.markets/v2", **alpaca}
+        saved_alpaca = {key: str(alpaca_config.get(key) or "") for key in alpaca}
+        saved_alpaca["endpoint"] = saved_alpaca["endpoint"] or ALPACA_DEFAULT_ENDPOINT
+        if alpaca != saved_alpaca:
             update_config_section("alpaca", alpaca)
-            messages.append("Alpaca klíče uloženy – zdroj se aktivuje po restartu aplikace")
+            messages.append("Alpaca uložena – změna se projeví po restartu aplikace")
+        if messages:
+            # Zdroje si změněnou konfiguraci načtou samy (IBKR se přepojí bez restartu)
+            for provider in PROVIDERS:
+                provider.reload_config()
         settings_dialog.close()
         show_status((" · ".join(messages) + " (config.yaml).") if messages else "Nastavení beze změny.")
 
     def open_settings_dialog() -> None:
         # Vyplníme aktuální hodnoty z konfigurace pro kontrolu/přepis
         config = load_config()
+        ibkr = connection_settings(config)
+        settings_ibkr_host.value = ibkr["host"]
+        settings_ibkr_port.value = ibkr["port"]
+        settings_ibkr_client.value = ibkr["client_id"]
         alpaca_config = config.get("alpaca") or {}
+        settings_alpaca_endpoint.value = alpaca_config.get("endpoint") or ALPACA_DEFAULT_ENDPOINT
         settings_key.value = alpaca_config.get("api_key", "")
         settings_secret.value = alpaca_config.get("secret", "")
         settings_telegram_token.value, settings_telegram_chat.value = telegram_settings(config)
@@ -1676,6 +1728,15 @@ async def _build_index(
 
     # ---------- indikátory ----------
 
+    def push_overview(targets: list[ChartPane] | None = None) -> None:
+        """Přehled scanneru (tabulka) do grafů s viditelným indikátorem scanneru (např. Svopex TTW)."""
+        data = overview_payload(scanner.config, scanner.results)
+        for pane in targets if targets is not None else panes:
+            shown = any(
+                spec["kind"] == scanner.config["indicator"] and spec.get("visible", True) for spec in pane.indicators
+            )
+            pane.chart.set_overview(data if shown else None)
+
     async def indicators_changed() -> None:
         # Po každé změně sady indikátorů aktivního grafu: uložit (konfigurace
         # rozložení), přepočítat, obnovit nabídku
@@ -1683,6 +1744,7 @@ async def _build_index(
         # Indikátor může potřebovat delší historii, než graf má (donačte ji a přepočítá)
         await active().ensure_history()
         await active().push_indicators()
+        push_overview([active()])
         # Nabídku přestavujeme jen otevřenou (jinak se postaví při otevření)
         if indicator_dialog.value:
             render_indicator_menu()
@@ -1732,6 +1794,8 @@ async def _build_index(
             await remove_indicator(indicator_id)
         elif action == "settings":
             await open_indicator_settings(indicator_id)
+        elif action == "alert":
+            await open_alert_dialog(indicator_id=indicator_id)
 
     # Stav nabídky indikátorů: zvolená kategorie a hledaný text
     menu_state = {"category": "all", "query": ""}
@@ -1933,6 +1997,8 @@ async def _build_index(
         "filling": False,
         # Druhy čar nabízených jako cíl alertu: id kresby -> druh
         "drawing_kinds": {},
+        # Indikátory se signály nabízené jako zdroj podmínky: "ind:…" -> {"kind", "params"}
+        "indicator_targets": {},
     }
 
     def format_local_time(ms: int, with_date: bool = True) -> str:
@@ -1940,8 +2006,28 @@ async def _build_index(
         moment = datetime.fromtimestamp(ms / 1000)
         return moment.strftime("%d.%m.%Y %H:%M") if with_date else moment.strftime("%d.%m. %H:%M:%S")
 
+    def alert_on_indicator() -> bool:
+        return (alert_source.value or "price") != "price"
+
+    def apply_alert_source() -> None:
+        # Zdroj podmínky: cena / kresba, nebo signál indikátoru – jiné podmínky,
+        # spouštění a pole (u indikátoru předstih v minutách místo ceny a cíle)
+        on_indicator = alert_on_indicator()
+        for field, options in ((alert_condition, INDICATOR_CONDITIONS if on_indicator else CONDITIONS),
+                               (alert_trigger, INDICATOR_TRIGGERS if on_indicator else TRIGGERS)):
+            field.set_options(options, value=field.value if field.value in options else next(iter(options)))
+        alert_target.set_visibility(not on_indicator)
+        apply_alert_trigger()
+
+    def apply_alert_trigger() -> None:
+        # Předstih v minutách jen u alertu na indikátor se spouštěním před zavřením svíčky
+        alert_minutes.set_visibility(alert_on_indicator() and alert_trigger.value == "before_close")
+
     def alert_target_from_form() -> dict:
-        # Cíl alertu z dialogu: cena, nebo kresba vybraná v seznamu cílů
+        # Cíl alertu z dialogu: signál indikátoru, cena, nebo kresba vybraná v seznamu cílů
+        if alert_on_indicator():
+            target = alert_form["indicator_targets"][alert_source.value]
+            return {"type": "indicator", **target, "minutes": alert_minutes.value}
         choice = alert_target.value or "value"
         if choice.startswith("drawing:"):
             drawing_id = int(choice.split(":", 1)[1])
@@ -1950,7 +2036,7 @@ async def _build_index(
 
     def refresh_alert_message() -> None:
         # Automatická zpráva sleduje podmínku a cíl, dokud ji uživatel nepřepíše
-        alert_price.set_visibility(not (alert_target.value or "").startswith("drawing:"))
+        alert_price.set_visibility(not alert_on_indicator() and not (alert_target.value or "").startswith("drawing:"))
         if alert_form["filling"] or not alert_form["auto_message"]:
             return
         target = alert_target_from_form()
@@ -1970,7 +2056,11 @@ async def _build_index(
             alert_form["auto_message"] = False
 
     async def open_alert_dialog(
-        alert: dict | None = None, price=None, drawing_id: int | None = None, clone: bool = False
+        alert: dict | None = None,
+        price=None,
+        drawing_id: int | None = None,
+        clone: bool = False,
+        indicator_id: str | None = None,
     ) -> None:
         """Dialog vytvoření / úpravy alertu.
 
@@ -1979,6 +2069,7 @@ async def _build_index(
             price: počáteční cena nového alertu (None = poslední cena grafu).
             drawing_id: kresba, na kterou se nový alert nastaví (pravý klik na čáru).
             clone: alert se nepřepíše, ale vytvoří se z něj nový (Klonovat).
+            indicator_id: instance indikátoru grafu, na jejíž signál se nový alert nastaví.
         """
         pane = active()
         if alert is None:
@@ -2003,6 +2094,23 @@ async def _build_index(
             options[f"drawing:{drawing['id']}"] = f"{label} (#{drawing['id']})"
         alert_target.options = options
         alert_target.update()
+        # Zdroje podmínky: cena a indikátory se signály v grafu stejného symbolu
+        # a timeframu; upravovaný alert na indikátor nabízí i své uložené nastavení
+        sources = {"price": f"{symbol} (cena)"}
+        targets: dict = {}
+        if pane.provider_id == source and pane.symbol == symbol and pane.timeframe == timeframe:
+            for instance in pane.indicators:
+                indicator = get_indicator(instance["kind"])
+                if indicator and indicator.has_signals:
+                    sources[f"ind:{instance['id']}"] = indicator.legend_title(instance["params"])
+                    targets[f"ind:{instance['id']}"] = {"kind": instance["kind"], "params": dict(instance["params"])}
+        saved_target = alert["target"] if alert and alert["target"]["type"] == "indicator" else None
+        if saved_target:
+            sources["ind:saved"] = f"{target_label(saved_target)} (nastavení alertu)"
+            targets["ind:saved"] = {"kind": saved_target["kind"], "params": saved_target["params"]}
+        alert_form["indicator_targets"] = targets
+        alert_source.options = sources
+        alert_source.update()
         candles = pane.candles or []
         has_telegram = telegram_configured()
         if alert is None:
@@ -2024,6 +2132,15 @@ async def _build_index(
         alert_submit.text = "Save" if editing else "Create"
         alert_form["filling"] = True
         try:
+            if saved_target:
+                alert_source.value = "ind:saved"
+            elif alert is None and indicator_id and f"ind:{indicator_id}" in sources:
+                alert_source.value = f"ind:{indicator_id}"
+                spec.update({"condition": "signal", "trigger": "before_close"})
+            else:
+                alert_source.value = "price"
+            apply_alert_source()
+            alert_minutes.value = saved_target["minutes"] if saved_target else DEFAULT_ALERT_MINUTES
             alert_condition.value = spec["condition"]
             target = spec["target"]
             if target["type"] == "drawing" and f"drawing:{target['id']}" in options:
@@ -2032,6 +2149,7 @@ async def _build_index(
                 alert_target.value = "value"
             alert_price.value = target.get("price") if target["type"] == "value" else (candles[-1].close if candles else None)
             alert_trigger.value = spec["trigger"]
+            apply_alert_trigger()
             expires_at = spec.get("expires_at")
             alert_open_ended.value = expires_at is None
             alert_expiration.value = datetime.fromtimestamp(
@@ -3105,29 +3223,52 @@ async def _build_index(
     chart_settings_dialog.on_value_change(on_chart_dialog_change)
 
     # Dialog nastavení: Telegram pro alerty a API klíče Alpaca (config.yaml)
-    with ui.dialog() as settings_dialog, ui.card().classes("settings-dialog"):
-        with ui.column().classes("indicator-dialog-body"):
-            ui.label("Telegram (alerty)").classes("tv-settings-section")
-            ui.label(
-                "Bota založíte u @BotFather (příkaz /newbot), token vložte sem. Pak botovi napište "
-                "(např. /start) a tlačítkem Zjistit chat ID se chat doplní sám. Ukládá se do "
-                "config.yaml (necommituje se) a platí hned."
-            ).classes("settings-note")
-            settings_telegram_token = ui.input("Bot token").props("outlined dense type=password")
-            settings_telegram_chat = ui.input("Chat ID").props("outlined dense")
-            with ui.row().classes("dialog-actions"):
-                ui.button("Zjistit chat ID", on_click=detect_telegram_chat).props("flat no-caps")
-                ui.button("Odeslat test", on_click=test_telegram).props("flat no-caps")
-            ui.label("Alpaca").classes("tv-settings-section")
-            ui.label(
-                "API klíče Alpaca – uloží se lokálně do config.yaml v kořenu projektu "
-                "(nikdy se necommitují). Po uložení restartujte aplikaci."
-            ).classes("settings-note")
-            settings_key = ui.input("API key").props("outlined dense type=password")
-            settings_secret = ui.input("Secret").props("outlined dense type=password")
-            with ui.row().classes("dialog-actions"):
-                ui.button("Uložit", on_click=save_settings).props("unelevated")
-                ui.button("Zrušit", on_click=settings_dialog.close).props("flat")
+    # Settings aplikace: všechny sekce config.yaml (Telegram, Interactive Brokers,
+    # Alpaca) v záložkách; ukládá se jen to, co se změnilo
+    with ui.dialog() as settings_dialog, ui.card().classes("tv-settings app-settings"):
+        settings_header(settings_dialog, "Settings")
+        ui.label(
+            "Ukládá se lokálně do config.yaml v kořenu projektu (necommituje se, komentáře zůstanou)."
+        ).classes("settings-note")
+        with ui.tabs().props("dense no-caps align=left indicator-color=primary").classes("tv-tabs w-full") as settings_tabs:
+            tab_telegram = ui.tab("Telegram")
+            tab_ibkr = ui.tab("Interactive Brokers")
+            tab_alpaca = ui.tab("Alpaca")
+        with ui.tab_panels(settings_tabs, value=tab_telegram).classes("tv-tab-panels w-full"):
+            with ui.tab_panel(tab_telegram).classes("tv-tab-panel"):
+                ui.label(
+                    "Notifikace alertů, scanneru a připomínek. Bota založíte u @BotFather (příkaz /newbot), "
+                    "token vložte sem. Pak botovi napište (např. /start) a tlačítkem Zjistit chat ID se chat "
+                    "doplní sám. Platí hned."
+                ).classes("settings-note")
+                settings_telegram_token = ui.input("Bot token").props("outlined dense type=password").classes("w-full")
+                settings_telegram_chat = ui.input("Chat ID").props("outlined dense").classes("w-full")
+                with ui.row().classes("dialog-actions"):
+                    ui.button("Zjistit chat ID", on_click=detect_telegram_chat, color=None).props("flat no-caps")
+                    ui.button("Odeslat test", on_click=test_telegram, color=None).props("flat no-caps")
+            with ui.tab_panel(tab_ibkr).classes("tv-tab-panel"):
+                ui.label(
+                    "TWS nebo IB Gateway musí běžet a mít povolené API (Configure → API → Settings). "
+                    "Porty: TWS paper 7497, TWS live 7496, IB Gateway paper 4002, live 4001. "
+                    "Při obsazeném client ID se zkusí další. Po uložení se zdroj hned přepojí."
+                ).classes("settings-note")
+                settings_ibkr_host = ui.input("Host").props("outlined dense").classes("w-full")
+                with ui.row().classes("tv-settings-row w-full"):
+                    settings_ibkr_port = ui.number("Port", min=1, max=65535, step=1).props("outlined dense")
+                    settings_ibkr_client = ui.number("Client ID", min=0, step=1).props("outlined dense")
+                with ui.row().classes("dialog-actions"):
+                    ui.button("Otestovat připojení", on_click=test_ibkr, color=None).props("flat no-caps")
+            with ui.tab_panel(tab_alpaca).classes("tv-tab-panel"):
+                ui.label(
+                    "Volitelný zdroj živých amerických akcií. Klíče z Paper Trading dashboardu; bez klíčů "
+                    "se zdroj nezapne. Změna se projeví po restartu aplikace."
+                ).classes("settings-note")
+                settings_alpaca_endpoint = ui.input("Endpoint (Trading API)").props("outlined dense").classes("w-full")
+                settings_key = ui.input("API key").props("outlined dense type=password").classes("w-full")
+                settings_secret = ui.input("Secret").props("outlined dense type=password").classes("w-full")
+        with ui.row().classes("tv-settings-actions w-full"):
+            ui.space()
+            settings_buttons(settings_dialog, save_settings)
 
     # Hledání symbolu ve stylu TradingView: pole, kategorie, zdroj a výsledky
     with ui.dialog().props("position=top") as symbol_search_dialog, ui.card().classes("sym-dialog"):
@@ -3162,12 +3303,17 @@ async def _build_index(
         with ui.grid(columns="110px 1fr").classes("alert-grid w-full"):
             ui.label("Condition").classes("alert-label")
             with ui.column().classes("alert-field"):
-                ui.label("Price").classes("alert-static")
+                # Zdroj podmínky jako v TradingView: cena symbolu, nebo indikátor v grafu
+                alert_source = ui.select({"price": "Cena"}, value="price").props("outlined dense").classes("w-full")
                 alert_condition = ui.select(CONDITIONS, value="crossing").props("outlined dense").classes("w-full")
                 alert_target = ui.select({"value": "Cena (hodnota)"}, value="value").props("outlined dense").classes("w-full")
                 alert_price = ui.number("Cena").props("outlined dense").classes("w-full")
             ui.label("Trigger").classes("alert-label")
-            alert_trigger = ui.select(TRIGGERS, value="once").props("outlined dense").classes("w-full")
+            with ui.column().classes("alert-field"):
+                alert_trigger = ui.select(TRIGGERS, value="once").props("outlined dense").classes("w-full")
+                alert_minutes = ui.number("Minut před zavřením svíčky", min=1, max=MAX_ALERT_MINUTES, step=1).props(
+                    "outlined dense"
+                ).classes("w-full")
             ui.label("Expiration").classes("alert-label")
             with ui.column().classes("alert-field"):
                 alert_expiration = ui.input().props("outlined dense type=datetime-local").classes("w-full")
@@ -3190,6 +3336,9 @@ async def _build_index(
             ui.space()
             ui.button("Cancel", on_click=alert_dialog.close, color=None).props("outline no-caps").classes("tv-btn-cancel")
             alert_submit = ui.button("Create", on_click=submit_alert, color=None).props("unelevated no-caps").classes("tv-btn-ok")
+    # Zdroj podmínky mění nabídky podmínek a spouštění, spouštění viditelnost minut
+    alert_source.on_value_change(lambda _event: (apply_alert_source(), refresh_alert_message()))
+    alert_trigger.on_value_change(lambda _event: apply_alert_trigger())
     for alert_field in (alert_condition, alert_target, alert_price):
         alert_field.on_value_change(lambda _event: refresh_alert_message())
     alert_message.on_value_change(on_alert_message_change)
@@ -3222,14 +3371,16 @@ async def _build_index(
     ui.timer(0.3, refresh_alerts_ui, once=True)
 
     def on_scanner_event(event: dict) -> None:
-        # Nový výsledek scanneru překreslí tabulku jen v zobrazené záložce Scanner;
-        # začátek průchodu mění jen informační řádek
-        if state["right_panel"] != "scanner":
-            return
+        # Nový výsledek scanneru obnoví přehled v grafech a tabulku v zobrazené
+        # záložce Scanner; začátek průchodu mění jen informační řádek záložky
         if event.get("running"):
-            with page_root:
-                scanner_panel.update_info()
-        else:
+            if state["right_panel"] == "scanner":
+                with page_root:
+                    scanner_panel.update_info()
+            return
+        with page_root:
+            push_overview()
+        if state["right_panel"] == "scanner":
             background_tasks.create(scanner_panel.render())
 
     scanner.add_listener(on_scanner_event)

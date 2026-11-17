@@ -14,7 +14,7 @@ from typing import Optional
 from tickview.indicators.api import Param
 from tickview.indicators.compute import instance_params
 from tickview.indicators.registry import all_indicators, get_indicator
-from tickview.logic.alerts import DEFAULT_NOTIFY, normalize_notify
+from tickview.logic.alerts import DEFAULT_NOTIFY, MAX_ALERT_MINUTES, normalize_notify
 from tickview.logic.styles import plural
 from tickview.providers.base import TIMEFRAME_MS
 
@@ -22,8 +22,16 @@ from tickview.providers.base import TIMEFRAME_MS
 SCANNER_SETTINGS_KEY = "scanner"
 # Kolik posledních svíček nejvýš sledovat
 MAX_SCAN_BARS = 20
-# Nejdelší povolený předstih alertu před zavřením svíčky (minuty)
-MAX_ALERT_MINUTES = 1440
+# Přehled (tabulka scanneru) v grafech s indikátorem scanneru – pozice a velikost písma jako v Pine
+OVERVIEW_POSITIONS = {
+    "top_right": "Vpravo nahoře",
+    "top_left": "Vlevo nahoře",
+    "middle_right": "Vpravo uprostřed",
+    "bottom_right": "Vpravo dole",
+    "bottom_left": "Vlevo dole",
+    "off": "Nezobrazovat",
+}
+OVERVIEW_SIZES = {"tiny": "Drobné", "small": "Malé", "normal": "Normální", "large": "Velké"}
 
 DEFAULT_SCANNER: dict = {
     "enabled": False,
@@ -33,6 +41,7 @@ DEFAULT_SCANNER: dict = {
     "timeframe": "1h",
     "bars": 2,
     "only_hits": True,
+    "overview": {"position": "top_right", "size": "normal"},
     "alert": {"enabled": False, "minutes1": 10, "minutes2": 5, "notify": dict(DEFAULT_NOTIFY)},
 }
 
@@ -70,6 +79,8 @@ def normalize_scanner(data) -> dict:
     if isinstance(watchlist_id, bool) or not isinstance(watchlist_id, int):
         watchlist_id = None
     timeframe = source.get("timeframe") if source.get("timeframe") in TIMEFRAME_MS else DEFAULT_SCANNER["timeframe"]
+    overview = source.get("overview") if isinstance(source.get("overview"), dict) else {}
+    default_overview = DEFAULT_SCANNER["overview"]
     alert = source.get("alert") if isinstance(source.get("alert"), dict) else {}
     default_alert = DEFAULT_SCANNER["alert"]
     try:
@@ -84,6 +95,11 @@ def normalize_scanner(data) -> dict:
         "timeframe": timeframe,
         "bars": _int_in(source.get("bars"), DEFAULT_SCANNER["bars"], 1, MAX_SCAN_BARS),
         "only_hits": bool(source.get("only_hits", True)),
+        "overview": {
+            "position": overview["position"] if overview.get("position") in OVERVIEW_POSITIONS
+            else default_overview["position"],
+            "size": overview["size"] if overview.get("size") in OVERVIEW_SIZES else default_overview["size"],
+        },
         "alert": {
             "enabled": bool(alert.get("enabled", False)),
             "minutes1": _int_in(alert.get("minutes1"), default_alert["minutes1"], 0, MAX_ALERT_MINUTES),
@@ -165,6 +181,42 @@ def status_kind(row: dict) -> str:
 def visible_rows(rows: list[dict], only_hits: bool) -> list[dict]:
     """Řádky tabulky: při „jen se signálem“ jen trhy se signálem (chyby se ukazují vždy)."""
     return [row for row in rows if not only_hits or has_signal(row) or row.get("error")]
+
+
+def overview_payload(config: dict, results: dict) -> Optional[dict]:
+    """Data přehledu (tabulky scanneru) pro graf; None = přehled se nezobrazuje.
+
+    Tabulka jako v Pine skriptu: hlavička „Svopex TTW (1h) | Signál (svíčka)“,
+    řádky symbol + stav (barva podle směru); místo řádků poznámka, když
+    scanner neběží, nemá seznam nebo žádný trh nemá signál.
+    """
+    overview = config["overview"]
+    if overview["position"] == "off":
+        return None
+    note = ""
+    rows: list[dict] = []
+    if not config["enabled"]:
+        note = "scanner je vypnutý (záložka Scanner)"
+    elif results["error"]:
+        note = results["error"]
+    elif not results["scanned_at"]:
+        note = "počítám…"
+    else:
+        rows = [
+            {"symbol": row["symbol"], "text": "chyba" if row.get("error") else status_text(row) or "—",
+             "kind": status_kind(row)}
+            for row in visible_rows(results["rows"], config["only_hits"])
+        ]
+        if not rows:
+            note = "žádný signál"
+    return {
+        "title": f"{scanner_title(config)} ({config['timeframe']})",
+        "header": "Signál (svíčka)",
+        "rows": rows,
+        "note": note,
+        "position": overview["position"],
+        "size": overview["size"],
+    }
 
 
 def current_bar_close(rows: list[dict], step_ms: int, now_ms: int) -> int:

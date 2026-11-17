@@ -2237,3 +2237,57 @@
 .notify-fields {
   gap: 0 !important;
 }
+
+/* Přehled scanneru v grafu (tabulka jako v Pine skriptu Svopex TTW); myš
+   prochází do grafu, vpravo nechává místo cenové ose, dole časové */
+.lwchart-overview {
+  position: absolute;
+  z-index: 9;
+  pointer-events: none;
+  max-height: calc(100% - 50px);
+  overflow: hidden;
+}
+
+.overview-top_right { top: 8px; right: 80px; }
+.overview-top_left { top: 70px; left: 10px; }
+.overview-middle_right { top: 50%; right: 80px; transform: translateY(-50%); }
+.overview-bottom_right { bottom: 36px; right: 80px; }
+.overview-bottom_left { bottom: 36px; left: 10px; }
+
+.lwchart-overview table {
+  border-collapse: separate;
+  border-spacing: 1px;
+  color: #ffffff;
+}
+
+.lwchart-overview th,
+.lwchart-overview td {
+  padding: 3px 10px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.overview-head th {
+  background: rgba(33, 150, 243, 0.7);
+  font-weight: 500;
+}
+
+.overview-symbol {
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.overview-status.overview-long { background: rgba(76, 175, 80, 0.6); }
+.overview-status.overview-short { background: rgba(242, 54, 69, 0.6); }
+.overview-status.overview-both { background: rgba(255, 152, 0, 0.6); }
+.overview-status.overview-none,
+.overview-status.overview-error { background: rgba(120, 123, 134, 0.5); }
+
+.overview-tiny { font-size: 10px; }
+.overview-small { font-size: 11px; }
+.overview-normal { font-size: 13px; }
+.overview-large { font-size: 16px; }
+
+/* Settings aplikace (Telegram, Interactive Brokers, Alpaca v záložkách) */
+.app-settings {
+  width: 520px;
+}

@@ -29,6 +29,9 @@ from tickview.providers.base import TIMEFRAME_MS, Candle
 
 logger = logging.getLogger(__name__)
 
+# Nejmenší počet svíček historie pro výpočet mimo graf (scanner, alert na signál)
+MIN_HISTORY_BARS = 300
+
 # Kolik posledních bodů každé série posílá živý přepočet (předchozí svíčka se
 # mohla uzavřít, poslední je rozpracovaná; starší hodnoty se nemění)
 TAIL_POINTS = 3
@@ -211,6 +214,11 @@ def candles_frame(candles: list[Candle]) -> pd.DataFrame:
     )
 
 
+def history_bars(indicator: Indicator, params: dict) -> int:
+    """Kolik svíček historie stáhnout pro výpočet mimo graf (aspoň MIN_HISTORY_BARS)."""
+    return max(indicator.required_bars(params), MIN_HISTORY_BARS)
+
+
 def run_indicator(indicator: Indicator, params: dict, candles: list[Candle], ctx: Context) -> Result:
     """Spočítá jeden indikátor nad svíčkami (scanner, testy); chyby propouští volajícímu."""
     return indicator.compute(candles_frame(candles), params, ctx)
@@ -263,7 +271,7 @@ def compute_indicators(indicators: list[dict], candles: list[Candle], ctx: Optio
     overlays = čáry přes hlavní graf, panes = samostatné panely s úrovněmi,
     segments / markers = úsečky a značky indikátorů v hlavním grafu,
     groups = jedna položka na instanci pro legendu (název, viditelnost,
-    panel). Instance bez dat, nenačteného indikátoru nebo s chybou výpočtu
+    panel, signals = lze nastavit alert na signál). Instance bez dat, nenačteného indikátoru nebo s chybou výpočtu
     v legendě zůstane, jen bez čar.
 
     Parametry:
@@ -283,7 +291,8 @@ def compute_indicators(indicators: list[dict], candles: list[Candle], ctx: Optio
         indicator = get_indicator(spec["kind"])
         color = indicator_color(spec, index)
         title = indicator_title(spec)
-        group = {"id": spec["id"], "title": title, "visible": spec.get("visible", True) is not False, "pane": None}
+        group = {"id": spec["id"], "title": title, "visible": spec.get("visible", True) is not False, "pane": None,
+                 "signals": bool(indicator and indicator.has_signals)}
         groups.append(group)
         if indicator is None or not candles:
             continue

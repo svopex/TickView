@@ -13,7 +13,7 @@ import json
 import logging
 from typing import Callable, Optional
 
-from tickview.indicators.compute import context_for, run_indicator
+from tickview.indicators.compute import context_for, history_bars, run_indicator
 from tickview.indicators.registry import get_indicator
 from tickview.logic.cache import KlineCache, fetch_recent
 from tickview.logic.scanner import (
@@ -41,8 +41,6 @@ CHECK_INTERVAL_S = 15.0
 FRESH_RESULTS_S = 20.0
 # Kolik symbolů se stahuje a počítá souběžně
 SCAN_CONCURRENCY = 4
-# Nejmenší počet svíček historie (indikátor bez vlastního požadavku)
-MIN_HISTORY_BARS = 300
 # Výsledek bez průchodu (vypnutý scanner, start aplikace)
 EMPTY_RESULTS: dict = {"rows": [], "scanned_at": None, "error": ""}
 
@@ -174,7 +172,7 @@ class ScannerService(Listeners):
         if timeframe not in provider.timeframes:
             return error_row(source, symbol, f"Zdroj {provider.name} nemá timeframe {timeframe}.")
         try:
-            needed = max(indicator.required_bars(config["params"]), MIN_HISTORY_BARS)
+            needed = history_bars(indicator, config["params"])
             candles = await fetch_recent(provider, self._cache, symbol, timeframe, utc_now_ms(),
                                          min_count=needed, window_bars=needed)
             if not candles:

@@ -8,9 +8,11 @@ from nicegui import ui
 from tickview.indicators.api import TIMEFRAMES
 from tickview.indicators.registry import get_indicator
 from tickview.logic.cache import KlineCache
+from tickview.logic.alerts import MAX_ALERT_MINUTES
 from tickview.logic.scanner import (
-    MAX_ALERT_MINUTES,
     MAX_SCAN_BARS,
+    OVERVIEW_POSITIONS,
+    OVERVIEW_SIZES,
     scanner_title,
     signal_indicators,
     status_kind,
@@ -125,6 +127,14 @@ class ScannerPanel:
                     "outlined dense"
                 )
             self.only_hits = ui.checkbox("Zobrazit jen trhy se signálem")
+            ui.label("Přehled v grafu s indikátorem").classes("tv-settings-section")
+            with ui.row().classes("tv-settings-row w-full"):
+                self.overview_position = ui.select(OVERVIEW_POSITIONS, label="Pozice tabulky").props(
+                    "outlined dense options-dense"
+                )
+                self.overview_size = ui.select(OVERVIEW_SIZES, label="Velikost textu").props(
+                    "outlined dense options-dense"
+                )
             ui.label("Alert před zavřením svíčky").classes("tv-settings-section")
             self.alert_enabled = ui.checkbox("Posílat souhrn trhů se signálem na běžící svíčce")
             with ui.row().classes("tv-settings-row w-full"):
@@ -167,6 +177,8 @@ class ScannerPanel:
         self.timeframe.value = config["timeframe"]
         self.bars.value = config["bars"]
         self.only_hits.value = config["only_hits"]
+        self.overview_position.value = config["overview"]["position"]
+        self.overview_size.value = config["overview"]["size"]
         alert = config["alert"]
         self.alert_enabled.value = alert["enabled"]
         self.minutes1.value = alert["minutes1"]
@@ -197,6 +209,7 @@ class ScannerPanel:
             "timeframe": self.timeframe.value,
             "bars": self.bars.value,
             "only_hits": self.only_hits.value,
+            "overview": {"position": self.overview_position.value, "size": self.overview_size.value},
             "alert": {
                 "enabled": self.alert_enabled.value,
                 "minutes1": self.minutes1.value,

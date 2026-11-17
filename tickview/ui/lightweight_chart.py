@@ -210,6 +210,10 @@ class LightweightChart(ui.element):
         """Zobrazí / skryje plovoucí panel oblíbených nástrojů."""
         self._call("setFavoritesVisible", visible)
 
+    def set_overview(self, data: dict | None) -> None:
+        """Přehled scanneru v grafu (logic.scanner.overview_payload); None = skrýt."""
+        self._call("setOverview", data)
+
     def set_volume_visible(self, visible: bool) -> None:
         """Zapne/vypne zobrazení objemu v grafu."""
         self._call("setVolumeVisible", visible)

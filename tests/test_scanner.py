@@ -1,5 +1,6 @@
 """Testy rozhraní indikátorů, loaderu, scanneru a časových připomínek (spuštění: python -m unittest)."""
 
+import asyncio
 import sys
 import tempfile
 import textwrap
@@ -20,6 +21,7 @@ from tickview.logic.scanner import (
     bar_hits,
     current_bar_close,
     normalize_scanner,
+    overview_payload,
     status_kind,
     status_text,
     symbol_row,
@@ -351,3 +353,109 @@ class FetchRecentTest(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(len(candles), 31)
         # Data začínají dlouho po začátku okna – další okna se nestahují
         self.assertEqual(len(provider.calls), 1)
+
+
+class SignalAlertTest(unittest.TestCase):
+    """Alert na signál indikátoru: kontrola definice a stav vyhodnocení."""
+
+    def setUp(self) -> None:
+        registry.all_indicators()
+        registry._registry[FakeSignals.id] = FakeSignals()
+
+    def tearDown(self) -> None:
+        registry._registry.pop(FakeSignals.id, None)
+
+    def test_normalize_and_texts(self) -> None:
+        from tickview.logic.alerts import describe_alert, normalize_alert
+
+        data = {"source": "fake", "symbol": "HIT", "timeframe": "1h", "condition": "signal_long",
+                "trigger": "before_close", "target": {"type": "indicator", "kind": FakeSignals.id,
+                                                      "params": {"length": 999}, "minutes": 7}}
+        spec = normalize_alert(data)
+        # Neplatné parametry = výchozí, zpráva se zástupným textem signálu
+        self.assertEqual(spec["target"], {"type": "indicator", "kind": FakeSignals.id, "params": {"length": 5},
+                                          "minutes": 7})
+        self.assertEqual(spec["message"], "HIT, 1h Signals {{signal}}")
+        self.assertEqual(describe_alert(spec), "Signals: Signál Long · 7 min před zavřením svíčky")
+        for bad in ({"condition": "crossing"}, {"trigger": "per_minute"},
+                    {"target": {"type": "indicator", "kind": "sma"}}):
+            with self.assertRaises(ValueError):
+                normalize_alert({**data, **bad})
+
+    def test_tracker(self) -> None:
+        from tickview.logic.alerts import SignalAlertTracker
+
+        hour = 3_600_000
+        bar = Candle(10 * hour, 1, 1, 1, 1, 1)
+        long0, short1 = Signal(0, "long", 0, "ENG"), Signal(0, "short", 1, "ONE")
+        # before_close: přepočet jen v posledních 10 minutách svíčky, spustí jednou
+        tracker = SignalAlertTracker("signal", "before_close", hour, 10)
+        self.assertFalse(tracker.wants_compute(bar, 10 * hour + 30 * 60_000))
+        self.assertTrue(tracker.wants_compute(bar, 10 * hour + 52 * 60_000))
+        self.assertEqual(tracker.update([long0], bar), "LONG ENG")
+        self.assertFalse(tracker.wants_compute(bar, 10 * hour + 55 * 60_000))
+        # Směr podmínky: short alert nereaguje na long signál
+        short_tracker = SignalAlertTracker("signal_short", "per_bar", hour)
+        self.assertIsNone(short_tracker.update([long0], bar))
+        # per_bar_close: vyhodnotí uzavřenou svíčku (bars_ago 1) po začátku další
+        close_tracker = SignalAlertTracker("signal", "per_bar_close", hour)
+        self.assertFalse(close_tracker.wants_compute(bar, 10 * hour))
+        nxt = Candle(11 * hour, 1, 1, 1, 1, 1)
+        self.assertTrue(close_tracker.wants_compute(nxt, 11 * hour + 1000))
+        self.assertEqual(close_tracker.update([short1], nxt), "SHORT ONE")
+        self.assertIsNone(close_tracker.update([short1], nxt))
+
+
+class OverviewTest(unittest.TestCase):
+    """Data přehledu scanneru v grafu."""
+
+    def test_payload(self) -> None:
+        config = normalize_scanner({"enabled": True, "timeframe": "1h"})
+        rows = [symbol_row("y", "EURUSD", [Signal(0, "long", 0)], 2, 0), symbol_row("y", "GBPUSD", [], 2, 0)]
+        data = overview_payload(config, {"rows": rows, "scanned_at": 1, "error": ""})
+        self.assertEqual(data["title"], "Svopex TTW (1h)")
+        self.assertEqual(data["rows"], [{"symbol": "EURUSD", "text": "LONG(0)", "kind": "long"}])
+        self.assertEqual(overview_payload({**config, "enabled": False}, {"rows": [], "scanned_at": None,
+                                                                         "error": ""})["note"][:7], "scanner")
+        self.assertIsNone(overview_payload({**config, "overview": {"position": "off", "size": "normal"}}, {}))
+
+
+class IndicatorAlertEngineTest(unittest.IsolatedAsyncioTestCase):
+    """AlertEngine spustí alert na signál indikátoru nad živou svíčkou."""
+
+    async def test_fires_with_signal_text(self) -> None:
+        registry.all_indicators()
+        registry._registry[FakeSignals.id] = FakeSignals()
+        provider = FakeProvider()
+        provider.name = "Fake"
+        provider.symbol_kind = lambda symbol: ""
+        provider.exchange_timezone = lambda symbol: "UTC"
+        provider.price_tick = lambda symbol, price: None
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = KlineCache(Path(tmp) / "test.db")
+            await cache.init()
+            try:
+                from tickview.logic.alerts import normalize_alert
+
+                engine = AlertEngine(cache, provider_lookup=lambda source: provider)
+                spec = normalize_alert({
+                    "source": "fake", "symbol": "HIT", "timeframe": "1h", "condition": "signal",
+                    "trigger": "per_bar", "target": {"type": "indicator", "kind": FakeSignals.id},
+                    "notify": {"telegram": False, "toast": True},
+                })
+                await cache.save_alert(spec)
+                events: list[dict] = []
+                engine.add_listener(events.append)
+                # Bez spuštění streamů (watchery) – svíčky předáme ručně
+                engine._sync_watchers = lambda: None
+                await engine.reload()
+                step = TIMEFRAME_MS["1h"]
+                now = utc_now_ms()
+                await engine._on_candle(("fake", "HIT", "1h"), Candle(now - now % step, 1, 2, 0.5, 1.5, 1))
+                fired = [event for event in events if event["type"] == "fired"]
+                self.assertEqual(len(fired), 1)
+                self.assertEqual(fired[0]["message"], "HIT, 1h Signals LONG ONE")
+            finally:
+                registry._registry.pop(FakeSignals.id, None)
+                await asyncio.sleep(0)
+                await cache.close()
