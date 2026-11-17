@@ -27,21 +27,24 @@ from tickview.logic.styles import (
     CHART_TYPE_SECTIONS,
     CHART_TYPES,
     DEFAULT_DRAWING_COLOR,
+    DEFAULT_FAVORITE_CHART_TYPES,
     DEFAULT_FONT_SIZE,
     DEFAULT_LINE_WIDTH,
     DRAWING_LINE_STYLES,
     DRAWING_LINE_WIDTHS,
     MAX_NAME_LENGTH,
+    TIMEFRAME_SECTIONS,
+    TIMEFRAMES,
     clean_name,
     default_template_key,
     load_chart_style,
-    load_favorite_tools,
+    load_favorites,
     load_panel_position,
     normalize_chart_style,
     normalize_chart_type,
     normalize_color,
     normalize_drawing_style,
-    normalize_favorite_tools,
+    normalize_favorites,
     normalize_panel_position,
 )
 from tickview.logic.sessions import (
@@ -67,6 +70,11 @@ VISIBLE_BARS = 150
 OLDER_LOAD_ATTEMPTS = 4
 # Jak často nejvýš se z živých svíček přepočítají indikátory (sekundy)
 LIVE_INDICATOR_REFRESH_S = 2.0
+# Kratší animace vyskakovacích nabídek a dialogů (Quasar má výchozí 300 ms)
+ui.menu.default_props("transition-duration=90")
+ui.select.default_props("transition-duration=90")
+ui.dialog.default_props("transition-duration=120")
+
 # Složka statických souborů UI (styly, JS grafu, vendored knihovna)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -159,6 +167,13 @@ async def _build_index(cache: KlineCache) -> None:
         "symbol_meta": None,
         "show_volume": show_volume,
         "chart_style": chart_style,
+        "chart_type": saved_chart_type,
+        # Oblíbené typy grafu a timeframy (tlačítka v horní liště, hvězdičky
+        # v nabídkách); klíč ve state je zároveň klíč nastavení
+        "favorite_chart_types": load_favorites(
+            await cache.get_setting("favorite_chart_types"), list(CHART_TYPES), DEFAULT_FAVORITE_CHART_TYPES
+        ),
+        "favorite_timeframes": load_favorites(await cache.get_setting("favorite_timeframes"), TIMEFRAMES, TIMEFRAMES),
         "timezone": saved_timezone,
         "session": saved_session,
     }
@@ -293,9 +308,7 @@ async def _build_index(cache: KlineCache) -> None:
         timeframes = list(provider.timeframes.keys())
         if state["timeframe"] not in timeframes:
             state["timeframe"] = timeframes[0]
-        timeframe_toggle.options = timeframes
-        timeframe_toggle.value = state["timeframe"]
-        timeframe_toggle.update()
+        refresh_timeframes()
         set_badge(None)
         # Pásmo burzy (volba Exchange) a dostupnost přepínače RTH/ETH
         chart.set_timezone(state["timezone"], provider.exchange_timezone(symbol))
@@ -339,9 +352,13 @@ async def _build_index(cache: KlineCache) -> None:
             push_symbol_info()
 
     async def set_timeframe(value) -> None:
-        if not value:
+        # Stejná hodnota = jen programové nastavení přepínače (load_symbol,
+        # refresh_timeframes) – graf už se načítá, znovu ho nespouštíme
+        if not value or str(value) == state["timeframe"]:
             return
         state["timeframe"] = str(value)
+        # Neoblíbený timeframe zvolený z nabídky je v liště jen dočasně
+        refresh_timeframes()
         push_symbol_info()
         await cache.set_setting("last_timeframe", str(value))
         await reload_chart()
@@ -606,16 +623,120 @@ async def _build_index(cache: KlineCache) -> None:
         asyncio.create_task(run())
 
     async def set_chart_type(chart_type: str) -> None:
-        # Typ grafu z nabídky v horní liště: graf, ikona tlačítka, zvýraznění; přetrvá restart
+        # Typ grafu z lišty nebo nabídky: graf, tlačítka v liště, zvýraznění; přetrvá restart
         chart_type = normalize_chart_type(chart_type)
+        state["chart_type"] = chart_type
         chart.set_chart_type(chart_type)
-        chart_type_icon.content = svg(CHART_TYPES[chart_type][1])
-        mark_active(chart_type_items, chart_type)
+        render_chart_type_bar()
         await cache.set_setting("chart_type", chart_type)
 
     def make_chart_type_click(chart_type: str):
         async def _handler() -> None:
             await set_chart_type(chart_type)
+
+        return _handler
+
+    # Prvky hvězdiček v nabídkách: (klíč oblíbených, hodnota) -> (span, ikona)
+    menu_stars: dict = {}
+
+    def favorite_star(key: str, value: str, allowed: list[str], on_change) -> None:
+        # Hvězdička položky nabídky: přidá / odebere oblíbenou položku (state[key]
+        # = klíč nastavení); .stop zabrání zároveň výběru položky a zavření nabídky
+        async def toggle() -> None:
+            state[key] = normalize_favorites(list(set(state[key]) ^ {value}), allowed)
+            paint_star(key, value)
+            on_change()
+            await cache.set_setting(key, json.dumps(state[key]))
+
+        with ui.element("span").classes("menu-star").on("click.stop", toggle) as span:
+            icon = icon_html("star_border")
+        menu_stars[(key, value)] = (span, icon)
+        paint_star(key, value)
+
+    def paint_star(key: str, value: str) -> None:
+        # Plná žlutá hvězdička = oblíbená položka
+        span, icon = menu_stars[(key, value)]
+        active = value in state[key]
+        span.classes(add="on" if active else "", remove="" if active else "on")
+        icon.content = svg("star" if active else "star_border")
+
+    def bar_items(allowed: list[str], key: str, current: str) -> list[str]:
+        # Položky lišty: oblíbené a vždy aktuální, v pořadí nabídky
+        return [item for item in allowed if item in state[key] or item == current]
+
+    def render_chart_type_bar() -> None:
+        # Horní lišta: tlačítka oblíbených typů grafu (a aktuální typ, i když
+        # oblíbený není) jako v TradingView; v nabídce jen zvýrazní aktuální typ
+        current = state["chart_type"]
+        chart_type_bar.clear()
+        with chart_type_bar:
+            for type_id in bar_items(list(CHART_TYPES), "favorite_chart_types", current):
+                label, icon = CHART_TYPES[type_id]
+                with (
+                    ui.button(color=None, on_click=make_chart_type_click(type_id))
+                    .props("flat dense")
+                    .classes("chart-type-btn" + (" chart-type-btn-active" if type_id == current else ""))
+                    .tooltip(label)
+                ):
+                    icon_html(icon)
+        mark_active(chart_type_items, current)
+
+    def build_chart_type_menu() -> None:
+        # Nabídka všech typů grafu po sekcích s hvězdičkami (staví se jednou)
+        with chart_type_menu:
+            for section_index, section in enumerate(CHART_TYPE_SECTIONS):
+                if section_index:
+                    ui.separator()
+                for type_id, type_label, type_icon in section:
+                    with ui.menu_item(on_click=make_chart_type_click(type_id)).classes("menu-fav-item") as item:
+                        icon_html(type_icon)
+                        ui.label(type_label)
+                        ui.space()
+                        favorite_star("favorite_chart_types", type_id, list(CHART_TYPES), render_chart_type_bar)
+                    chart_type_items[type_id] = item
+
+    # ---------- timeframy (oblíbené v liště, všechny v nabídce) ----------
+
+    def supported_timeframes() -> list[str]:
+        # Timeframy aktuálního zdroje v pořadí nabídky (bez zdroje všechny)
+        provider = state.get("provider")
+        supported = set(provider.timeframes) if provider else set(TIMEFRAMES)
+        return [timeframe for timeframe in TIMEFRAMES if timeframe in supported]
+
+    def refresh_timeframes() -> None:
+        # Lišta: oblíbené timeframy, které zdroj podporuje, a vždy aktuální;
+        # nabídka se přestaví jen při změně podporovaných timeframů (jiný zdroj)
+        supported = supported_timeframes()
+        current = state["timeframe"]
+        timeframe_toggle.options = bar_items(supported, "favorite_timeframes", current)
+        timeframe_toggle.value = current
+        timeframe_toggle.update()
+        if state.get("timeframe_menu_for") != supported:
+            state["timeframe_menu_for"] = supported
+            build_timeframe_menu(supported)
+        mark_active(timeframe_items, current)
+
+    def build_timeframe_menu(supported: list[str]) -> None:
+        # Nabídka podporovaných timeframů po sekcích (Minuty, Hodiny, Dny) s hvězdičkami
+        timeframe_menu.clear()
+        timeframe_items.clear()
+        with timeframe_menu:
+            for section_title, items in TIMEFRAME_SECTIONS:
+                available = [(t, label) for t, label in items if t in supported]
+                if not available:
+                    continue
+                ui.label(section_title).classes("menu-section")
+                for timeframe, label in available:
+                    with ui.menu_item(on_click=make_timeframe_click(timeframe)).classes("menu-fav-item") as item:
+                        ui.label(label)
+                        ui.space()
+                        favorite_star("favorite_timeframes", timeframe, TIMEFRAMES, refresh_timeframes)
+                    timeframe_items[timeframe] = item
+
+    def make_timeframe_click(timeframe: str):
+        async def _handler() -> None:
+            # Výběr z nabídky: refresh_timeframes v set_timeframe ho zobrazí i v liště
+            await set_timeframe(timeframe)
 
         return _handler
 
@@ -726,12 +847,12 @@ async def _build_index(cache: KlineCache) -> None:
 
     async def save_favorites(modes) -> None:
         # Oblíbené nástroje z hvězdiček ve flyoutu (JS je už zobrazil)
-        favorites = normalize_favorite_tools(modes, TOOL_MODES)
+        favorites = normalize_favorites(modes, TOOL_MODES)
         await cache.set_setting("favorite_tools", json.dumps(favorites))
         show_status(f"Oblíbené nástroje: {len(favorites)}." if favorites else "Žádné oblíbené nástroje.")
 
     async def save_favorites_position(left, top) -> None:
-        # Pozice plovoucího panelu po přetažení (px vůči grafu)
+        # Pozice plovoucího panelu po přetažení (px vůči oknu)
         position = normalize_panel_position({"left": left, "top": top})
         if position:
             await cache.set_setting("favorites_position", json.dumps(position))
@@ -751,7 +872,7 @@ async def _build_index(cache: KlineCache) -> None:
 
     async def restore_favorites() -> None:
         # Oblíbené nástroje, pozice a viditelnost panelu z minula (po init grafu)
-        favorites = load_favorite_tools(await cache.get_setting("favorite_tools"), TOOL_MODES)
+        favorites = load_favorites(await cache.get_setting("favorite_tools"), TOOL_MODES)
         position = load_panel_position(await cache.get_setting("favorites_position"))
         state["favorites_visible"] = (await cache.get_setting("favorites_visible", "1")) != "0"
         paint_favorites_button()
@@ -1194,8 +1315,16 @@ async def _build_index(cache: KlineCache) -> None:
         return next((item for item in lists if str(item["id"]) == saved), lists[0])
 
     def render_watchlist_menu(lists: list[dict]) -> None:
-        # Nabídka seznamů: přepnutí (s počtem symbolů) a správa aktivního seznamu
+        # Nabídka seznamů: přepnutí (s počtem symbolů) a správa aktivního seznamu;
+        # pod hlavičkou kulatá tlačítka s iniciálou pro rychlé přepnutí (jako v TradingView)
         watchlist_button.text = state["watchlist_name"]
+        watchlist_quick.clear()
+        with watchlist_quick:
+            for item in lists:
+                active = item["id"] == state["watchlist_id"]
+                ui.button(item["name"][:1].upper(), color=None, on_click=make_switch_watchlist(item["id"])).props(
+                    "flat dense round no-caps"
+                ).classes("wl-quick-btn" + (" active" if active else "")).tooltip(item["name"])
         watchlist_menu.clear()
         with watchlist_menu:
             for item in lists:
@@ -1319,7 +1448,8 @@ async def _build_index(cache: KlineCache) -> None:
         await push_drawing_defaults()
         await restore_favorites()
         mark_active(timezone_items, state["timezone"])
-        mark_active(chart_type_items, saved_chart_type)
+        build_chart_type_menu()
+        render_chart_type_bar()
         refresh_session_button()
         await load_symbol(last_symbol)
 
@@ -1604,20 +1734,23 @@ async def _build_index(cache: KlineCache) -> None:
                     "symbol-search"
                 ).props("debounce=300 outlined dense")
                 suggestions_container = ui.column().classes("autocomplete hidden")
-            timeframe_toggle = ui.toggle(options=[], value=None).classes("timeframes")
-            # Typ grafu jako v TradingView: tlačítko s ikonou aktuálního typu a nabídka po sekcích
-            with ui.button(color=None).props("flat dense").classes("chart-type-btn").tooltip("Typ grafu"):
-                chart_type_icon = icon_html(CHART_TYPES[saved_chart_type][1])
-                with ui.menu().classes("chart-type-menu"):
-                    chart_type_items = {}
-                    for section_index, section in enumerate(CHART_TYPE_SECTIONS):
-                        if section_index:
-                            ui.separator()
-                        for type_id, type_label, type_icon in section:
-                            with ui.menu_item(on_click=make_chart_type_click(type_id)).classes("chart-type-item") as item:
-                                icon_html(type_icon)
-                                ui.label(type_label)
-                            chart_type_items[type_id] = item
+            # Položky nabídek timeframů a typů grafu (zvýraznění aktuální přes mark_active)
+            timeframe_items: dict = {}
+            chart_type_items: dict = {}
+            # Timeframy jako v TradingView: oblíbené v liště, šipka otevře všechny s hvězdičkami
+            with ui.row().classes("tf-bar tf-bar-timeframes"):
+                timeframe_toggle = ui.toggle(options=[], value=None).classes("timeframes")
+                with ui.button(icon="expand_more", color=None).props("flat dense").classes("bar-arrow").tooltip(
+                    "Všechny timeframy"
+                ):
+                    timeframe_menu = ui.menu().classes("tf-menu")
+            # Typ grafu: tlačítka oblíbených typů a šipka s nabídkou všech typů
+            with ui.row().classes("tf-bar"):
+                chart_type_bar = ui.row().classes("chart-type-bar")
+                with ui.button(icon="expand_more", color=None).props("flat dense").classes("bar-arrow").tooltip(
+                    "Typ grafu"
+                ):
+                    chart_type_menu = ui.menu().classes("chart-type-menu")
             source_badge = ui.badge("—").classes("source-badge")
             theme_switch = ui.switch("Tmavý motiv", value=dark)
             ui.button("Indikátory", icon="add_chart", on_click=open_indicator_dialog).props(
@@ -1638,6 +1771,8 @@ async def _build_index(cache: KlineCache) -> None:
                     ui.button(icon="playlist_add", on_click=watchlist_add_current).props(
                         "flat dense size=sm"
                     ).classes("watch-add")
+                # Rychlé přepínání seznamů (kulatá tlačítka s iniciálou názvu)
+                watchlist_quick = ui.row().classes("wl-quick w-full")
                 watchlist_body = ui.column().classes("watchlist-body w-full")
             with ui.column().classes("content-col"):
                 with ui.row().classes("chart-area w-full"):
@@ -1680,7 +1815,7 @@ async def _build_index(cache: KlineCache) -> None:
                         on_ready=initial_load,
                         show_volume=show_volume,
                         chart_style=chart_style,
-                        chart_type=saved_chart_type,
+                        chart_type=state["chart_type"],
                     )
                     # Definice skupin pro flyout nabídky lišty a SVG ikony (můžou
                     # přijít i před init grafu)

@@ -193,7 +193,7 @@ class LightweightChart(ui.element):
 
         Parametry:
             modes: režimy oblíbených nástrojů.
-            position: pozice panelu {"left", "top"} v px vůči grafu (None = nahoře uprostřed).
+            position: pozice panelu {"left", "top"} v px vůči oknu (None = nahoře uprostřed grafu).
             visible: zda panel zobrazit.
         """
         self._call("setFavorites", modes, position, visible)

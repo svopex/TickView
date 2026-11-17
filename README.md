@@ -145,11 +145,20 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   „Vyprázdnit seznam“ a „Smazat seznam“ (s potvrzením; poslední seznam smazat
   nejde). Stejný symbol může být ve více seznamech; vyhledávání i tlačítko +
   přidávají do aktivního seznamu, aktivní seznam se pamatuje. Původní jediný
-  watchlist se při prvním spuštění převede do seznamu „Watchlist“.
-- Typ grafu jako v TradingView (tlačítko s ikonou vedle timeframů): Bars,
-  Candles, Hollow candles, Line, Line with markers, Step line, Area,
-  Baseline (základna v polovině rozpětí dat), Columns, High-low a Heikin Ashi;
-  barvy růstu / poklesu bere ze Settings grafu, volba se ukládá.
+  watchlist se při prvním spuštění převede do seznamu „Watchlist“. Pod
+  hlavičkou jsou kulatá tlačítka s iniciálou každého seznamu pro rychlé
+  přepnutí (aktivní seznam je plný, tooltip ukazuje celý název).
+- Typ grafu jako v TradingView: Bars, Candles, Hollow candles, Line, Line
+  with markers, Step line, Area, Baseline (základna v polovině rozpětí dat),
+  Columns, High-low a Heikin Ashi; barvy růstu / poklesu bere ze Settings
+  grafu, volba se ukládá. V horní liště jsou tlačítka oblíbených typů
+  (a aktuální typ), šipka vedle nich otevře nabídku všech typů – hvězdička
+  u typu ho přidá do lišty / odebere (výchozí oblíbený je Candles).
+- Timeframy jako v TradingView: v liště jen oblíbené (výchozí všechny),
+  šipka vedle nich otevře nabídku všech timeframů zdroje po sekcích (Minuty,
+  Hodiny, Dny) s hvězdičkami; timeframe zvolený z nabídky, který oblíbený
+  není, je v liště jen dočasně. Oblíbené se ukládají.
+- Vyskakovací nabídky mají zkrácenou animaci (90 ms, dialogy 120 ms).
 - Měřič jako v TradingView: obdélník modrý při růstu / červený při poklesu,
   šipky středem (cena svisle, čas vodorovně) a štítek s Δcenou, % a počtem
   ticků, počtem barů a délkou úseku a součtem objemu.
@@ -191,8 +200,9 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   vrátí tovární hodnoty. Šablony se ukládají do SQLite.
 - Oblíbené nástroje: ve flyout nabídce nástrojů je u každého nástroje
   hvězdička, u skupin s jediným nástrojem (kurzor, měřič) pravý klik na
-  tlačítko lišty. Oblíbené nástroje se ukazují v plovoucím panelu nad grafem
-  (výchozí pozice nahoře uprostřed), který lze přetáhnout za úchop ⋮⋮;
+  tlačítko lišty. Oblíbené nástroje se ukazují v plovoucím panelu (výchozí
+  pozice nahoře uprostřed grafu), který lze přetáhnout za úchop ⋮⋮ kamkoli
+  v okně, i nad horní lištu;
   klik nástroj vybere, pravý klik ho z oblíbených odebere. Tlačítko hvězdy
   v liště panel skryje / zobrazí. Oblíbené, pozice i viditelnost panelu se
   ukládají. Lišta má skupiny jako TradingView – čáry, kanály a pitchforky

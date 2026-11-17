@@ -27,14 +27,14 @@ from tickview.logic.styles import (
     clean_name,
     delete_template,
     load_chart_style,
-    load_favorite_tools,
+    load_favorites,
     load_panel_position,
     load_templates,
     normalize_chart_style,
     normalize_chart_type,
     normalize_color,
     normalize_drawing_style,
-    normalize_favorite_tools,
+    normalize_favorites,
     normalize_panel_position,
     save_template,
 )
@@ -507,15 +507,18 @@ class StylesTest(unittest.TestCase):
     def test_favorite_tools(self) -> None:
         allowed = ["cursor", "trend", "hline", "fib"]
         # Pořadí podle lišty, neznámé a duplicitní režimy vynechány
-        self.assertEqual(load_favorite_tools('["fib", "nope", "trend", "fib"]', allowed), ["trend", "fib"])
-        self.assertEqual(load_favorite_tools("{}", allowed), [])
-        self.assertEqual(load_favorite_tools("x", allowed), [])
+        self.assertEqual(load_favorites('["fib", "nope", "trend", "fib"]', allowed), ["trend", "fib"])
+        self.assertEqual(load_favorites("{}", allowed), [])
+        self.assertEqual(load_favorites("x", allowed), [])
+        # Dosud neuložené oblíbené = výchozí; uložený prázdný seznam zůstane prázdný
+        self.assertEqual(load_favorites(None, allowed, ["hline", "cursor"]), ["cursor", "hline"])
+        self.assertEqual(load_favorites("[]", allowed, ["hline"]), [])
         self.assertEqual(load_panel_position('{"left": 10.6, "top": -5}'), {"left": 10, "top": 0})
         self.assertIsNone(load_panel_position('{"left": true, "top": 1}'))
         self.assertIsNone(load_panel_position(None))
         # Hodnoty přímo z události JS (bez JSON)
-        self.assertEqual(normalize_favorite_tools(["hline", 5], allowed), ["hline"])
-        self.assertEqual(normalize_favorite_tools("trend", allowed), [])
+        self.assertEqual(normalize_favorites(["hline", 5], allowed), ["hline"])
+        self.assertEqual(normalize_favorites("trend", allowed), [])
         self.assertEqual(normalize_panel_position({"left": 3, "top": 4}), {"left": 3, "top": 4})
 
 

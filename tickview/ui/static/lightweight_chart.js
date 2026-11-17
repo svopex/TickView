@@ -711,7 +711,7 @@ window.TickViewChart = (function () {
       drawingDefaults: {},
       // Styl svíček (Settings grafu)
       chartStyle: options.chartStyle,
-      // Oblíbené nástroje (plovoucí panel): pořadí, pozice v px vůči grafu, viditelnost
+      // Oblíbené nástroje (plovoucí panel): pořadí, pozice v px vůči oknu, viditelnost
       favorites: [],
       favoritesPos: null,
       favoritesVisible: true,
@@ -1005,8 +1005,9 @@ window.TickViewChart = (function () {
         showContextMenu(event.clientX, event.clientY, [favoriteMenuItem(s, tools[0].mode)]);
       });
     }
-    // Plovoucí panel oblíbených zůstává při změně velikosti grafu uvnitř
+    // Po změně velikosti grafu i okna zůstane panel oblíbených celý viditelný
     new ResizeObserver(() => positionFavorites(s)).observe(container);
+    window.addEventListener('resize', () => positionFavorites(s));
 
     // Klik mimo lištu a flyout nabídku flyout zavře; klik mimo kontextové menu ho zavře
     document.addEventListener('click', (event) => {
@@ -1205,7 +1206,9 @@ window.TickViewChart = (function () {
       handle.title = 'Přesunout panel';
       panel.appendChild(handle);
       attachFavoritesDrag(s, panel, handle);
-      s.container.appendChild(panel);
+      // Panel je v body s position: fixed – lze ho přesunout kamkoli v okně
+      // (i nad horní lištu), ne jen v ploše grafu
+      document.body.appendChild(panel);
       s.favoritesEl = panel;
     }
     panel.classList.remove('hidden');
@@ -1237,9 +1240,11 @@ window.TickViewChart = (function () {
   function positionFavorites(s) {
     const panel = s.favoritesEl;
     if (!panel || panel.classList.contains('hidden')) return;
-    const maxLeft = Math.max(0, s.container.clientWidth - panel.offsetWidth);
-    const maxTop = Math.max(0, s.container.clientHeight - panel.offsetHeight);
-    const pos = s.favoritesPos || { left: (s.container.clientWidth - panel.offsetWidth) / 2, top: 6 };
+    // Pozice v px vůči oknu; bez uložené pozice nahoře uprostřed grafu
+    const maxLeft = Math.max(0, window.innerWidth - panel.offsetWidth);
+    const maxTop = Math.max(0, window.innerHeight - panel.offsetHeight);
+    const chart = s.container.getBoundingClientRect();
+    const pos = s.favoritesPos || { left: chart.left + (chart.width - panel.offsetWidth) / 2, top: chart.top + 6 };
     panel.style.left = Math.round(Math.min(maxLeft, Math.max(0, pos.left))) + 'px';
     panel.style.top = Math.round(Math.min(maxTop, Math.max(0, pos.top))) + 'px';
   }
@@ -1251,7 +1256,8 @@ window.TickViewChart = (function () {
       event.preventDefault();
       event.stopPropagation();
       handle.setPointerCapture(event.pointerId);
-      start = { x: event.clientX, y: event.clientY, left: panel.offsetLeft, top: panel.offsetTop };
+      const rect = panel.getBoundingClientRect();
+      start = { x: event.clientX, y: event.clientY, left: rect.left, top: rect.top };
       panel.classList.add('dragging');
     });
     handle.addEventListener('pointermove', (event) => {
@@ -1263,8 +1269,9 @@ window.TickViewChart = (function () {
       if (!start) return;
       start = null;
       panel.classList.remove('dragging');
-      // Uložíme skutečnou (ořezanou) pozici, ne pozici kurzoru mimo graf
-      s.favoritesPos = { left: panel.offsetLeft, top: panel.offsetTop };
+      // Uložíme skutečnou (ořezanou) pozici, ne pozici kurzoru mimo okno
+      const rect = panel.getBoundingClientRect();
+      s.favoritesPos = { left: Math.round(rect.left), top: Math.round(rect.top) };
       s.finishedQueue.push({ type: 'favorites_position', left: s.favoritesPos.left, top: s.favoritesPos.top });
     };
     handle.addEventListener('pointerup', finish);
@@ -1916,8 +1923,8 @@ window.TickViewChart = (function () {
   }
 
   // Oblíbené nástroje z nastavení: seznam režimů, uložená pozice panelu
-  // ({left, top} v px vůči grafu, null = nahoře uprostřed) a viditelnost
-  // (Python je už zkontroloval – normalize_favorite_tools / normalize_panel_position)
+  // ({left, top} v px vůči oknu, null = nahoře uprostřed grafu) a viditelnost
+  // (Python je už zkontroloval – normalize_favorites / normalize_panel_position)
   function setFavorites(id, modes, position, visible) {
     const s = state.get(id);
     if (!s) return;

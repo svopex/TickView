@@ -88,6 +88,17 @@ CHART_TYPES: dict[str, tuple[str, str]] = {
     type_id: (label, icon) for section in CHART_TYPE_SECTIONS for type_id, label, icon in section
 }
 DEFAULT_CHART_TYPE = "candles"
+# Výchozí oblíbené typy grafu (tlačítka v horní liště)
+DEFAULT_FAVORITE_CHART_TYPES = ["candles"]
+
+# Timeframy po sekcích nabídky (jako v TradingView): (nadpis, [(timeframe, popisek)])
+TIMEFRAME_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
+    ("Minuty", [("1m", "1 minuta"), ("2m", "2 minuty"), ("5m", "5 minut"), ("10m", "10 minut"), ("15m", "15 minut")]),
+    ("Hodiny", [("1h", "1 hodina"), ("4h", "4 hodiny")]),
+    ("Dny", [("1D", "1 den"), ("1W", "1 týden")]),
+]
+# Všechny timeframy v pořadí nabídky
+TIMEFRAMES: list[str] = [timeframe for _, items in TIMEFRAME_SECTIONS for timeframe, _ in items]
 
 
 def normalize_chart_type(value) -> str:
@@ -217,28 +228,35 @@ def delete_template(templates: dict[str, dict], name: str) -> dict[str, dict]:
     return {key: value for key, value in templates.items() if key != name}
 
 
-def normalize_favorite_tools(modes, allowed: list[str]) -> list[str]:
-    """Zkontroluje oblíbené nástroje (plovoucí panel) z JS nebo z nastavení.
+def normalize_favorites(values, allowed: list[str]) -> list[str]:
+    """Zkontroluje oblíbené položky (nástroje kreslení, typy grafu, timeframy).
 
-    Neznámé a duplicitní režimy vynechá; pořadí odpovídá pořadí nástrojů
-    v liště (allowed), stejně jako v plovoucím panelu.
+    Neznámé a duplicitní hodnoty vynechá; pořadí odpovídá pořadí v allowed
+    (pořadí lišty / nabídky), stejně jako se oblíbené zobrazují.
 
     Parametry:
-        modes: seznam režimů, např. ["trend", "hline"] (jiný typ = prázdný seznam).
-        allowed: všechny režimy nástrojů v pořadí lišty.
+        values: seznam hodnot, např. ["trend", "hline"] (jiný typ = prázdný seznam).
+        allowed: všechny povolené hodnoty v pořadí zobrazení.
     """
-    if not isinstance(modes, list):
+    if not isinstance(values, list):
         return []
-    wanted = {item for item in modes if isinstance(item, str)}
-    return [mode for mode in allowed if mode in wanted]
+    wanted = {item for item in values if isinstance(item, str)}
+    return [value for value in allowed if value in wanted]
 
 
-def load_favorite_tools(raw: str | None, allowed: list[str]) -> list[str]:
-    """Načte oblíbené nástroje z JSON nastavení (viz normalize_favorite_tools)."""
+def load_favorites(raw: str | None, allowed: list[str], default: list[str] | None = None) -> list[str]:
+    """Načte oblíbené položky z JSON nastavení (viz normalize_favorites).
+
+    Parametry:
+        raw: JSON seznam z nastavení, nebo None (dosud neuloženo).
+        allowed: povolené hodnoty v pořadí zobrazení.
+        default: oblíbené, když nastavení ještě neexistuje.
+    """
     try:
-        return normalize_favorite_tools(json.loads(raw or "[]"), allowed)
+        values = default if raw is None else json.loads(raw)
     except ValueError:
-        return []
+        values = default
+    return normalize_favorites(values, allowed)
 
 
 def normalize_panel_position(data) -> dict | None:

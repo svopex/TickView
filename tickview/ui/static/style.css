@@ -17,6 +17,16 @@
   color-scheme: dark;
 }
 
+/* Vrstvy plovoucích prvků (pod nabídkami a dialogy Quasaru – ty mají 6000,
+   tooltipy 9000): panel oblíbených < flyout nástrojů < kontextové menu;
+   výběr barvy leží nad dialogem (je vkládaný do něj) */
+:root {
+  --z-floating-panel: 1500;
+  --z-popover: 2000;
+  --z-contextmenu: 2100;
+  --z-color-picker: 8000;
+}
+
 /* Sloupec: horní lišta + graf + stavová lišta */
 .page-root {
   height: 100vh;
@@ -24,10 +34,11 @@
   overflow: hidden;
 }
 
-/* Horní lišta s vyhledáváním, timeframy a přepínačem motivu; na úzkém okně zalamuje */
+/* Horní lišta v jednom řádku; při nedostatku místa se zúží vyhledávání
+   a timeframy se posouvají vodorovně (lišta se nezalamuje) */
 .topbar {
-  flex-wrap: wrap;
-  gap: 12px !important;
+  flex-wrap: nowrap;
+  gap: 10px !important;
   align-items: center;
   padding: 8px 16px;
   border-bottom: 1px solid rgba(128, 128, 128, 0.25);
@@ -42,9 +53,9 @@
 /* Sloučené vyhledávání: pole + návrhy symbolů v dropdownu */
 .search-wrap {
   position: relative;
-  min-width: 340px;
-  flex: 1 1 auto;
-  max-width: 480px;
+  min-width: 180px;
+  flex: 1 1 340px;
+  max-width: 420px;
 }
 
 .symbol-search {
@@ -288,6 +299,19 @@
 /* Timeframy přesně tak, jak je definuje zdroj (bez transformace na velká písmena) */
 .timeframes .q-btn {
   text-transform: none;
+  padding: 0 10px;
+}
+
+/* Timeframy se smí zúžit (posuvník místo zalomení lišty) */
+.tf-bar-timeframes {
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.tf-bar .timeframes {
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 
 /* Panely indikátorů (RSI/MACD) pod hlavním grafem */
@@ -404,7 +428,8 @@
 }
 
 .drawing-btn-active,
-.drawing-toolbar .drawing-btn.drawing-btn-active {
+.drawing-toolbar .drawing-btn.drawing-btn-active,
+.chart-type-btn.chart-type-btn-active {
   background: rgba(41, 98, 255, 0.15);
   color: #2962ff;
 }
@@ -549,7 +574,7 @@
 /* Flyout nabídka skupiny nástrojů (vysouvá se vedle lišty jako v TradingView) */
 .tool-flyout {
   position: absolute;
-  z-index: 80;
+  z-index: var(--z-popover);
   display: flex;
   flex-direction: column;
   min-width: 220px;
@@ -733,26 +758,46 @@
 /* Pravoklikové menu nad kresbou */
 .drawing-contextmenu {
   position: fixed;
-  z-index: 100;
-  min-width: 200px;
-  padding: 4px;
-  gap: 2px;
+  z-index: var(--z-contextmenu);
+  min-width: 220px;
+  padding: 6px;
   background: #ffffff;
-  border: 1px solid rgba(128, 128, 128, 0.45);
-  border-radius: 4px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  border-radius: 6px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
 }
 
 .body--dark .drawing-contextmenu {
   background: #1e222d;
 }
 
+/* Položka: ikona a popisek s mezerou, vyšší řádek jako v TradingView */
 .drawing-contextmenu-item {
-  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 36px;
+  padding: 6px 14px 6px 10px;
   border-radius: 4px;
-  font-size: 13px;
+  font-size: 14px;
   cursor: pointer;
   white-space: nowrap;
+}
+
+.drawing-contextmenu-item:hover {
+  background: rgba(128, 128, 128, 0.15);
+}
+
+.drawing-contextmenu-icon {
+  width: 20px;
+  font-size: 18px !important;
+  text-align: center;
+  color: #808080;
+}
+
+.drawing-contextmenu-item.danger,
+.drawing-contextmenu-item.danger .drawing-contextmenu-icon {
+  color: #f23645;
 }
 
 .body--dark .drawing-contextmenu-item {
@@ -843,7 +888,7 @@
 /* Vyskakovací panel s paletou */
 .tv-color-picker {
   position: fixed;
-  z-index: 9000;
+  z-index: var(--z-color-picker);
   pointer-events: auto;
   width: 232px;
   padding: 12px;
@@ -1024,7 +1069,8 @@
 /* Nadpis sekce v dialogu Settings (SVÍČKY, INPUTS…) a ve flyoutu nástrojů
    (ČÁRY, KANÁLY…) – stejné písmo, liší se jen odsazením */
 .tv-settings-section,
-.tool-flyout-section {
+.tool-flyout-section,
+.menu-section {
   font-size: 11px;
   letter-spacing: 1px;
   text-transform: uppercase;
@@ -1077,15 +1123,17 @@
   color: inherit;
 }
 
-/* Nabídky šablon, seznamů symbolů a typů grafu */
+/* Nabídky šablon, seznamů symbolů, typů grafu a timeframů */
 .tpl-menu,
 .wl-menu,
-.chart-type-menu {
+.chart-type-menu,
+.tf-menu {
   min-width: 220px;
 }
 
 .tpl-item,
-.wl-item {
+.wl-item,
+.menu-fav-item {
   min-height: 36px;
   font-size: 14px;
 }
@@ -1123,32 +1171,42 @@
   padding: 8px 10px 2px;
 }
 
-/* Hvězdička oblíbeného nástroje vpravo v položce flyoutu */
-.tool-flyout-star {
-  width: 20px;
-  height: 20px;
+/* Hvězdička oblíbené položky: vpravo ve flyoutu nástrojů a v nabídkách typů
+   grafu a timeframů; viditelná při najetí na položku, oblíbená žlutá */
+.tool-flyout-star,
+.menu-star {
   margin-left: auto;
   color: #808080;
   opacity: 0;
+  cursor: pointer;
+}
+
+.tool-flyout-star {
+  width: 20px;
+  height: 20px;
 }
 
 .tool-flyout-item:hover .tool-flyout-star,
-.tool-flyout-star.on {
+.q-item:hover .menu-star,
+.tool-flyout-star.on,
+.menu-star.on {
   opacity: 1;
 }
 
-.tool-flyout-star:hover {
+.tool-flyout-star:hover,
+.menu-star:hover {
   color: #2962ff;
 }
 
-.tool-flyout-star.on {
+.tool-flyout-star.on,
+.menu-star.on {
   color: #f7b500;
 }
 
 /* Plovoucí panel oblíbených nástrojů nad grafem */
 .fav-toolbar {
-  position: absolute;
-  z-index: 20;
+  position: fixed;
+  z-index: var(--z-floating-panel);
   display: flex;
   align-items: center;
   gap: 2px;
@@ -1214,11 +1272,69 @@
   color: #2962ff;
 }
 
-/* ---------- Typ grafu (nabídka v horní liště) ---------- */
+/* ---------- Oblíbené timeframy a typy grafu v horní liště ---------- */
 
-.chart-type-item {
+.tf-bar,
+.chart-type-bar {
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 2px !important;
+}
+
+/* Šipka otevírající nabídku všech položek */
+.bar-arrow {
+  min-width: 24px;
+  padding: 0 2px;
+  color: inherit;
+}
+
+/* Položka nabídky s ikonou / popiskem a hvězdičkou vpravo */
+.menu-fav-item {
   align-items: center;
   gap: 12px;
-  min-height: 38px;
-  font-size: 14px;
+}
+
+/* Nadpis sekce v nabídce timeframů (MINUTY, HODINY, DNY) */
+.menu-section {
+  padding: 10px 16px 4px;
+}
+
+.menu-star {
+  display: inline-flex;
+  padding-left: 16px;
+}
+
+.menu-star .tv-icon-wrap {
+  width: 22px;
+  height: 22px;
+}
+
+/* ---------- Rychlé přepínání seznamů symbolů ---------- */
+
+.wl-quick {
+  gap: 6px !important;
+  padding: 2px 4px 6px;
+}
+
+/* Kulaté tlačítko s iniciálou seznamu; aktivní seznam plné */
+.wl-quick-btn {
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid rgba(128, 128, 128, 0.5);
+  color: inherit;
+}
+
+.body--dark .wl-quick-btn.active {
+  background: #d1d4dc;
+  color: #131722;
+}
+
+.body--light .wl-quick-btn.active {
+  background: #131722;
+  color: #ffffff;
 }
