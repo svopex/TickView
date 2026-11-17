@@ -2410,24 +2410,21 @@ async def _build_index(
         return state["right_panel"] == "alerts"
 
     async def refresh_alerts_ui(with_log: bool = True) -> None:
-        """Počet aktivních alertů na pravé liště, čáry alertů v grafu a otevřený panel.
+        """Čáry alertů v grafu a otevřený panel Alerty.
 
         Parametry:
             with_log: překreslit i log (spuštění alertu ho obnoví samo přes log_changed).
         """
         alerts = await cache.alerts()
         state["alerts"] = alerts
-        active_count = sum(1 for alert in alerts if alert["active"])
-        alerts_badge.text = str(active_count)
-        alerts_badge.set_visibility(active_count > 0)
         await push_alert_lines(alerts)
         await render_alerts_panel(with_log)
 
     async def render_alerts_panel(with_log: bool = True) -> None:
-        # Seznam (z naposledy načtených alertů) a log otevřeného panelu Alerty
-        if not alerts_visible():
-            return
-        render_alerts_list()
+        # Seznam (z naposledy načtených alertů) otevřeného panelu Alerty; log
+        # obnoví i při zavřeném panelu aspoň odznaky nepřečtených
+        if alerts_visible():
+            render_alerts_list()
         if with_log:
             await render_alert_log()
 
@@ -2545,14 +2542,26 @@ async def _build_index(
 
         return _handler
 
+    def paint_log_badges(unseen_count: int) -> None:
+        """Počet nepřečtených záznamů logu v bublině tlačítka Alerty na pravé liště
+        i v odznaku u přepínače Log (nula odznaky skryje).
+
+        Parametry:
+            unseen_count: počet nepřečtených záznamů logu.
+        """
+        for badge in (alerts_badge, log_badge):
+            badge.text = str(unseen_count)
+            badge.set_visibility(unseen_count > 0)
+
     async def render_alert_log() -> None:
         # Log spuštěných alertů s výsledkem odeslání notifikací; počet
-        # nepřečtených záznamů ukazuje odznak u přepínače Log, klik na řádek
-        # záznam označí jako přečtený
+        # nepřečtených záznamů ukazují odznaky, klik na řádek záznam označí
+        # jako přečtený. Při zavřeném panelu stačí odznaky (jen počet z cache)
+        if not alerts_visible():
+            paint_log_badges(await cache.unseen_alert_log_count())
+            return
         entries = await cache.alert_log()
-        unseen_count = sum(1 for entry in entries if not entry["seen"])
-        log_badge.text = str(unseen_count)
-        log_badge.set_visibility(unseen_count > 0)
+        paint_log_badges(sum(1 for entry in entries if not entry["seen"]))
         alert_log_list.clear()
         with alert_log_list:
             if not entries:
@@ -2581,10 +2590,6 @@ async def _build_index(
                                     )
                                     if result.get("error"):
                                         chip.tooltip(result["error"])
-
-    async def clear_alert_log() -> None:
-        await cache.clear_alert_log()
-        await render_alert_log()
 
     def set_alerts_tab(tab: str) -> None:
         """Přepne obsah panelu Alerty mezi seznamem alertů a logem spuštění."""
@@ -2683,9 +2688,9 @@ async def _build_index(
         # v kontextu stránky, seznam a čáry se obnoví asynchronně
         event_type = event.get("type")
         if event_type == "log_changed":
-            # Nový záznam logu mění jen otevřený log (seznam ani čáry ne)
-            if alerts_visible():
-                background_tasks.create(render_alert_log())
+            # Nový / přečtený / vymazaný záznam logu mění jen log a odznaky
+            # nepřečtených (seznam ani čáry ne)
+            background_tasks.create(render_alert_log())
             return
         if event_type in ("fired", "notification"):
             with page_root:
@@ -3192,7 +3197,9 @@ async def _build_index(
                             "alert-btn"
                         ).tooltip("Další akce"):
                             with ui.menu().classes("alerts-menu"):
-                                ui.menu_item("Vymazat log", on_click=clear_alert_log).classes("wl-danger")
+                                ui.menu_item(
+                                    "Vymazat log", on_click=alert_engine.clear_log
+                                ).classes("wl-danger")
                     alert_search = ui.input(placeholder="Hledat").props(
                         "dense outlined clearable debounce=250"
                     ).classes("alert-search w-full")
@@ -3214,7 +3221,7 @@ async def _build_index(
                         "flat dense"
                     ).classes("right-bar-btn").tooltip(tooltip) as bar_button:
                         ui.icon(icon)
-                        # Počet aktivních alertů na tlačítku Alerty
+                        # Počet nepřečtených záznamů logu na tlačítku Alerty
                         if panel == "alerts":
                             alerts_badge = ui.badge("0").props("floating").classes("alerts-badge")
                             alerts_badge.set_visibility(False)

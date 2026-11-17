@@ -411,6 +411,12 @@ class AlertEngine(Listeners):
         # Překreslí log a odznak nepřečtených ve všech otevřených záložkách
         self._emit({"type": "log_changed"})
 
+    async def clear_log(self) -> None:
+        """Vymaže log spuštěných alertů a dá vědět všem otevřeným stránkám."""
+        await self._cache.clear_alert_log()
+        # Vynuluje log i odznaky nepřečtených ve všech otevřených záložkách
+        self._emit({"type": "log_changed"})
+
     async def notify_external(self, notify: dict, *, source: str, symbol: str, timeframe: str, message: str) -> None:
         """Notifikace mimo uložené alerty (časová připomínka).
 

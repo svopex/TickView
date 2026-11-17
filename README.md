@@ -151,7 +151,7 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   používají vlastní tenké SVG piktogramy ve stylu TradingView (Long / Short
   position: tři čáry s kotevními body a písmenem L / S v zóně cíle).
 - Pravý panel jako v TradingView: svislá lišta úplně vpravo přepíná obsah
-  panelu – Watchlist, Alerty (s počtem aktivních alertů) a Replay (sessions);
+  panelu – Watchlist, Alerty (s počtem nepřečtených záznamů logu) a Replay (sessions);
   klik na aktivní tlačítko panel skryje, volba se pamatuje. Šířku panelu
   lze měnit tažením jeho levé hrany. Watchlist
   v pravém panelu (přidat/odebrat, klik kamkoli do řádku – symbol, cena,
@@ -260,7 +260,8 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   (Upravit…, Klonovat…, Pozastavit / Spustit znovu, Zobrazit v grafu,
   Smazat). Log spuštění ukazuje výsledek odeslání (✓ / ✗ Telegram, webhook;
   chyba v tooltipu); nepřečtený záznam má modrý proužek vlevo a klik na řádek
-  ho označí jako přečtený (sníží počet u přepínače Log). Aktivní cenové alerty
+  ho označí jako přečtený (sníží počet u přepínače Log i v bublině tlačítka
+  Alerty na pravé liště, která ukazuje počet nepřečtených záznamů logu). Aktivní cenové alerty
   zobrazeného symbolu jsou v grafu oranžové čárkované čáry s popiskem na ose.
 - Settings aplikace (ozubené kolečko v horní liště): všechny sekce
   `config.yaml` v záložkách. Telegram – bot token (od @BotFather, příkaz

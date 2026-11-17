@@ -765,6 +765,19 @@ class KlineCache:
             for row in rows
         ]
 
+    async def unseen_alert_log_count(self, limit: int = 200) -> int:
+        """Počet nepřečtených záznamů mezi posledními limit spuštěními
+        (stejné okno jako alert_log(), aby počet odpovídal zobrazenému logu).
+        """
+        # Vnitřní dotaz vybere posledních limit záznamů, vnější spočítá nepřečtené
+        row = await self._run(
+            lambda: self._conn.execute(
+                "SELECT COUNT(*) FROM (SELECT seen FROM alert_log ORDER BY id DESC LIMIT ?) WHERE seen = 0",
+                (limit,),
+            ).fetchone()
+        )
+        return row[0]
+
     async def mark_alert_log_seen(self, entry_id: int) -> None:
         """Označí záznam logu jako přečtený (klik na řádek v logu).
 

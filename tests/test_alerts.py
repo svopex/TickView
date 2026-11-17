@@ -261,6 +261,11 @@ class AlertEngineTest(unittest.IsolatedAsyncioTestCase):
         await self.cache.mark_alert_log_seen(log[1]["id"])
         log = await self.cache.alert_log()
         self.assertEqual([item["seen"] for item in log], [False, True])
+        # Počet nepřečtených pro bublinu na liště (i v okně posledních limit záznamů)
+        self.assertEqual(await self.cache.unseen_alert_log_count(), 1)
+        self.assertEqual(await self.cache.unseen_alert_log_count(limit=1), 1)
+        await self.cache.mark_alert_log_seen(log[0]["id"])
+        self.assertEqual(await self.cache.unseen_alert_log_count(), 0)
 
     async def test_bulk_alerts(self) -> None:
         # Hromadné akce panelu Alerty: pozastavit, spustit neaktivní, smazat neaktivní / vše
