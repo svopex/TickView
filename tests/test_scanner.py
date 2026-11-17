@@ -219,7 +219,7 @@ class ScannerLogicTest(unittest.TestCase):
         spec = {"kind": "svopex_ttw", "params": params, "visible": True}
         job, table = make_job(spec, "binance")
         self.assertTrue(table)
-        self.assertEqual(job["config"]["symbols"][0], ("yahoo", "^NDX"))
+        self.assertEqual(job["config"]["symbols"][0], ("ibkr", "IBUST100"))
         self.assertEqual(job["config"]["timeframe"], "1h")
         # Skrytý indikátor bez alertu, tabulka „nezobrazovat“ bez alertu a bez symbolů = bez úlohy
         self.assertEqual(make_job({**spec, "visible": False}, "binance"), (None, False))

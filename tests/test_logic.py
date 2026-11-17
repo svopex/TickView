@@ -5,6 +5,7 @@ import sqlite3
 import tempfile
 import time
 import unittest
+from unittest import mock
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -39,6 +40,7 @@ from tickview.logic.styles import (
     normalize_panel_position,
     save_template,
 )
+from tickview.providers.base import split_symbol
 from tickview.providers.base import (
     TIMEFRAME_MS,
     Candle,
@@ -49,7 +51,9 @@ from tickview.providers.base import (
     poll_latest_candles,
     utc_now_ms,
 )
-from tickview.providers.ibkr import IbkrProvider, forex_parts, forex_suggestions
+from tickview.providers import provider_symbol
+from tickview.providers.ibkr import IbkrProvider, forex_parts, forex_suggestions, instrument_suggestions
+from tickview.providers.yahoo import YahooProvider
 
 
 def make_candle(open_time: int, close: float = 1.0) -> Candle:
@@ -290,6 +294,25 @@ class ForexTest(unittest.TestCase):
         self.assertIsNone(forex_parts("BRK.B"))
         self.assertIsNone(forex_parts("MSFT"))
 
+    def test_metals_and_index_cfds(self) -> None:
+        # Kovy a indexová CFD: hledání podle symbolu i názvu, kontrakt a druh
+        self.assertEqual(instrument_suggestions("xau"), ["XAUUSD"])
+        self.assertEqual(instrument_suggestions("gold"), ["XAUUSD"])
+        self.assertEqual(instrument_suggestions("S&P 500"), ["IBUS500"])
+        self.assertEqual(instrument_suggestions("DAX"), ["IBDE40"])
+        self.assertEqual(instrument_suggestions("US"), [])
+        self.assertEqual(instrument_suggestions("oil"), ["IBUSOIL", "IBUKOIL"])
+        self.assertEqual(instrument_suggestions("brent"), ["IBUKOIL"])
+        provider = IbkrProvider()
+        gold, dax = provider._contract("XAUUSD"), provider._contract("IBDE40")
+        self.assertEqual((gold.secType, gold.currency), ("CMDTY", "USD"))
+        self.assertEqual((dax.secType, dax.currency), ("CFD", "EUR"))
+        self.assertEqual(provider._contract("MSFT").secType, "STK")
+        self.assertEqual((provider.symbol_kind("XAUUSD"), provider.symbol_kind("IBUS500")), ("commodity", "index"))
+        # Bez obchodů (MIDPOINT) a bez filtru hlavní seance
+        self.assertEqual(provider._what_to_show("IBUS500"), "MIDPOINT")
+        self.assertIsNone(provider.regular_session("XAGUSD"))
+
 
 class ProvidersBaseTest(unittest.IsolatedAsyncioTestCase):
     """Omezovač dotazů a smyčka pollingu."""
@@ -416,6 +439,32 @@ class ConfigTest(unittest.TestCase):
             update_config_section("alpaca", {"api_key": "k"}, path)
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             self.assertEqual(yaml.safe_load(path.read_text(encoding="utf-8")), {"alpaca": {"api_key": "k"}})
+
+
+class SymbolSearchTest(unittest.IsolatedAsyncioTestCase):
+    """Hledání symbolu: futures z Yahoo a přímé zadání „zdroj:SYMBOL“."""
+
+    async def test_yahoo_futures(self) -> None:
+        # Yahoo vrací futures (GC=F) s typem FUTURE – musí projít do výsledků
+        quotes = [{"symbol": "GC=F", "quoteType": "FUTURE", "shortname": "Gold"},
+                  {"symbol": "GLD", "quoteType": "ETF", "shortname": "SPDR Gold"},
+                  {"symbol": "X", "quoteType": "OPTION"}]
+        with mock.patch("tickview.providers.yahoo.yf.Search") as search:
+            search.return_value.quotes = quotes
+            found = await YahooProvider().search("gold")
+        self.assertEqual([(info.symbol, info.kind) for info in found], [("GC=F", "futures"), ("GLD", "fund")])
+
+    def test_split_symbol(self) -> None:
+        # Jeden rozklad „zdroj:SYMBOL“ pro vstupy indikátoru, scanner i hledání
+        self.assertEqual(split_symbol(" Yahoo:gc=f "), ("yahoo", "GC=F"))
+        self.assertEqual(split_symbol("btcusdt"), ("", "BTCUSDT"))
+
+    def test_direct_symbol(self) -> None:
+        provider, symbol = provider_symbol(" Yahoo:gc=f ")
+        self.assertEqual((provider.id, symbol), ("yahoo", "GC=F"))
+        # Bez prefixu, neznámý zdroj nebo prázdný symbol = běžné hledání
+        for text in ("GC=F", "oanda:XAUUSD", "yahoo:", "yahoo:GC F"):
+            self.assertIsNone(provider_symbol(text))
 
 
 class WatchlistSortTest(unittest.TestCase):

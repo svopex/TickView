@@ -43,19 +43,21 @@ TIMEZONE_OPTIONS = [
 ]
 
 # Výchozí symboly scanneru – symboly 1–37 z Pine skriptu (OANDA) ve zdrojích
-# TickView: forex z Interactive Brokers (páry ve tvaru IB, základní měna podle
-# konvence IB), indexy, kovy a ropa z Yahoo (IB provider umí jen forex
-# a americké akcie), bitcoin z Binance; pole 38–40 jsou prázdná jako v Pine
+# TickView: forex, kovy, indexová a ropná CFD z Interactive Brokers (páry ve
+# tvaru IB, základní měna podle konvence IB; CFD obchodují téměř nonstop jako
+# OANDA), Russell 2000 jako ETF IWM z IB (CFD na Russell IB nemá, CFD na IWM
+# nevrací přes API historii – cena je stejná, obchoduje se jen 4:00–20:00
+# New York), bitcoin z Binance; pole 38 je navíc ropa Brent, 39–40 prázdná
 DEFAULT_SCAN_SYMBOLS = (
-    "yahoo:^NDX",        # NAS100USD
-    "yahoo:GC=F",        # XAUUSD
+    "ibkr:IBUST100",     # NAS100USD
+    "ibkr:XAUUSD",
     "ibkr:EUR.USD",
-    "yahoo:^DJI",        # US30USD
-    "yahoo:^GSPC",       # SPX500USD
-    "yahoo:^RUT",        # US2000USD
-    "yahoo:^GDAXI",      # DE30EUR
-    "yahoo:CL=F",        # WTICOUSD
-    "yahoo:SI=F",        # XAGUSD
+    "ibkr:IBUS30",       # US30USD
+    "ibkr:IBUS500",      # SPX500USD
+    "ibkr:IWM",          # US2000USD
+    "ibkr:IBDE40",       # DE30EUR
+    "ibkr:IBUSOIL",      # WTICOUSD
+    "ibkr:XAGUSD",
     "binance:BTCUSDT",   # BTCUSD
     "ibkr:GBP.USD",
     "ibkr:USD.JPY",
@@ -84,6 +86,7 @@ DEFAULT_SCAN_SYMBOLS = (
     "ibkr:NZD.CHF",
     "ibkr:NZD.CAD",
     "ibkr:CHF.JPY",
+    "ibkr:IBUKOIL",      # Brent (navíc proti Pine)
 )
 
 # Skupiny parametrů (sekce dialogu) – pořadí jako v Pine

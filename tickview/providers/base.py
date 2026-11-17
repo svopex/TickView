@@ -236,7 +236,19 @@ StreamItem = Union[Candle, StreamStatus]
 
 
 # Druhy instrumentů pro kategorie vyhledávání (jako v TradingView)
-SYMBOL_KINDS = ("stock", "fund", "futures", "forex", "crypto", "index")
+SYMBOL_KINDS = ("stock", "fund", "futures", "forex", "crypto", "index", "commodity")
+
+
+def split_symbol(text: str) -> tuple[str, str]:
+    """Rozloží "zdroj:SYMBOL" na (zdroj, symbol); bez prefixu je zdroj prázdný.
+
+    Zdroj se převede na malá písmena, symbol na velká (tak symboly vedou
+    všechny zdroje), okolní mezery se zahodí.
+    """
+    source, colon, symbol = text.strip().partition(":")
+    if not colon:
+        return "", text.strip().upper()
+    return source.strip().lower(), symbol.strip().upper()
 
 
 @dataclass(slots=True)

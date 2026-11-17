@@ -5,8 +5,10 @@ Alpaca je volitelný – přidá se jen tehdy, když jsou v lokální konfigurac
 (config.yaml) uložené API klíče.
 """
 
+from typing import Optional
+
 from tickview.providers.alpaca import AlpacaProvider
-from tickview.providers.base import DataProvider
+from tickview.providers.base import DataProvider, split_symbol
 from tickview.providers.binance import BinanceProvider
 from tickview.providers.ibkr import IbkrProvider
 from tickview.providers.yahoo import YahooProvider
@@ -37,3 +39,18 @@ def get_provider(provider_id: str) -> DataProvider:
         if provider.id == provider_id:
             return provider
     raise KeyError(f"Neznámý zdroj dat: {provider_id}")
+
+
+def provider_symbol(text: str) -> Optional[tuple[DataProvider, str]]:
+    """Přímo zadaný symbol "zdroj:SYMBOL" se známým zdrojem jako (zdroj, SYMBOL); jinak None.
+
+    Rozklad jako ve vstupech indikátoru (split_symbol): "yahoo:gc=f"
+    i "Yahoo:GC=F" dají GC=F z Yahoo.
+    """
+    source, symbol = split_symbol(text)
+    if not source or not symbol or any(char.isspace() for char in symbol):
+        return None
+    try:
+        return get_provider(source), symbol
+    except KeyError:
+        return None

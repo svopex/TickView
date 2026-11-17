@@ -18,8 +18,10 @@ from typing import Any, Optional, Sequence
 import pandas as pd
 
 from tickview.logic.styles import normalize_color
-# Kanonické timeframy zdrojů dat (volby parametru typu timeframe)
+# Kanonické timeframy zdrojů dat (volby parametru typu timeframe) a rozklad
+# symbolu "zdroj:SYMBOL" (re-export pro indikátory, které smí importovat jen API)
 from tickview.providers.base import CANONICAL_TIMEFRAMES as TIMEFRAMES
+from tickview.providers.base import split_symbol  # noqa: F401
 
 # Verze rozhraní; indikátor s jinou verzí loader odmítne
 API_VERSION = 1
@@ -169,15 +171,9 @@ class Param:
             if any(char.isspace() for char in text) or len(text) > 60 or text.endswith(":"):
                 raise ValueError(f"{label}: zadejte symbol ve tvaru zdroj:SYMBOL.")
             source, symbol = split_symbol(text)
-            return f"{source.lower()}:{symbol}" if source else text
+            return f"{source}:{symbol}" if source else symbol
         # Text: oříznutý a omezený na rozumnou délku
         return str(value).strip()[:200]
-
-
-def split_symbol(text: str) -> tuple[str, str]:
-    """Rozloží "zdroj:SYMBOL" na (zdroj, symbol); bez prefixu je zdroj prázdný."""
-    source, colon, symbol = text.partition(":")
-    return (source, symbol) if colon else ("", text)
 
 
 def _fmt(number: float) -> str:

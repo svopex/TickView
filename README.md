@@ -107,8 +107,12 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   přepíše); hledání otevře i psaní písmen / číslic přímo nad grafem. Dialog
   hledá napříč zdroji souběžně a výsledky ukazuje průběžně (pomalá TWS
   nezdrží ostatní), řazení přesná shoda > prefix > výskyt, max 60 výsledků;
-  kategorie Vše / Akcie / Fondy / Futures / Forex / Krypto / Indexy, výběr
-  zdroje, u výsledku logo, symbol, název, druh, burza a zkratka zdroje;
+  kategorie Vše / Akcie / Fondy / Futures / Forex / Krypto / Indexy /
+  Komodity, výběr zdroje, u výsledku logo, symbol, název, druh, burza
+  a zkratka zdroje (Yahoo nabízí i futures `GC=F`, `CL=F`, fondy a krypto);
+  zadání ve tvaru „zdroj:SYMBOL“ (např. `yahoo:GC=F`, `ibkr:XAUUSD`, jako ve
+  vstupech Svopex TTW) hledá jen v daném zdroji a symbol nabídne, i když ho
+  hledání zdroje nevrátí;
   klik nebo Enter načte graf, šipky posouvají výběr, Esc zavře, tlačítko +
   přidá symbol do aktivního seznamu (fajfka = už v seznamu); do watchlistu
   lze přidat i aktuální symbol tlačítkem v hlavičce watchlistu. Svíčkové grafy
@@ -319,10 +323,10 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   jednou za svíčku, jedna souhrnná zpráva se seznamem trhů se signálem na
   běžící svíčce, notifikace Telegram / oznámení / zvuk; a 40 polí symbolů
   ve tvaru „zdroj:SYMBOL“ (bez prefixu = zdroj grafu). Výchozí symboly jsou
-  symboly z Pine skriptu: forexové páry z Interactive Brokers (EUR.USD…),
-  indexy, zlato, stříbro a ropa z Yahoo (^NDX, ^DJI, ^GSPC, ^RUT, ^GDAXI,
-  GC=F, SI=F, CL=F – IB zdroj umí jen forex a americké akcie), bitcoin
-  z Binance. Pro každý symbol se spočítá indikátor se stejnými parametry na
+  symboly z Pine skriptu, vše z Interactive Brokers kromě bitcoinu
+  (Binance): forexové páry (EUR.USD…), zlato a stříbro (XAUUSD, XAGUSD),
+  indexová CFD (IBUST100, IBUS500, IBUS30, IBDE40), ropa WTI (IBUSOIL)
+  a Russell 2000 jako ETF IWM; navíc proti Pine ropa Brent (IBUKOIL). Pro každý symbol se spočítá indikátor se stejnými parametry na
   timeframu scanu a v grafu s indikátorem se ukáže tabulka jako v Pine
   („Svopex TTW (1h) | Signál (svíčka)“, LONG(0) / SHORT(1) … – 0 = běžící
   svíčka; zelená long, červená short, oranžová oba). Při „jen se signálem“
@@ -441,6 +445,18 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
 - Forex IDEALPRO: dotaz typu `EURUSD`, `EUR/USD` nebo jen `EUR` nabídne
   páry IBKR (symbol `EUR.USD`, data MIDPOINT, bez objemu) – návrhy fungují
   i bez běžící TWS, data se pak stahují z TWS.
+- Spotové kovy, indexová a ropná CFD od IB (data MIDPOINT, obchodují téměř
+  nonstop jako kovy, indexy a ropa OANDA v TradingView): `XAUUSD` (zlato),
+  `XAGUSD` (stříbro), `IBUSOIL` (ropa WTI), `IBUKOIL` (ropa Brent),
+  `IBUST100` (Nasdaq 100), `IBUS500` (S&P 500), `IBUS30` (Dow), `IBDE40`
+  (DAX), `IBGB100`, `IBEU50`, `IBFR40`, `IBJP225`, `IBCH20`, `IBES35`,
+  `IBNL25`, `IBHK50`, `IBAU200`. Hledání je nabídne i podle názvu (gold,
+  oil, DAX, S&P 500, Nasdaq…); přesně zadaný symbol se v TWS už nehledá.
+  IB nemá CFD na Russell 2000 – místo něj ETF `IWM` (jako akcie; CFD na IWM
+  přes API historii nevrací, cena je stejná, obchoduje se 4:00–20:00 New
+  York). Krypto (PAXOS) vyžaduje v IB oprávnění k tržním datům.
+- Kvalifikované kontrakty (conId) se cachují – opakované dotazy scanneru
+  a watchlistu nevolají qualifyContracts v TWS znovu.
 - Historie, vyhledávání (matching symbols) i ceny watchlistu jdou přes TWS.
   Živá svíčka se odebírá průběžně (`reqHistoricalData` s `keepUpToDate`,
   aktualizace zhruba po 5 s); po výpadku TWS se odběr obnoví sám.
@@ -474,7 +490,7 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
 - `tickview/providers/yahoo.py` – zdroj Yahoo Finance (yfinance): akcie, ETF,
   indexy, forex; historie v to_thread, živá aktualizace pollingem
 - `tickview/providers/ibkr.py` – zdroj Interactive Brokers (TWS API, ib_async):
-  americké akcie a forex IDEALPRO; napojení na TWS 127.0.0.1:7497, clientId
+  americké akcie, forex IDEALPRO, spotové kovy, indexová a ropná CFD; napojení na TWS 127.0.0.1:7497, clientId
   30 (při obsazení další), průběžné bary keepUpToDate a zjištění živých /
   zpožděných dat podle předplatného
 - `tickview/providers/alpaca.py` – volitelný zdroj Alpaca (americké akcie):

@@ -102,9 +102,9 @@ from tickview.logic.sessions import (
     SESSION_RTH,
     timezone_options,
 )
-from tickview.providers import PROVIDERS, get_provider
+from tickview.providers import PROVIDERS, get_provider, provider_symbol
 from tickview.providers.alpaca import DEFAULT_ENDPOINT as ALPACA_DEFAULT_ENDPOINT
-from tickview.providers.base import utc_now_ms
+from tickview.providers.base import SymbolInfo, utc_now_ms
 from tickview.providers.ibkr import DEFAULT_HOST as IBKR_DEFAULT_HOST
 from tickview.providers.ibkr import IbkrProvider, connection_settings
 from tickview.services.alerts import AlertEngine
@@ -326,6 +326,7 @@ async def _build_index(
         "forex": "Forex",
         "crypto": "Krypto",
         "index": "Indexy",
+        "commodity": "Komodity",
     }
     # Stav dialogu: kategorie, zdroj, výsledky, zvýrazněný řádek, pořadí hledání
     # a režim výběru (funkce, která zvolený symbol zapíše do pole indikátoru)
@@ -351,6 +352,16 @@ async def _build_index(
         search_state["seq"] += 1
         seq = search_state["seq"]
         providers = [p for p in PROVIDERS if search_state["source"] in ("all", p.id)]
+        # Přímo zadaný "zdroj:SYMBOL" (např. symbol ze vstupů Svopex TTW): hledá se
+        # jen v tom zdroji a symbol se nabídne i tehdy, když ho hledání zdroje nevrátí
+        direct = provider_symbol(query)
+        direct_row = None
+        if direct:
+            direct_provider, query = direct
+            providers = [direct_provider]
+            direct_row = result_row(direct_provider, SymbolInfo(
+                direct_provider.id, query, query, "Zadaný symbol", direct_provider.symbol_kind(query)
+            ))
         found_by_provider: dict[str, list[dict]] = {}
         search_state["errors"] = []
         search_state["highlight"] = 0
@@ -365,25 +376,28 @@ async def _build_index(
             if found is None:
                 search_state["errors"].append(provider.name)
             else:
-                found_by_provider[provider.id] = [
-                    {
-                        "key": f"{info.provider_id}:{info.symbol}",
-                        "symbol": info.symbol,
-                        "description": info.description,
-                        "kind": info.kind,
-                        "exchange": info.exchange or provider.name,
-                        "provider": provider.name,
-                        "code": provider_code(provider.id),
-                    }
-                    for info in found[:SEARCH_PER_PROVIDER]
-                ]
+                found_by_provider[provider.id] = [result_row(provider, info) for info in found[:SEARCH_PER_PROVIDER]]
             # Výsledky v pořadí zdrojů, pak podle relevance (stabilní řazení)
             results = [r for p in providers for r in found_by_provider.get(p.id, [])]
+            if direct_row and all(result["key"] != direct_row["key"] for result in results):
+                results.insert(0, direct_row)
             results.sort(key=lambda result: search_relevance(result["symbol"], query))
             search_state["results"] = results[:SEARCH_LIMIT]
             render_search_results()
 
         await asyncio.gather(*(search_one(provider) for provider in providers))
+
+    def result_row(provider, info: SymbolInfo) -> dict:
+        # Řádek výsledku hledání (symbol zdroje i přímo zadaný „zdroj:SYMBOL“)
+        return {
+            "key": f"{info.provider_id}:{info.symbol}",
+            "symbol": info.symbol,
+            "description": info.description,
+            "kind": info.kind,
+            "exchange": info.exchange or provider.name,
+            "provider": provider.name,
+            "code": provider_code(provider.id),
+        }
 
     def search_relevance(symbol: str, query: str) -> int:
         # Přesná shoda > prefix > výskyt; porovnává se bez oddělovačů, aby

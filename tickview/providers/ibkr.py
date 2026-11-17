@@ -10,6 +10,7 @@ klient (např. druhá instance aplikace), zkusí se několik následujících.
 import asyncio
 import math
 import time as time_module
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import AsyncIterator, Optional
 
@@ -120,6 +121,79 @@ def forex_suggestions(query: str) -> list[str]:
     return pairs[:FOREX_SUGGESTIONS]
 
 
+# Časové pásmo obchodních hodin v TWS a označení trhu podle typu kontraktu
+# (kovy CMDTY se řídí newyorským časem, CFD londýnským)
+SEC_TYPE_INFO: dict[str, tuple[str, str]] = {
+    "CMDTY": ("America/New_York", "IBKR Kov"),
+    "CFD": ("Europe/London", "IBKR CFD"),
+}
+
+
+@dataclass(frozen=True)
+class IbInstrument:
+    """Instrument IB mimo forex a akcie (spotový kov, indexové nebo ropné CFD).
+
+    Atributy:
+        sec_type: typ kontraktu TWS (klíč SEC_TYPE_INFO).
+        currency: měna kontraktu.
+        name: název pro hledání a nadpis grafu.
+        kind: druh instrumentu (SYMBOL_KINDS).
+        aliases: další názvy, podle kterých ho hledání najde (bez mezer, velkými písmeny).
+    """
+
+    sec_type: str
+    currency: str
+    name: str
+    kind: str
+    aliases: tuple[str, ...] = ()
+
+    @property
+    def timezone(self) -> str:
+        """Časové pásmo obchodních hodin kontraktu v TWS."""
+        return SEC_TYPE_INFO[self.sec_type][0]
+
+    @property
+    def market(self) -> str:
+        """Označení trhu ve výsledcích hledání a v nadpisu grafu."""
+        return SEC_TYPE_INFO[self.sec_type][1]
+
+
+# Spotové kovy, indexová a ropná CFD od IB (ověřené v TWS: kontrakt na SMART
+# a historie MIDPOINT); obchodují téměř nonstop jako kovy, indexy a ropa OANDA
+# v TradingView. IB nemá CFD na Russell 2000 (místo něj ETF IWM jako akcie –
+# CFD na IWM historii přes API nevrací, cena je stejná)
+IB_INSTRUMENTS: dict[str, IbInstrument] = {
+    "XAUUSD": IbInstrument("CMDTY", "USD", "Zlato (London Gold)", "commodity", ("GOLD", "ZLATO", "XAU")),
+    "XAGUSD": IbInstrument("CMDTY", "USD", "Stříbro (London Silver)", "commodity", ("SILVER", "STRIBRO", "XAG")),
+    "IBUSOIL": IbInstrument("CFD", "USD", "US Crude Oil (WTI)", "commodity", ("WTI", "OIL", "ROPA", "CRUDE", "USOIL")),
+    "IBUKOIL": IbInstrument("CFD", "USD", "UK Crude Oil (Brent)", "commodity", ("BRENT", "OIL", "ROPA", "CRUDE", "UKOIL")),
+    "IBUS500": IbInstrument("CFD", "USD", "US 500 (S&P 500)", "index", ("SP500", "SPX", "US500")),
+    "IBUS30": IbInstrument("CFD", "USD", "US 30 (Dow Jones)", "index", ("DOW", "DJI", "US30")),
+    "IBUST100": IbInstrument("CFD", "USD", "US Tech 100 (Nasdaq 100)", "index", ("NASDAQ", "NDX", "NAS100", "US100")),
+    "IBDE40": IbInstrument("CFD", "EUR", "Germany 40 (DAX)", "index", ("DAX", "DE40", "DE30", "GER40")),
+    "IBGB100": IbInstrument("CFD", "GBP", "UK 100 (FTSE 100)", "index", ("FTSE", "UK100")),
+    "IBEU50": IbInstrument("CFD", "EUR", "Euro 50 (Euro Stoxx 50)", "index", ("STOXX", "EU50")),
+    "IBFR40": IbInstrument("CFD", "EUR", "France 40 (CAC 40)", "index", ("CAC", "FR40")),
+    "IBJP225": IbInstrument("CFD", "JPY", "Japan 225 (Nikkei 225)", "index", ("NIKKEI", "JP225")),
+    "IBCH20": IbInstrument("CFD", "CHF", "Switzerland 20 (SMI)", "index", ("SMI", "CH20")),
+    "IBES35": IbInstrument("CFD", "EUR", "Spain 35 (IBEX 35)", "index", ("IBEX", "ES35")),
+    "IBNL25": IbInstrument("CFD", "EUR", "Netherlands 25 (AEX)", "index", ("AEX", "NL25")),
+    "IBHK50": IbInstrument("CFD", "HKD", "Hong Kong 50 (Hang Seng)", "index", ("HANGSENG", "HSI", "HK50")),
+    "IBAU200": IbInstrument("CFD", "AUD", "Australia 200 (ASX 200)", "index", ("ASX", "AU200")),
+}
+
+
+def instrument_suggestions(query: str) -> list[str]:
+    """Kovy a CFD odpovídající dotazu: začátek symbolu nebo názvu ("XAU", "gold", "DAX", "S&P 500", "oil")."""
+    text = "".join(ch for ch in query.upper() if ch.isalnum())
+    if len(text) < 3:
+        return []
+    return [
+        symbol for symbol, instrument in IB_INSTRUMENTS.items()
+        if symbol.startswith(text) or any(alias.startswith(text) or text.startswith(alias) for alias in instrument.aliases)
+    ]
+
+
 # Mapování kanonických timeframeů na barSizeSetting TWS API
 BAR_SIZES = {
     "1m": "1 min",
@@ -170,6 +244,8 @@ class IbkrProvider(DataProvider):
         # Zda TWS posílá pro kontrakt živá data (conId -> bool); předplatné se
         # za běhu nemění, sonda se tak dělá jen jednou za kontrakt
         self._live_cache: dict[int, bool] = {}
+        # Kvalifikované kontrakty podle symbolu (viz _qualified)
+        self._contracts: dict[str, Contract] = {}
         # Omezovač dotazů kvůli TWS pacing limitům
         self._limiter = RateLimiter(min_interval=0.35)
 
@@ -268,11 +344,40 @@ class IbkrProvider(DataProvider):
 
     @staticmethod
     def _contract(symbol: str) -> Contract:
-        """Kontrakt podle symbolu: "EUR.USD" = forex IDEALPRO, jinak americká
-        akcie/ETF na SMART burze v USD."""
+        """Kontrakt podle symbolu: "EUR.USD" = forex IDEALPRO, kov / indexové CFD
+        z IB_INSTRUMENTS (XAUUSD, IBUS500…), jinak americká akcie/ETF na SMART v USD."""
         if parts := forex_parts(symbol):
             return Forex(parts[0] + parts[1])
+        if instrument := IB_INSTRUMENTS.get(symbol):
+            return Contract(secType=instrument.sec_type, symbol=symbol, exchange="SMART", currency=instrument.currency)
         return Stock(symbol, "SMART", "USD")
+
+    def _instrument_info(self, symbol: str) -> SymbolInfo:
+        # Návrh kovu / CFD pro vyhledávání
+        instrument = IB_INSTRUMENTS[symbol]
+        return SymbolInfo(self.id, symbol, f"{symbol} – {instrument.name}", instrument.name, instrument.kind,
+                          instrument.market)
+
+    async def _qualified(self, ib: IB, symbol: str) -> Contract:
+        """Kvalifikovaný kontrakt symbolu (conId od TWS); cachuje se, conId se nemění.
+
+        Scanner a watchlist se ptají opakovaně – bez cache by každý dotaz
+        znamenal navíc qualifyContracts v TWS.
+        """
+        if symbol in self._contracts:
+            return self._contracts[symbol]
+        qualified = await ib.qualifyContractsAsync(self._contract(symbol))
+        contract = qualified[0] if qualified else None
+        # Neznámý kontrakt (None / bez conId) se necachuje – volající dostane chybu jako dřív
+        if contract is None or not contract.conId:
+            raise ValueError(f"TWS nezná kontrakt {symbol}.")
+        self._contracts[symbol] = contract
+        return contract
+
+    @staticmethod
+    def _midpoint(symbol: str) -> bool:
+        """Forex, kovy a CFD: bez obchodů (data MIDPOINT) a téměř nonstop (bez filtru hlavní seance)."""
+        return bool(forex_parts(symbol)) or symbol in IB_INSTRUMENTS
 
     @staticmethod
     def _forex_label(pair: str) -> str:
@@ -287,6 +392,8 @@ class IbkrProvider(DataProvider):
         """Název a burza pro nadpis grafu (forex lokálně, akcie z contract details TWS)."""
         if parts := forex_parts(symbol):
             return {"name": forex_name(*parts), "exchange": "IDEALPRO"}
+        if instrument := IB_INSTRUMENTS.get(symbol):
+            return {"name": instrument.name, "exchange": instrument.market}
         if symbol in self._describe_cache:
             return self._describe_cache[symbol]
         ib = await self._ensure_connected()
@@ -302,24 +409,26 @@ class IbkrProvider(DataProvider):
         return info
 
     def symbol_kind(self, symbol: str) -> str:
-        """Forex IDEALPRO ("EUR.USD"), jinak americká akcie."""
-        return "forex" if forex_parts(symbol) else "stock"
+        """Forex IDEALPRO ("EUR.USD"), kov / indexové CFD podle IB_INSTRUMENTS, jinak americká akcie."""
+        if forex_parts(symbol):
+            return "forex"
+        instrument = IB_INSTRUMENTS.get(symbol)
+        return instrument.kind if instrument else "stock"
 
     def exchange_timezone(self, symbol: str) -> str:
-        """Americké akcie i forex IDEALPRO se v TWS řídí newyorským časem."""
-        return US_EQUITY_SESSION[0]
+        """Americké akcie, forex IDEALPRO a kovy se v TWS řídí newyorským časem, CFD londýnským."""
+        instrument = IB_INSTRUMENTS.get(symbol)
+        return instrument.timezone if instrument else US_EQUITY_SESSION[0]
 
     def regular_session(self, symbol: str) -> Optional[tuple[str, str, str]]:
         """Akcie: historie se stahuje i mimo hlavní hodiny (useRTH=False), RTH
-        je 9:30–16:00 New York; forex obchoduje nepřetržitě."""
-        if forex_parts(symbol):
-            return None
-        return US_EQUITY_SESSION
+        je 9:30–16:00 New York; forex, kovy a CFD obchodují téměř nepřetržitě."""
+        return None if self._midpoint(symbol) else US_EQUITY_SESSION
 
-    @staticmethod
-    def _what_to_show(symbol: str) -> str:
-        # Forex nemá obchody (TRADES) – TWS u něj nabízí jen MIDPOINT/BID/ASK
-        return "MIDPOINT" if forex_parts(symbol) else "TRADES"
+    @classmethod
+    def _what_to_show(cls, symbol: str) -> str:
+        # Forex, kovy a CFD nemají obchody (TRADES) – TWS nabízí jen MIDPOINT/BID/ASK
+        return "MIDPOINT" if cls._midpoint(symbol) else "TRADES"
 
     @staticmethod
     def _duration(delta_seconds: int) -> str:
@@ -344,7 +453,12 @@ class IbkrProvider(DataProvider):
             # Prázdný dotaz: oblíbené tickery pro rychlý start
             popular = ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "SPY"]
             return [SymbolInfo(self.id, symbol, symbol, kind="stock") for symbol in popular]
+        # Forexové páry, kovy a CFD se nabízí lokálně (i bez TWS); přesně zadaný
+        # pár nebo instrument („EUR.USD“, „XAUUSD“) se v TWS už nehledá
         results: list[SymbolInfo] = [self._forex_info(pair) for pair in forex_suggestions(q)]
+        results += [self._instrument_info(symbol) for symbol in instrument_suggestions(q)]
+        if forex_parts(q) or q in IB_INSTRUMENTS:
+            return results
         try:
             ib = await self._ensure_connected()
             await self._limiter.acquire()
@@ -390,9 +504,8 @@ class IbkrProvider(DataProvider):
         """Stáhne historii svíček z TWS (akcie TRADES, forex MIDPOINT; včetně
         obchodování mimo hlavní hodiny)."""
         ib = await self._ensure_connected()
-        contract = self._contract(symbol)
-        # qualifyContracts doplní conId a ověří, že kontrakt existuje
-        contract = (await ib.qualifyContractsAsync(contract))[0]
+        # Kvalifikace doplní conId a ověří, že kontrakt existuje
+        contract = await self._qualified(ib, symbol)
         delta_seconds = max(60, (end_ms - start_ms) // 1000)
         end_dt = datetime.fromtimestamp(end_ms / 1000, tz=timezone.utc)
         bars = await self._request_bars(
@@ -523,7 +636,7 @@ class IbkrProvider(DataProvider):
             # Přihlášení: připojení, kontrakt a souběžně sonda typu dat a odběr barů
             try:
                 ib = await self._ensure_connected()
-                contract = (await ib.qualifyContractsAsync(self._contract(symbol)))[0]
+                contract = await self._qualified(ib, symbol)
                 live, bars = await asyncio.gather(
                     self._probe_live_data(ib, contract),
                     self._request_bars(
@@ -643,7 +756,7 @@ class IbkrProvider(DataProvider):
                 continue
             try:
                 ib = await self._ensure_connected()
-                contract = (await ib.qualifyContractsAsync(self._contract(symbol)))[0]
+                contract = await self._qualified(ib, symbol)
                 bars = await ib.reqHistoricalDataAsync(
                     contract,
                     endDateTime="",

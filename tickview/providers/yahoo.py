@@ -22,7 +22,17 @@ from tickview.providers.base import (
 )
 
 # Typy instrumentů z vyhledávání Yahoo, které umíme zobrazit (quoteType) → druh instrumentu pro kategorie vyhledávání
-QUOTE_TYPE_KINDS = {"EQUITY": "stock", "ETF": "fund", "INDEX": "index", "CURRENCY": "forex"}
+# Typy výsledků hledání Yahoo, které TickView nabízí (typ -> druh instrumentu);
+# futures (GC=F, CL=F…) a krypto (BTC-USD) jdou načíst stejně jako akcie
+QUOTE_TYPE_KINDS = {
+    "EQUITY": "stock",
+    "ETF": "fund",
+    "MUTUALFUND": "fund",
+    "INDEX": "index",
+    "CURRENCY": "forex",
+    "FUTURE": "futures",
+    "CRYPTOCURRENCY": "crypto",
+}
 # Časová pásma burz podle přípony symbolu Yahoo (bez přípony = USA)
 SUFFIX_TIMEZONES = {
     "=X": "Europe/London",
