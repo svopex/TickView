@@ -153,6 +153,16 @@ class LoaderTest(unittest.TestCase):
         self.assertIn("verze", errors["oldapi"])
 
 
+class CustomTestsTest(unittest.TestCase):
+    """Testy vlastních indikátorů v custom/<název>/tests/ musí najít python -m unittest."""
+
+    def test_tests_are_discoverable(self) -> None:
+        # Discovery vleze jen do balíčků: bez __init__.py by se testy potichu přeskočily
+        for tests_dir in registry.CUSTOM_DIR.glob("*/tests"):
+            for package in (tests_dir.parent, tests_dir):
+                self.assertTrue((package / "__init__.py").exists(), f"{package} nemá __init__.py")
+
+
 class FakeSignals(Indicator):
     """Testovací indikátor se signálem long na poslední svíčce symbolu „HIT“."""
 
@@ -168,8 +178,22 @@ class FakeSignals(Indicator):
                                Signal(int(df["time"].iloc[-2]), "short", 1, "ENG")])
 
 
+def register_fake_signals(test: unittest.TestCase) -> None:
+    """Zaregistruje FakeSignals do konce testu (testy scanneru nezávisí na žádném vlastním indikátoru).
+
+    Parametry:
+        test: běžící test; úklid registru se zařadí přes addCleanup.
+    """
+    registry.all_indicators()
+    registry._registry[FakeSignals.id] = FakeSignals()
+    test.addCleanup(registry._registry.pop, FakeSignals.id, None)
+
+
 class ScannerLogicTest(unittest.TestCase):
     """Řádky scanneru, texty a alert před zavřením svíčky."""
+
+    def setUp(self) -> None:
+        register_fake_signals(self)
 
     def test_symbol_row(self) -> None:
         signals = [Signal(3, "long", 3), Signal(1, "long", 1, "ENG"), Signal(0, "short", 0, "ONE")]
@@ -212,14 +236,11 @@ class ScannerLogicTest(unittest.TestCase):
         self.assertEqual(parse_symbol("yahoo:EURUSD=X", "binance"), ("yahoo", "EURUSD=X"))
         self.assertEqual(parse_symbol("BTCUSDT", "binance"), ("binance", "BTCUSDT"))
         self.assertIsNone(parse_symbol(" ", "binance"))
-        defaults = registry.get_indicator("svopex_ttw").defaults()
-        # Alert před zavřením svíčky je ve výchozím stavu zapnutý
-        self.assertTrue(defaults["scan_alert"])
-        params = {**defaults, "scan_alert": False}
-        spec = {"kind": "svopex_ttw", "params": params, "visible": True}
+        params = {**FakeSignals().defaults(), "scan_alert": False}
+        spec = {"kind": FakeSignals.id, "params": params, "visible": True}
         job, table = make_job(spec, "binance")
         self.assertTrue(table)
-        self.assertEqual(job["config"]["symbols"][0], ("ibkr", "IBUST100"))
+        self.assertEqual(job["config"]["symbols"][0], ("fake", "HIT"))
         self.assertEqual(job["config"]["timeframe"], "1h")
         # Skrytý indikátor bez alertu, tabulka „nezobrazovat“ bez alertu a bez symbolů = bez úlohy
         self.assertEqual(make_job({**spec, "visible": False}, "binance"), (None, False))
@@ -297,8 +318,7 @@ class ScannerServiceTest(unittest.IsolatedAsyncioTestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.cache = KlineCache(Path(self.tmp.name) / "test.db")
         await self.cache.init()
-        registry.all_indicators()
-        registry._registry[FakeSignals.id] = FakeSignals()
+        register_fake_signals(self)
         provider = FakeProvider()
         provider.name = "Fake"
         provider.timeframes = {"1h": "1h"}
@@ -316,7 +336,6 @@ class ScannerServiceTest(unittest.IsolatedAsyncioTestCase):
         self.scanner = ScannerService(self.cache, self.engine, provider_lookup=lookup)
 
     async def asyncTearDown(self) -> None:
-        registry._registry.pop(FakeSignals.id, None)
         await self.cache.close()
         self.tmp.cleanup()
 
@@ -411,11 +430,7 @@ class SignalAlertTest(unittest.TestCase):
     """Alert na signál indikátoru: kontrola definice a stav vyhodnocení."""
 
     def setUp(self) -> None:
-        registry.all_indicators()
-        registry._registry[FakeSignals.id] = FakeSignals()
-
-    def tearDown(self) -> None:
-        registry._registry.pop(FakeSignals.id, None)
+        register_fake_signals(self)
 
     def test_normalize_and_texts(self) -> None:
         from tickview.logic.alerts import describe_alert, normalize_alert
@@ -476,15 +491,18 @@ class SignalAlertTest(unittest.TestCase):
 class OverviewTest(unittest.TestCase):
     """Data přehledu scanneru v grafu."""
 
+    def setUp(self) -> None:
+        register_fake_signals(self)
+
     def test_payload(self) -> None:
-        params = registry.get_indicator("svopex_ttw").defaults()
-        job = make_job({"kind": "svopex_ttw", "params": params}, "yahoo")[0]
+        params = FakeSignals().defaults()
+        job = make_job({"kind": FakeSignals.id, "params": params}, "yahoo")[0]
         rows = [symbol_row("y", "EURUSD", [Signal(0, "long", 0)], 2, 0), symbol_row("y", "GBPUSD", [], 2, 0)]
         data = overview_payload(job, {"rows": rows, "scanned_at": 1})
-        self.assertEqual(data["title"], "Svopex TTW (1h)")
+        self.assertEqual(data["title"], "Signals (1h)")
         self.assertEqual(data["rows"], [{"symbol": "EURUSD", "text": "LONG(0)", "kind": "long"}])
         # Bez skrytí prefixu se ukáže i zdroj; bez výsledku poznámka
-        full = make_job({"kind": "svopex_ttw", "params": {**params, "scan_strip_prefix": False}}, "yahoo")[0]
+        full = make_job({"kind": FakeSignals.id, "params": {**params, "scan_strip_prefix": False}}, "yahoo")[0]
         self.assertEqual(overview_payload(full, {"rows": rows, "scanned_at": 1})["rows"][0]["symbol"], "y:EURUSD")
         self.assertEqual(overview_payload(job, None)["note"], "počítám…")
         self.assertEqual(overview_payload(job, None, (12, 37))["note"], "počítám… 12/37")
@@ -500,8 +518,7 @@ class IndicatorAlertEngineTest(unittest.IsolatedAsyncioTestCase):
     """AlertEngine spustí alert na signál indikátoru nad živou svíčkou."""
 
     async def test_fires_with_signal_text(self) -> None:
-        registry.all_indicators()
-        registry._registry[FakeSignals.id] = FakeSignals()
+        register_fake_signals(self)
         provider = FakeProvider()
         provider.name = "Fake"
         provider.symbol_kind = lambda symbol: ""
@@ -548,6 +565,5 @@ class IndicatorAlertEngineTest(unittest.IsolatedAsyncioTestCase):
                                  ("TTW: 2 trhy", "Scanner Signals", None))
                 self.assertEqual(engine.alert_call_alerts(FakeSignals.id)[0]["id"], call_id)
             finally:
-                registry._registry.pop(FakeSignals.id, None)
                 await asyncio.sleep(0)
                 await cache.close()

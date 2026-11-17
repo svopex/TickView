@@ -2,7 +2,7 @@
 
 Kód záměrně kopíruje strukturu Pine (funkce f_*, smyčky, přístup k sériím
 přes index) a nic necachuje ani předčasně neukončuje. Test porovnává jeho
-výsledky s optimalizovaným převodem v tickview/indicators/custom/svopex_ttw.
+výsledky s optimalizovaným převodem v ../indicator.py.
 """
 
 import math

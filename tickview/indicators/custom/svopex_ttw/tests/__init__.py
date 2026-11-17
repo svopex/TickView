@@ -1,0 +1,1 @@
+"""Testy indikátoru Svopex TTW."""

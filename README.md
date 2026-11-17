@@ -332,7 +332,11 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   `tickview/indicators/custom/<název>/` se souborem `indicator.py` (třída
   odvozená od `Indicator` z `tickview/indicators/api.py` a proměnná
   `INDICATOR`); další soubory adresáře (verze Pine skriptu v `pine/`,
-  poznámky) TickView ignoruje. Indikátor importuje jen `tickview.indicators.api`
+  poznámky) TickView ignoruje. Testy indikátoru patří do jeho adresáře
+  `tests/` (s `__init__.py` v adresáři indikátoru i v `tests/`, relativní
+  importy `from ..indicator import …`; chybějící `__init__.py` ohlásí
+  test) a `python -m unittest` je najde sám; testy aplikace na žádném
+  vlastním indikátoru nezávisí. Indikátor importuje jen `tickview.indicators.api`
   a pandas/numpy, dostane svíčky, parametry a `Context` (druh instrumentu,
   tick, pásmo burzy, timeframe) a vrátí `Result`: čáry, úrovně panelu,
   úsečky, značky u svíček a signály pro scanner (indikátor s úsečkami
@@ -636,7 +640,9 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   se vzhledem výstupů podle záložky Style a výstupy indikátoru pro záložku
   Style (výpočet nad umělými svíčkami)
 - `tickview/indicators/custom/svopex_ttw/` – indikátor Svopex TTW
-  (`indicator.py`) a verze jeho Pine skriptu (`pine/`)
+  (`indicator.py`), verze jeho Pine skriptu (`pine/`) a jeho testy
+  (`tests/`: porovnání s doslovným přepisem Pine v `ttw_reference.py`,
+  signály, napojení na TickView)
 - `tickview/logic/scanner.py` – logika scanneru: úlohy ze vstupů instancí
   indikátorů v rozložení, řádky ze signálů, data tabulky v grafu, texty
   a alert před zavřením svíčky (CloseAlertWindow)
@@ -734,10 +740,10 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   šablony a oblíbené nástroje; alerty, engine alertů, Telegram/webhook přes
   falešný HTTP transport a pozice Long/Short; rozložení grafů, viditelnost
   kreseb, styl textu, šablony indikátorů a kresby napříč timeframy;
-  rozhraní a loader indikátorů, scanner, časové připomínky a Svopex TTW
-  porovnaný s doslovným přepisem Pine v `tests/ttw_reference.py`; engine
-  replaye – plnění, náklady, převod měn, krok zpět, statistiky);
-  spuštění `python -m unittest`
+  rozhraní a loader indikátorů, scanner nad testovacím indikátorem
+  a časové připomínky; engine replaye – plnění, náklady, převod měn, krok
+  zpět, statistiky); spuštění `python -m unittest` (spustí i testy
+  vlastních indikátorů v `custom/<název>/tests/`)
 
 ## Licence
 

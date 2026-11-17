@@ -1,13 +1,15 @@
-"""Testy indikátoru Svopex TTW (spuštění: python -m unittest)."""
+"""Testy indikátoru Svopex TTW (spuštění: python -m unittest z kořene projektu)."""
 
 import random
 import unittest
 
-from tests.ttw_reference import reference
 from tickview.indicators.compute import compute_indicators, make_context, new_indicator, run_indicator
-from tickview.indicators.custom.svopex_ttw.indicator import pine_range
 from tickview.indicators.registry import get_indicator, load_errors
 from tickview.providers.base import Candle
+
+# Relativní importy: testy patří k indikátoru a fungují i po přejmenování jeho adresáře
+from ..indicator import pine_range
+from .ttw_reference import reference
 
 HOUR_MS = 3_600_000
 
@@ -101,3 +103,9 @@ class SvopexTTWTest(unittest.TestCase):
 
     def test_required_bars(self) -> None:
         self.assertGreaterEqual(self.indicator.required_bars(self.indicator.defaults()), 360)
+
+    def test_scanner_defaults(self) -> None:
+        # Alert scanneru před zavřením svíčky je ve výchozím stavu zapnutý
+        defaults = self.indicator.defaults()
+        self.assertTrue(self.indicator.has_scanner)
+        self.assertTrue(defaults["scan_alert"])
