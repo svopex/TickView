@@ -125,7 +125,7 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   přes Yahoo Finance s živým pollingem a hlášením zavřeného trhu, indikátory
   (28 typů – viz níže; oscilátory ve vlastních panelech se synchronizovaným
   časem, nastavitelné a kontrolované parametry, průběžný přepočet z živých
-  svíček nejvýš jednou za 2 s, aktivní indikátory se ukládají a přetrvávají
+  svíček nejvýš jednou za 2 s, aktivní indikátory každého grafu se ukládají a přetrvávají
   restart), kreslení s lištou nástrojů 1:1 ve
   stylu TradingView: skupiny nástrojů s flyout nabídkami — trendová čára,
   polopřímka, přímka, trendová šipka, horizontální/svislá linie, horizontální
@@ -139,7 +139,8 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   tužka (nástroj zůstává aktivní), zámek a skrytí kreseb; text i sticker se
   zadávají v dialogu po kliknutí do grafu; barvu, šířku a styl nové kresby
   určuje výchozí šablona typu kresby (viz Šablony); kresby
-  se ukládají k symbolu a timeframe (přetrvávají restart). Lišta i nabídky
+  se ukládají k symbolu (přetrvávají restart) a jako v TradingView jsou vidět
+  na všech timeframech podle záložky Visibility (viz níže). Lišta i nabídky
   používají vlastní tenké SVG piktogramy ve stylu TradingView. Watchlist
   v levém panelu (přidat/odebrat, klik kamkoli do řádku – symbol, cena,
   změna – přepne graf a řádek se zvýrazní jako aktuální, poslední cena
@@ -178,7 +179,46 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   U označené pozice nebo pod kurzorem jsou štítky Target / Stop (rozdíl
   ceny, %, ticky, Amount = účet ± zisk / ztráta). Settings pozice: velikost
   účtu, riziko (% účtu nebo částka), velikost lotu a ceny vstupu, cíle
-  a stopu; šablony včetně „Save as default“ pro nové pozice.
+  a stopu (s přesností cen instrumentu – akcie 2 místa, forex 5; tažení
+  úchopů i celé pozice drží ceny na celé ticky); šablony včetně „Save as
+  default“ pro nové pozice.
+- Text jako v TradingView: nástroj Text po kliknutí do grafu otevře dialog
+  „Text“ (dvojklik na text ho otevře znovu) se záložkami Text a Visibility –
+  barva, velikost písma (10–40), tučné (B), kurzíva (I), víceřádkový obsah,
+  pozadí a rámeček (zaškrtnutí + barva) a zalomení řádků (Text wrap, šířka
+  240 px); text se kreslí od kotevního bodu doprava dolů. Šablony včetně
+  „Save as default“ platí i pro text.
+- Viditelnost kreseb (záložka Visibility v Settings každé kresby): pro
+  Minutes (1–59), Hours (1–24), Days (1–366) a Weeks (1–52) zaškrtnutí
+  a rozsah (pole od / do a posuvník); kresba je vidět jen na timeframech,
+  které odpovídají zaškrtnuté jednotce a rozsahu (např. Hours vypnuté = text
+  není na 1h ani 4h). Výchozí je kresba vidět všude. Tick, Seconds, Months
+  a Ranges aplikace nenabízí, protože takové timeframy nemá.
+- Šablony indikátorů jako v TradingView: šipka vedle tlačítka Indikátory
+  otevře nabídku (záložky Indicators / Templates) – „Save indicator
+  template…“ uloží všechny indikátory aktivního grafu pod názvem (volitelně
+  Remember symbol / Remember interval), „Recently used“ ukazuje naposledy
+  použité šablony s popisem (seznam indikátorů) a hvězdičkou, „Open
+  template…“ otevře seznam všech šablon s hledáním a mazáním. Klik na šablonu
+  nahradí indikátory aktivního grafu (případně přepne symbol / interval).
+  Šablony s hvězdičkou mají v horní liště kulaté tlačítko s iniciálou pro
+  rychlé přepnutí. Ukládají se do SQLite (`indicator_templates`).
+- Více grafů najednou (Layout setup jako v TradingView): tlačítko s mřížkou
+  v horní liště nabízí rozložení 1–16 grafů (2 vedle sebe / pod sebou, 3 v
+  šesti uspořádáních, 4 v sedmi, 5, 6, 7, 8, 9, 10, 12, 14 a 16) s
+  piktogramy. Každý graf má vlastní symbol, timeframe, typ grafu,
+  indikátory, načítání historie a živý stream. Klik do grafu ho udělá
+  aktivním (modrý rámeček) – na něj míří horní lišta (symbol, timeframe, typ
+  grafu, Indikátory, Alert), watchlist a hledání. Kreslicí nástroj, magnet,
+  zámek a skrytí kreseb platí pro všechny grafy (kreslit lze do kteréhokoli),
+  kresba se hned ukáže i v dalších grafech se stejným symbolem. Sync in
+  layout: Symbol a Interval (změna v aktivním grafu se projeví ve všech),
+  Crosshair (crosshair ve stejném čase ve všech grafech), Time (posun jednoho
+  grafu posune ostatní na stejný pravý okraj) a Date range (ostatní převezmou
+  celý viditelný časový rozsah). Nový graf v rozložení převezme symbol,
+  timeframe a typ aktivního grafu. Rozložení, synchronizace, aktivní graf
+  a stav všech grafů se ukládají (nastavení `layout`) a přetrvají restart;
+  styl svíček, objem, časové pásmo a seance jsou společné všem grafům.
 - Alerty jako v TradingView: tlačítko Alert v horní liště (poslední cena),
   pravý klik do grafu „Přidat alert na <cena>“ nebo pravý klik na čáru
   (horizontální linie / polopřímka, trendová čára, polopřímka, přímka)
@@ -221,7 +261,8 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   v titulku panelu) má při najetí myší oko (skrýt/zobrazit), ozubené kolečko
   (Settings – parametry a barva) a křížek (odebrat).
 - Pravý klik a dvojklik (jako v TradingView): na kresbě menu „Settings…“
-  (barva, šířka a styl čáry, u textu obsah a velikost písma) a „Smazat
+  (barva, šířka a styl čáry, u textu obsah a vzhled písma, u všech záložka
+  Visibility) a „Smazat
   objekt“, dvojklik rovnou Settings; na čáře indikátoru, v jeho panelu nebo na
   řádku legendy menu „Settings…“ (parametry), „Skrýt“, „Odebrat indikátor“,
   dvojklik rovnou Settings; jinde v grafu „Settings…“ grafu: barvy těla,
@@ -357,8 +398,8 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   a výpočet 28 indikátorů přes pandas-ta, payload overlay čar, panelů
   a skupin legendy pro graf, kontrola parametrů a načtení uložených indikátorů
 - `tickview/logic/styles.py` – kontrola barev (`#rrggbb` / `rgba`), styl
-  svíček a typy grafu, styl kreseb, šablony nastavení (Template), názvy
-  a oblíbené nástroje
+  svíček a typy grafu, styl kreseb (včetně vzhledu textu a viditelnosti
+  podle timeframu), šablony nastavení (Template), názvy a oblíbené nástroje
 - `tickview/logic/alerts.py` – logika alertů: podmínky, triggery
   (AlertTracker), cena čáry kresby v čase, kontrola definice, zpráva se
   zástupnými texty a tělo webhooku
@@ -369,6 +410,13 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   id) a webhook
 - `tickview/logic/sessions.py` – filtr hlavní obchodní seance (RTH) a seznam
   časových pásem pro nabídku
+- `tickview/logic/layouts.py` – rozložení více grafů (Layout setup), volby
+  synchronizace, kontrola uložené konfigurace a změna počtu grafů
+- `tickview/logic/indicator_templates.py` – šablony indikátorů (uložení,
+  přepsání, oblíbené, naposledy použité, popis)
+- `tickview/ui/chart_pane.py` – jeden graf rozložení (ChartPane): symbol,
+  timeframe, načtení historie, donačítání, živý stream, indikátory, kresby
+  viditelné na timeframu a čáry alertů
 - `tickview/ui/lightweight_chart.py` – vlastní komponenta NiceGUI obalující
   Lightweight Charts (init, výměna dat, inkrementální svíčka, motiv,
   indikátory, kreslení, fronta událostí z grafu)
@@ -377,16 +425,18 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
 - `tickview/ui/icons.py` – SVG piktogramy lišty kreslení a typů grafu
 - `tickview/ui/templates.py` – dialogy Settings (hlavička, tlačítka) a nabídka
   šablon „Template“
-- `tickview/ui/main_window.py` – hlavní stránka: hledání symbolu (dialog),
-  alerty (dialog, seznam, log, Telegram v Settings), timeframy,
-  watchlist, nabídka a Settings indikátorů, lišta kreslení, Settings kreseb
-  a grafu, živý stream, stavová lišta se seancí a časovým pásmem
+- `tickview/ui/main_window.py` – hlavní stránka: mřížka grafů a Layout
+  setup, aktivní graf, hledání symbolu (dialog), alerty (dialog, seznam, log,
+  Telegram v Settings), timeframy, watchlist, nabídka, šablony a Settings
+  indikátorů, lišta kreslení, Settings kreseb (Text, Visibility) a grafu,
+  stavová lišta se seancí a časovým pásmem
 - `tickview/ui/static/lightweight_chart.js` – JS komponenta grafu (svíčky,
   objem, nadpis a legenda ve stylu TradingView, motivy, časové pásmo,
   inkrementální update, donačítání historie, panely indikátorů, kontextová
   menu, kreslicí nástroje na překryvném canvasu včetně Long / Short position,
   čáry alertů a zvuk alertu, plovoucí panel oblíbených
-  nástrojů, styl svíček)
+  nástrojů, styl svíček; více grafů na stránce – aktivní graf, společná
+  lišta a klávesnice, synchronizace crosshairu a času)
 - `tickview/ui/static/color_picker.js` – výběr barvy ve stylu TradingView
   (paleta, vlastní barvy, průhlednost)
 - `tickview/ui/static/style.css` – styly UI
@@ -395,5 +445,6 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
 - `tests/` – unit testy logiky (cache, indikátory, polling, omezovač dotazů,
   konfigurace, skládání timeframů, seance, časová pásma, forex, barvy,
   šablony a oblíbené nástroje; alerty, engine alertů, Telegram/webhook přes
-  falešný HTTP transport a pozice Long/Short);
+  falešný HTTP transport a pozice Long/Short; rozložení grafů, viditelnost
+  kreseb, styl textu, šablony indikátorů a kresby napříč timeframy);
   spuštění `python -m unittest`

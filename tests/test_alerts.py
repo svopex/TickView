@@ -235,7 +235,7 @@ class AlertEngineTest(unittest.IsolatedAsyncioTestCase):
         await self.provider.queue.put(candle(now, 21.0))
         await self.wait_for(lambda: any(e["type"] == "fired" for e in self.events))
         # Smazaná kresba (UI ohlásí změnu) alert vypne se stavem chyby
-        await self.cache.delete_drawing("fake", "X", "1m", drawing_id)
+        await self.cache.delete_drawing("fake", "X", drawing_id)
         self.engine.drawing_changed(drawing_id)
         await self.provider.queue.put(candle(now + 60_000, 22.0))
         await self.wait_for(lambda: self.engine._alerts == {})

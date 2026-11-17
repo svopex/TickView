@@ -1628,3 +1628,336 @@
 .volume-note {
   max-width: none;
 }
+
+/* ---------- Rozložení více grafů (Layout setup jako v TradingView) ---------- */
+
+/* Mřížka grafů vedle lišty nástrojů; uspořádání určuje třída layout-<id> */
+.chart-grid {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  align-self: stretch;
+  display: grid;
+  gap: 4px;
+}
+
+.body--dark .chart-grid {
+  background: #2a2e39;
+}
+
+.body--light .chart-grid {
+  background: #d1d4dc;
+}
+
+/* Graf v mřížce vyplní svou buňku (mřížka mu dává rozměr místo flexu) */
+.chart-grid > .chart-container {
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Aktivní graf rozložení má modrý rámeček (u jediného grafu se neukazuje) */
+.chart-grid:not(.layout-1) > .chart-container.chart-active::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 2px solid #2962ff;
+  pointer-events: none;
+  z-index: 20;
+}
+
+/* Uspořádání: sloupce × řádky; nepravidelná rozložení roztahují vybrané
+   buňky přes více řádků / sloupců. Stejné třídy používá piktogram v nabídce */
+.layout-1 { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+.layout-2v { grid-template-columns: repeat(2, 1fr); grid-template-rows: 1fr; }
+.layout-2h { grid-template-columns: 1fr; grid-template-rows: repeat(2, 1fr); }
+.layout-3v { grid-template-columns: repeat(3, 1fr); grid-template-rows: 1fr; }
+.layout-3h { grid-template-columns: 1fr; grid-template-rows: repeat(3, 1fr); }
+.layout-3l, .layout-3r, .layout-3t, .layout-3b { grid-template-columns: repeat(2, 1fr); grid-template-rows: repeat(2, 1fr); }
+.layout-3l > :nth-child(1) { grid-row: span 2; }
+.layout-3r > :nth-child(3) { grid-column: 2; grid-row: 1 / span 2; }
+.layout-3t > :nth-child(1) { grid-column: span 2; }
+.layout-3b > :nth-child(3) { grid-column: 1 / span 2; }
+.layout-4 { grid-template-columns: repeat(2, 1fr); grid-template-rows: repeat(2, 1fr); }
+.layout-4v { grid-template-columns: repeat(4, 1fr); grid-template-rows: 1fr; }
+.layout-4h { grid-template-columns: 1fr; grid-template-rows: repeat(4, 1fr); }
+.layout-4l, .layout-4r { grid-template-columns: 2fr 1fr; grid-template-rows: repeat(3, 1fr); }
+.layout-4r { grid-template-columns: 1fr 2fr; }
+.layout-4l > :nth-child(1) { grid-row: span 3; }
+.layout-4r > :nth-child(4) { grid-column: 2; grid-row: 1 / span 3; }
+.layout-4t, .layout-4b { grid-template-columns: repeat(3, 1fr); grid-template-rows: 2fr 1fr; }
+.layout-4b { grid-template-rows: 1fr 2fr; }
+.layout-4t > :nth-child(1) { grid-column: span 3; }
+.layout-4b > :nth-child(4) { grid-column: 1 / span 3; }
+.layout-5t, .layout-5b { grid-template-columns: repeat(6, 1fr); grid-template-rows: repeat(2, 1fr); }
+.layout-5t > :nth-child(-n + 2) { grid-column: span 3; }
+.layout-5t > :nth-child(n + 3) { grid-column: span 2; }
+.layout-5b > :nth-child(-n + 3) { grid-column: span 2; }
+.layout-5b > :nth-child(n + 4) { grid-column: span 3; }
+.layout-5l { grid-template-columns: 2fr 1fr 1fr; grid-template-rows: repeat(2, 1fr); }
+.layout-5l > :nth-child(1) { grid-row: span 2; }
+.layout-5v { grid-template-columns: repeat(5, 1fr); grid-template-rows: 1fr; }
+.layout-6 { grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(2, 1fr); }
+.layout-6r { grid-template-columns: repeat(2, 1fr); grid-template-rows: repeat(3, 1fr); }
+.layout-6v { grid-template-columns: repeat(6, 1fr); grid-template-rows: 1fr; }
+.layout-7 { grid-template-columns: repeat(12, 1fr); grid-template-rows: repeat(2, 1fr); }
+.layout-7 > :nth-child(-n + 3) { grid-column: span 4; }
+.layout-7 > :nth-child(n + 4) { grid-column: span 3; }
+.layout-8 { grid-template-columns: repeat(4, 1fr); grid-template-rows: repeat(2, 1fr); }
+.layout-8r { grid-template-columns: repeat(2, 1fr); grid-template-rows: repeat(4, 1fr); }
+.layout-9 { grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); }
+.layout-10 { grid-template-columns: repeat(5, 1fr); grid-template-rows: repeat(2, 1fr); }
+.layout-12 { grid-template-columns: repeat(4, 1fr); grid-template-rows: repeat(3, 1fr); }
+.layout-12r { grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(4, 1fr); }
+.layout-14 { grid-template-columns: repeat(7, 1fr); grid-template-rows: repeat(2, 1fr); }
+.layout-16 { grid-template-columns: repeat(4, 1fr); grid-template-rows: repeat(4, 1fr); }
+
+/* Nabídka Layout setup: řádky podle počtu grafů s piktogramy a synchronizace */
+.layout-menu {
+  padding: 8px 10px;
+  min-width: 340px;
+}
+
+.layout-menu-row {
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 4px !important;
+  padding: 2px 0;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.15);
+}
+
+.layout-menu-count {
+  width: 20px;
+  font-size: 11px;
+  color: #808080;
+  text-align: right;
+  margin-right: 4px;
+}
+
+/* Jedna volba rozložení: piktogram v rámečku, zvýrazněná aktivní */
+.layout-option {
+  padding: 3px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.layout-option:hover {
+  background: rgba(128, 128, 128, 0.18);
+}
+
+.layout-option.menu-item-active {
+  background: rgba(41, 98, 255, 0.18);
+}
+
+/* Piktogram rozložení: zmenšená mřížka se stejnou třídou layout-<id> */
+.layout-icon {
+  display: grid;
+  width: 22px;
+  height: 18px;
+  gap: 1px;
+}
+
+.layout-icon-cell {
+  border: 1px solid currentColor;
+  border-radius: 1px;
+  opacity: 0.8;
+}
+
+.layout-option.menu-item-active .layout-icon-cell {
+  color: #2962ff;
+  opacity: 1;
+}
+
+.layout-sync-title {
+  display: block;
+  margin-top: 10px;
+  margin-bottom: 2px;
+}
+
+.layout-sync-row {
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 6px !important;
+  font-size: 13px;
+}
+
+.layout-sync-info {
+  font-size: 15px;
+  color: #808080;
+}
+
+/* ---------- Šablony indikátorů (Indicator templates) ---------- */
+
+.tpl-set-menu {
+  min-width: 270px;
+  padding-bottom: 4px;
+}
+
+/* Záložky Indicators / Templates v hlavičce nabídky */
+.tpl-tabs {
+  padding: 6px 8px;
+  gap: 4px !important;
+  flex-wrap: nowrap;
+}
+
+.tpl-tab {
+  flex: 1 1 0;
+  color: inherit;
+  border-radius: 6px;
+}
+
+.tpl-tab.active {
+  border: 1px solid #2962ff;
+  background: rgba(41, 98, 255, 0.15);
+}
+
+.tpl-menu-item {
+  min-height: 32px;
+  font-size: 13px;
+  align-items: center;
+  gap: 8px;
+}
+
+.tpl-menu-icon {
+  font-size: 18px;
+  color: #808080;
+}
+
+.tpl-section {
+  display: block;
+  padding: 6px 16px 2px;
+}
+
+.tpl-recent-text {
+  gap: 0 !important;
+  min-width: 0;
+}
+
+.tpl-recent-name {
+  font-size: 13px;
+}
+
+.tpl-recent-desc {
+  font-size: 11px;
+  color: #808080;
+  max-width: 220px;
+  white-space: normal;
+}
+
+/* Tlačítka oblíbených šablon v horní liště (iniciála v kolečku) */
+.tpl-quick {
+  gap: 2px !important;
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
+.tpl-quick-btn {
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid rgba(128, 128, 128, 0.5);
+  color: inherit;
+}
+
+.tpl-list-dialog {
+  width: 520px;
+}
+
+.tpl-list {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.tpl-delete-btn {
+  color: #808080;
+}
+
+/* ---------- Dialog Settings kresby se záložkami (Text / Style / Visibility) ---------- */
+
+.drawing-settings {
+  width: 460px;
+}
+
+.tv-tabs {
+  border-bottom: 1px solid rgba(128, 128, 128, 0.3);
+}
+
+/* Záložky zarovnané vlevo podle obsahu (ne roztažené na celou šířku) */
+.tv-tabs .q-tab {
+  flex: 0 0 auto;
+  padding: 0 4px;
+  margin-right: 16px;
+  min-height: 36px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.tv-tab-panels {
+  background: transparent;
+}
+
+.tv-tab-panel {
+  padding: 10px 0 0 !important;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Řádek nástrojů textu: barva, velikost písma, tučné, kurzíva */
+.text-toolbar {
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 8px !important;
+}
+
+.text-size {
+  width: 90px;
+}
+
+.text-flag {
+  min-width: 36px;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  font-size: 16px;
+  color: inherit;
+}
+
+.text-flag-bold {
+  font-weight: 700;
+}
+
+.text-flag-italic {
+  font-style: italic;
+  font-family: Georgia, serif;
+}
+
+/* Zapnuté tučné / kurzíva */
+.text-flag.active {
+  background: rgba(41, 98, 255, 0.18);
+  color: #2962ff;
+}
+
+.text-area textarea {
+  min-height: 110px;
+}
+
+/* Záložka Visibility: zaškrtnutí jednotky, od, posuvník rozsahu, do */
+.visibility-grid {
+  display: grid;
+  grid-template-columns: 110px 72px 1fr 72px;
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 8px;
+}
+
+.visibility-num .q-field__control {
+  min-height: 36px;
+}
+
+.visibility-range {
+  min-width: 80px;
+}

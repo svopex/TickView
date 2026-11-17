@@ -91,15 +91,115 @@ def normalize_position_options(options) -> dict:
     }
 
 
+# Velikosti písma textové kresby v nabídce dialogu (jako v TradingView)
+TEXT_FONT_SIZES = [10, 11, 12, 13, 14, 16, 20, 24, 28, 32, 40]
+# Výchozí barvy pozadí a rámečku textové kresby (zapínají se v dialogu)
+DEFAULT_TEXT_BACKGROUND = "rgba(41, 98, 255, 0.25)"
+DEFAULT_TEXT_BORDER = "#787b86"
+
+
+def normalize_text_options(options) -> dict:
+    """Vzhled textové kresby: tučné, kurzíva, pozadí, rámeček a zalomení řádků.
+
+    Parametry:
+        options: {"bold", "italic", "background", "backgroundColor", "border",
+            "borderColor", "wrap"} – může být neúplný.
+    """
+    source = options if isinstance(options, dict) else {}
+    return {
+        "bold": bool(source.get("bold")),
+        "italic": bool(source.get("italic")),
+        "background": bool(source.get("background")),
+        "backgroundColor": normalize_color(source.get("backgroundColor")) or DEFAULT_TEXT_BACKGROUND,
+        "border": bool(source.get("border")),
+        "borderColor": normalize_color(source.get("borderColor")) or DEFAULT_TEXT_BORDER,
+        "wrap": bool(source.get("wrap")),
+    }
+
+
+# Viditelnost kreseb podle timeframu (záložka Visibility jako v TradingView):
+# jednotka → (popisek, nejmenší a největší hodnota rozsahu). Aplikace nemá
+# tickové, sekundové, měsíční ani range timeframy – nabízí jen použitelné jednotky
+VISIBILITY_UNITS: dict[str, tuple[str, int, int]] = {
+    "minutes": ("Minutes", 1, 59),
+    "hours": ("Hours", 1, 24),
+    "days": ("Days", 1, 366),
+    "weeks": ("Weeks", 1, 52),
+}
+# Přípona timeframu → jednotka viditelnosti (1m, 4h, 1D, 1W)
+_TIMEFRAME_SUFFIX_UNITS = {"m": "minutes", "h": "hours", "D": "days", "W": "weeks"}
+
+
+def timeframe_unit(timeframe: str) -> tuple[str, int] | None:
+    """Jednotka viditelnosti a počet jednotek timeframu ("15m" → ("minutes", 15)); neznámý = None."""
+    unit = _TIMEFRAME_SUFFIX_UNITS.get(timeframe[-1:]) if isinstance(timeframe, str) else None
+    count = timeframe[:-1]
+    if unit is None or not count.isdigit():
+        return None
+    return unit, int(count)
+
+
+def _bounded_int(value, low: int, high: int, default: int) -> int:
+    """Celé číslo omezené na rozsah low–high; neplatná hodnota = default."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(low, min(high, number))
+
+
+def normalize_visibility(data) -> dict:
+    """Viditelnost kresby po jednotkách timeframu s doplněnými výchozími hodnotami.
+
+    Výchozí je kresba viditelná na všech timeframech (celý rozsah každé
+    jednotky). Prohozené meze rozsahu se srovnají.
+
+    Parametry:
+        data: {jednotka: {"enabled", "from", "to"}} – může být neúplný nebo None.
+    """
+    source = data if isinstance(data, dict) else {}
+    result = {}
+    for unit, (_, low, high) in VISIBILITY_UNITS.items():
+        item = source.get(unit) if isinstance(source.get(unit), dict) else {}
+        start = _bounded_int(item.get("from"), low, high, low)
+        end = _bounded_int(item.get("to"), low, high, high)
+        result[unit] = {
+            "enabled": item.get("enabled", True) is not False,
+            "from": min(start, end),
+            "to": max(start, end),
+        }
+    return result
+
+
+def drawing_visible(options, timeframe: str) -> bool:
+    """Má se kresba zobrazit na daném timeframu? (záložka Visibility v Settings kresby)
+
+    Parametry:
+        options: volby kresby (může obsahovat "visibility"; bez ní je viditelná všude).
+        timeframe: timeframe grafu, např. "5m" (neznámý = viditelná).
+    """
+    unit = timeframe_unit(timeframe)
+    if unit is None:
+        return True
+    raw = options.get("visibility") if isinstance(options, dict) else None
+    if not isinstance(raw, dict):
+        return True
+    rule = normalize_visibility(raw)[unit[0]]
+    return rule["enabled"] and rule["from"] <= unit[1] <= rule["to"]
+
+
 def normalize_drawing_style(values, kind: str | None = None) -> dict:
     """Styl kresby (šablona, dialog, výchozí styl nových kreseb) s doplněnými výchozími hodnotami.
 
     Parametry:
-        values: {"color", "options": {"width", "lineStyle", "fontSize"}} – může být neúplný.
+        values: {"color", "options": {"width", "lineStyle", "fontSize", "visibility", …}}
+            – může být neúplný.
         kind: druh kresby; pozice (POSITION_KINDS) mají v options navíc
-            parametry výpočtu (velikost účtu, riziko, lot).
+            parametry výpočtu (velikost účtu, riziko, lot), text vzhled písma,
+            pozadí a rámečku.
 
-    Vrací {"color", "options"} s platnou barvou, šířkou, stylem čáry a písmem.
+    Vrací {"color", "options"} s platnou barvou, šířkou, stylem čáry, písmem
+    a viditelností podle timeframu.
     """
     source = values if isinstance(values, dict) else {}
     options = source.get("options") if isinstance(source.get("options"), dict) else {}
@@ -111,14 +211,19 @@ def normalize_drawing_style(values, kind: str | None = None) -> dict:
             "width": width if width in DRAWING_LINE_WIDTHS else DEFAULT_LINE_WIDTH,
             "lineStyle": line_style if line_style in DRAWING_LINE_STYLES else "solid",
             "fontSize": clamp_font_size(options.get("fontSize")),
+            "visibility": normalize_visibility(options.get("visibility")),
         },
     }
     if kind in POSITION_KINDS:
         style["options"].update(normalize_position_options(options))
+    if kind == "text":
+        style["options"].update(normalize_text_options(options))
     return style
 
 
-def normalize_position_points(kind: str, entry, target, stop, points: list[dict]) -> list[dict]:
+def normalize_position_points(
+    kind: str, entry, target, stop, points: list[dict], decimals: int | None = None
+) -> list[dict]:
     """Body pozice s cenami z dialogu Settings; špatné pořadí cen vyhodí ValueError.
 
     Long musí mít stop < vstup < cíl, short cíl < vstup < stop. Časy bodů
@@ -128,11 +233,14 @@ def normalize_position_points(kind: str, entry, target, stop, points: list[dict]
         kind: "long" nebo "short".
         entry, target, stop: ceny vstupu, cíle a stopu.
         points: původní body kresby [vstup, cíl, stop].
+        decimals: přesnost cen instrumentu – ceny se na ni zaokrouhlí (None = beze změny).
     """
     try:
         entry, target, stop = float(entry), float(target), float(stop)
     except (TypeError, ValueError):
         raise ValueError("Zadejte ceny vstupu, cíle a stopu.") from None
+    if decimals is not None:
+        entry, target, stop = (round(price, decimals) for price in (entry, target, stop))
     if kind == "long" and not stop < entry < target:
         raise ValueError("Long pozice musí mít stop pod vstupem a cíl nad ním.")
     if kind == "short" and not target < entry < stop:

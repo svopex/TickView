@@ -45,6 +45,11 @@ class LightweightChart(ui.element):
         # Graf inicializujeme až po prvním vykreslení stránky v prohlížeči
         ui.timer(0.1, self._init_in_browser, once=True)
 
+    @property
+    def js_id(self) -> str:
+        """Id grafu v JS (klíč událostí z popAllEvents)."""
+        return self._js_id
+
     def _js(self, method: str, args: tuple) -> str:
         # Volání JS API grafu; argumenty převede json.dumps (řetězce, čísla,
         # True/False/None → true/false/null, seznamy a slovníky)
@@ -155,17 +160,20 @@ class LightweightChart(ui.element):
         """Skryje/zobrazí všechny kresby."""
         self._call("setDrawingsHidden", hidden)
 
-    async def add_text(self, time_s: int, price: float, text: str) -> None:
-        """Přidá textovou kresbu (po potvrzení dialogu)."""
-        self._call("addText", int(time_s), float(price), text)
+    async def add_text(self, time_s: int, price: float, text: str, color: str | None = None, options: dict | None = None) -> None:
+        """Přidá textovou kresbu (po potvrzení dialogu Text).
+
+        Parametry:
+            time_s, price: kotevní bod (levý horní roh textu).
+            text: obsah (může mít více řádků).
+            color, options: barva a volby z dialogu (písmo, pozadí, rámeček,
+                zalomení, viditelnost); None = výchozí styl typu.
+        """
+        self._call("addText", int(time_s), float(price), text, color, options or {})
 
     async def add_sticker(self, time_s: int, price: float, emoji: str) -> None:
         """Přidá sticker (emoji) na pozici kliku (po výběru v dialogu)."""
         self._call("addSticker", int(time_s), float(price), emoji)
-
-    def apply_drawing_settings(self, drawing_id: int, settings: dict) -> None:
-        """Použije nastavení kresby z dialogu Settings: {"color", "text", "options"}."""
-        self._call("applyDrawingSettings", int(drawing_id), settings)
 
     def set_timezone(self, setting: str, exchange_timezone: str) -> None:
         """Časové pásmo zobrazení: "local", "exchange", "UTC" nebo IANA název.
@@ -230,11 +238,19 @@ class LightweightChart(ui.element):
         """Smaže označenou kresbu (nebo všechny) – vrací počet smazaných."""
         return int(await self._call_result("trashDrawings") or 0)
 
-    async def pop_events(self) -> list[dict]:
-        """Vyzvedne všechny čekající události grafu (kresby, nástroje, akce) jedním dotazem."""
-        events = await self._call_result("popEvents")
-        return events if isinstance(events, list) else []
-
     async def set_drawings(self, drawings: list[dict]) -> None:
         """Nahradí zobrazené kresby (načtené z cache při načtení symbolu)."""
         self._call("setDrawings", drawings)
+
+    def set_active(self) -> None:
+        """Označí graf jako aktivní v rozložení více grafů (rámeček, lišta, klávesnice)."""
+        self._call("setActive")
+
+    def set_layout_sync(self, sync: dict) -> None:
+        """Synchronizace mezi grafy rozložení {"crosshair", "time", "date_range"} (platí pro všechny grafy)."""
+        self._call("setLayoutSync", sync)
+
+    def destroy(self) -> None:
+        """Odstraní graf z prohlížeče i ze stránky (menší počet grafů v rozložení)."""
+        self._call("destroy")
+        self.delete()

@@ -318,12 +318,13 @@ class KlineCache:
 
     # ---------- kreslení ----------
 
-    async def load_drawings(self, source: str, symbol: str, timeframe: str) -> list[dict]:
-        """Vrátí kresby uložené k symbolu a timeframe, seřazené podle id."""
-        async with self._lock:
-            rows = await asyncio.to_thread(
-                self._load_drawings_sync, source, symbol, timeframe
-            )
+    # Kresby patří k symbolu (jako v TradingView) a jsou vidět na všech
+    # timeframech podle své viditelnosti; sloupec timeframe drží jen
+    # timeframe, na kterém kresba vznikla
+
+    async def load_drawings(self, source: str, symbol: str) -> list[dict]:
+        """Vrátí kresby uložené k symbolu (všechny timeframy), seřazené podle id."""
+        rows = await self._run(self._load_drawings_sync, source, symbol)
         # body kresby jsou uložené jako JSON (čas v sekundách UTC + cena)
         return [
             {
@@ -338,14 +339,14 @@ class KlineCache:
             for row in rows
         ]
 
-    def _load_drawings_sync(self, source: str, symbol: str, timeframe: str):
+    def _load_drawings_sync(self, source: str, symbol: str):
         cur = self._conn.execute(
             """
             SELECT id, kind, points, color, text, options FROM drawings
-            WHERE source = ? AND symbol = ? AND timeframe = ?
+            WHERE source = ? AND symbol = ?
             ORDER BY id
             """,
-            (source, symbol, timeframe),
+            (source, symbol),
         )
         return cur.fetchall()
 
@@ -360,7 +361,11 @@ class KlineCache:
         text: Optional[str] = None,
         options: Optional[dict] = None,
     ) -> int:
-        """Uloží jednu kresbu (typ + body + barva + volitelný text a styl čáry/písma); vrátí její id."""
+        """Uloží jednu kresbu (typ + body + barva + volitelný text a volby); vrátí její id.
+
+        Parametry:
+            timeframe: timeframe, na kterém kresba vznikla (zobrazení řídí viditelnost v options).
+        """
         async with self._lock:
             return await asyncio.to_thread(
                 self._add_drawing_sync, source, symbol, timeframe, kind, points, color, text, options
@@ -377,7 +382,7 @@ class KlineCache:
         text: Optional[str],
         options: Optional[dict],
     ) -> int:
-        # Volby (šířka, styl čáry, písmo) jako JSON; bez voleb NULL jako u starších kreseb
+        # Volby (šířka, styl čáry, písmo, viditelnost) jako JSON; bez voleb NULL jako u starších kreseb
         cur = self._conn.execute(
             """
             INSERT INTO drawings (source, symbol, timeframe, kind, points, color, text, options)
@@ -392,88 +397,46 @@ class KlineCache:
         self,
         source: str,
         symbol: str,
-        timeframe: str,
         drawing_id: int,
         points: list[dict],
         text: Optional[str] = None,
     ) -> None:
-        """Aktualizuje body (a volitelně text) existující kresby po jejím tažení."""
-        async with self._lock:
-            await asyncio.to_thread(
-                self._update_drawing_sync, source, symbol, timeframe, drawing_id, points, text
-            )
-
-    def _update_drawing_sync(
-        self,
-        source: str,
-        symbol: str,
-        timeframe: str,
-        drawing_id: int,
-        points: list[dict],
-        text: Optional[str],
-    ) -> None:
-        self._conn.execute(
+        """Aktualizuje body (a volitelně text) existující kresby symbolu po jejím tažení."""
+        await self._run(
+            self._execute_sync,
             """
             UPDATE drawings SET points = ?, text = ?
-            WHERE id = ? AND source = ? AND symbol = ? AND timeframe = ?
+            WHERE id = ? AND source = ? AND symbol = ?
             """,
-            (json.dumps(points), text, drawing_id, source, symbol, timeframe),
+            (json.dumps(points), text, drawing_id, source, symbol),
         )
-        self._conn.commit()
 
     async def update_drawing_style(
         self,
         source: str,
         symbol: str,
-        timeframe: str,
         drawing_id: int,
         color: Optional[str],
         text: Optional[str],
         options: dict,
     ) -> None:
-        """Uloží nastavení kresby z dialogu Settings (barva, text, šířka a styl čáry)."""
-        async with self._lock:
-            await asyncio.to_thread(
-                self._update_drawing_style_sync, source, symbol, timeframe, drawing_id, color, text, options
-            )
-
-    def _update_drawing_style_sync(
-        self,
-        source: str,
-        symbol: str,
-        timeframe: str,
-        drawing_id: int,
-        color: Optional[str],
-        text: Optional[str],
-        options: dict,
-    ) -> None:
-        self._conn.execute(
+        """Uloží nastavení kresby z dialogu Settings (barva, text, styl čáry, písmo, viditelnost)."""
+        await self._run(
+            self._execute_sync,
             """
             UPDATE drawings SET color = ?, text = ?, options = ?
-            WHERE id = ? AND source = ? AND symbol = ? AND timeframe = ?
+            WHERE id = ? AND source = ? AND symbol = ?
             """,
-            (color, text, json.dumps(options), drawing_id, source, symbol, timeframe),
+            (color, text, json.dumps(options), drawing_id, source, symbol),
         )
-        self._conn.commit()
 
-    async def delete_drawing(self, source: str, symbol: str, timeframe: str, drawing_id: int) -> None:
-        """Smaže jednu kresbu podle id (používá se pro mazání pravým klikem)."""
-        async with self._lock:
-            await asyncio.to_thread(
-                self._delete_drawing_sync, source, symbol, timeframe, drawing_id
-            )
-
-    def _delete_drawing_sync(
-        self, source: str, symbol: str, timeframe: str, drawing_id: int
-    ) -> None:
-        self._conn.execute(
-            """
-            DELETE FROM drawings
-            WHERE id = ? AND source = ? AND symbol = ? AND timeframe = ?
-            """,
-            (drawing_id, source, symbol, timeframe),
+    async def delete_drawing(self, source: str, symbol: str, drawing_id: int) -> None:
+        """Smaže jednu kresbu symbolu podle id (pravý klik, Del, koš)."""
+        await self._run(
+            self._execute_sync,
+            "DELETE FROM drawings WHERE id = ? AND source = ? AND symbol = ?",
+            (drawing_id, source, symbol),
         )
-        self._conn.commit()
 
     async def get_drawing(self, drawing_id: int) -> Optional[dict]:
         """Vrátí kresbu podle id {"id", "source", "symbol", "timeframe", "kind", "points"}, nebo None."""

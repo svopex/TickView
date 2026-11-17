@@ -3,9 +3,9 @@
 import asyncio
 import hashlib
 import json
-import time
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 from nicegui import background_tasks, context, ui
@@ -23,19 +23,30 @@ from tickview.logic.alerts import (
     format_price,
     normalize_alert,
 )
-from tickview.logic.cache import KlineCache, fetch_history
+from tickview.logic.cache import KlineCache
+from tickview.logic.indicator_templates import (
+    INDICATOR_TEMPLATES_KEY,
+    delete_indicator_template,
+    describe_indicator_template,
+    favorite_indicator_templates,
+    find_indicator_template,
+    load_indicator_templates,
+    recent_indicator_templates,
+    save_indicator_template,
+    template_indicators,
+    update_indicator_template,
+)
 from tickview.logic.indicators import (
     CATEGORIES,
     INDICATOR_DEFS,
     PARAM_LABELS,
-    compute_indicators,
     indicator_color,
     indicator_title,
     load_saved_indicators,
     new_indicator,
     normalize_params,
-    tail_payload,
 )
+from tickview.logic.layouts import LAYOUT_SECTIONS, LAYOUTS, SYNC_OPTIONS, load_layout, resize_panes
 from tickview.logic.styles import (
     CHART_DEFAULTS,
     CHART_TYPE_SECTIONS,
@@ -44,14 +55,18 @@ from tickview.logic.styles import (
     DEFAULT_FAVORITE_CHART_TYPES,
     DEFAULT_FONT_SIZE,
     DEFAULT_LINE_WIDTH,
+    DEFAULT_TEXT_BACKGROUND,
+    DEFAULT_TEXT_BORDER,
     DRAWING_LINE_STYLES,
     DRAWING_LINE_WIDTHS,
     MAX_NAME_LENGTH,
     POSITION_DEFAULTS,
     POSITION_KINDS,
     POSITION_RISK_UNITS,
+    TEXT_FONT_SIZES,
     TIMEFRAME_SECTIONS,
     TIMEFRAMES,
+    VISIBILITY_UNITS,
     clean_name,
     default_template_key,
     load_chart_style,
@@ -64,33 +79,23 @@ from tickview.logic.styles import (
     normalize_favorites,
     normalize_panel_position,
     normalize_position_points,
+    normalize_text_options,
+    normalize_visibility,
 )
 from tickview.logic.sessions import (
     SESSION_ETH,
     SESSION_RTH,
-    filter_session,
-    in_session,
     timezone_options,
 )
 from tickview.providers import PROVIDERS, get_provider
-from tickview.providers.base import TIMEFRAME_MS, Candle, StreamStatus, is_closed, utc_now_ms
+from tickview.providers.base import utc_now_ms
 from tickview.services.alerts import AlertEngine
 from tickview.services.notify import find_telegram_chat_id, send_telegram, telegram_configured, telegram_settings
+from tickview.ui.chart_pane import ChartPane
 from tickview.ui.color_button import ColorButton
 from tickview.ui.icons import ICONS, svg
-from tickview.ui.lightweight_chart import LightweightChart
 from tickview.ui.templates import TemplateMenu, load_default_template, settings_buttons, settings_header
 
-# Kolik svíček historie se načte pro jedno zobrazení (a uloží do cache)
-DEFAULT_BARS = 600
-# Kolik posledních svíček je vidět po načtení grafu
-VISIBLE_BARS = 150
-# Kolik oken historie se nejvýš stáhne, když první nemá dost svíček (víkend,
-# noc u akcií, RTH před otevřením trhu); každé další je dvojnásobné a starší,
-# pak se historie považuje za vyčerpanou
-OLDER_LOAD_ATTEMPTS = 4
-# Jak často nejvýš se z živých svíček přepočítají indikátory (sekundy)
-LIVE_INDICATOR_REFRESH_S = 2.0
 # Hledání symbolu: kolik výsledků jednoho zdroje a kolik celkem se zobrazí
 SEARCH_PER_PROVIDER = 15
 SEARCH_LIMIT = 60
@@ -124,6 +129,12 @@ def icon_html(name: str) -> ui.html:
     return ui.html(svg(name), sanitize=False).classes("tv-icon-wrap")
 
 
+def plural(count: int, one: str, few: str, many: str) -> str:
+    """Počet se správným tvarem slova: 1 graf, 2–4 grafy, 5+ grafů (i 0 grafů)."""
+    word = one if count == 1 else few if 2 <= count <= 4 else many
+    return f"{count} {word}"
+
+
 def drawing_scope(kind: str) -> str:
     """Rozsah šablon Settings kresby daného typu (šablony i výchozí styl nových kreseb)."""
     return f"drawing.{kind}"
@@ -152,7 +163,8 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
         f'<script src="/static/lightweight_chart.js?v={STATIC_VERSION}"></script>'
     )
 
-    # Nastavení z minula: motiv, poslední symbol a timeframe
+    # Nastavení z minula: motiv, poslední symbol a timeframe (starší nastavení
+    # jediného grafu – použijí se pro první graf, dokud není uložené rozložení)
     dark = (await cache.get_setting("theme", "dark")) != "light"
     last_symbol = await cache.get_setting("last_symbol", "binance:BTCUSDT") or "binance:BTCUSDT"
     last_timeframe = await cache.get_setting("last_timeframe", "1h") or "1h"
@@ -169,32 +181,28 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
     chart_style = load_chart_style(await cache.get_setting("chart_style"))
     # Typ grafu z minula (Bars, Candles, Line, …)
     saved_chart_type = normalize_chart_type(await cache.get_setting("chart_type"))
+    # Rozložení více grafů (Layout setup): rozložení, synchronizace, aktivní
+    # graf a stav každého grafu; bez uložené konfigurace jeden graf ze
+    # starších nastavení
+    layout_config = load_layout(
+        await cache.get_setting("layout"),
+        legacy={
+            "symbol": last_symbol,
+            "timeframe": last_timeframe,
+            "chart_type": saved_chart_type,
+            "indicators": saved_indicators,
+        },
+    )
     # Handle si držíme: každé volání ui.dark_mode() by vytvořilo nový prvek
     dark_mode = ui.dark_mode(dark)
 
-    # Stav zobrazeného symbolu; load_seq chrání proti překříženým odpovědím
+    # Společný stav stránky (platí pro všechny grafy rozložení); stav
+    # jednotlivých grafů (symbol, timeframe, indikátory, data) drží ChartPane
     state: dict = {
-        "provider_id": None,
-        "provider": None,
-        "symbol": None,
-        "timeframe": last_timeframe,
-        "load_seq": 0,
-        # Zámek řadí vykreslení: starší (pomalejší) odpověď nesmí přepsat
-        # novější data po rychlém přepnutí timeframu
-        "load_lock": asyncio.Lock(),
-        "stream_task": None,
-        "badge_live": None,
-        "indicators": saved_indicators,
-        # Svíčky v grafu (podklad indikátorů); živý stream je průběžně doplňuje
-        "candles": None,
-        # Monotonic čas posledního přepočtu indikátorů ze živých svíček
-        "indicators_refreshed_at": 0.0,
+        "dark": dark,
         "drawing_mode": None,
-        # Název a burza zobrazeného instrumentu pro nadpis grafu
-        "symbol_meta": None,
         "show_volume": show_volume,
         "chart_style": chart_style,
-        "chart_type": saved_chart_type,
         # Oblíbené typy grafu a timeframy (tlačítka v horní liště, hvězdičky
         # v nabídkách); klíč ve state je zároveň klíč nastavení
         "favorite_chart_types": load_favorites(
@@ -203,7 +211,20 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
         "favorite_timeframes": load_favorites(await cache.get_setting("favorite_timeframes"), TIMEFRAMES, TIMEFRAMES),
         "timezone": saved_timezone,
         "session": saved_session,
+        "magnet": saved_magnet,
+        # Rozložení a synchronizace mezi grafy
+        "layout": layout_config["layout"],
+        "sync": layout_config["sync"],
+        "active": layout_config["active"],
+        # Šablony indikátorů (seznam z nastavení)
+        "indicator_templates": load_indicator_templates(await cache.get_setting(INDICATOR_TEMPLATES_KEY)),
     }
+    # Grafy rozložení v pořadí slotů mřížky
+    panes: list[ChartPane] = []
+
+    def active() -> ChartPane:
+        """Aktivní graf rozložení (cíl horní lišty, watchlistu a dialogů)."""
+        return panes[min(state["active"], len(panes) - 1)]
 
     # ---------- handlery (uzávěry nad elementy vytvořenými níže) ----------
 
@@ -212,6 +233,31 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
         with status_label:
             status_label.text = message
             status_label.classes(add="error" if error else "", remove="" if error else "error")
+
+    def pane_status(pane: ChartPane, message: str, error: bool = False) -> None:
+        # Zprávy grafu: aktivní graf vždy, ostatní grafy rozložení jen chyby
+        # (zprávy obsahují symbol, takže je jasné, kterého grafu se týkají)
+        if pane is active() or error:
+            show_status(message, error)
+
+    def badge_changed(pane: ChartPane) -> None:
+        # Štítek zdroje v horní liště ukazuje stav dat aktivního grafu
+        if pane is active():
+            paint_badge()
+
+    def paint_badge() -> None:
+        """Štítek zdroje (živě / zpožděno / —) podle aktivního grafu."""
+        pane = active()
+        live = pane.badge_live
+        name = pane.provider.name if pane.provider else "—"
+        text = "—" if live is None else f"{name} · {'živě' if live else 'zpožděno'}"
+        # Z background tasků (živý stream) musíme vstoupit do slotu prvku
+        with source_badge:
+            source_badge.text = text
+            source_badge.update()
+
+    # Objekt stránky pro grafy rozložení (společné nastavení a hlášení stavu)
+    page = SimpleNamespace(cache=cache, state=state, show_status=pane_status, badge_changed=badge_changed)
 
     # ---------- hledání symbolu (dialog ve stylu TradingView) ----------
 
@@ -394,7 +440,7 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
             # Dialog už je otevřený (rychlé psaní nad grafem) – znaky připojíme
             symbol_search_input.value = (symbol_search_input.value or "") + text
             return
-        symbol_search_input.value = (state.get("symbol") or "") if text is None else text
+        symbol_search_input.value = (active().symbol or "") if text is None else text
         search_state["category"] = "all"
         symbol_search_dialog.open()
         await run_symbol_search()
@@ -412,390 +458,75 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
         await rebuild_watchlist()
         show_status(f"{symbol} přidán do seznamu {list_name} ({provider_id}).")
 
-    async def load_symbol(key) -> None:
-        if not key or ":" not in str(key):
-            return
-        provider_id, _, symbol = str(key).partition(":")
-        try:
-            provider = get_provider(provider_id)
-        except KeyError:
-            show_status(f"Neznámý zdroj: {provider_id}", error=True)
-            return
-        state["provider_id"] = provider_id
-        state["provider"] = provider
-        state["symbol"] = symbol
-        symbol_pill_label.text = symbol
-        refresh_watchlist_active()
-        # Nabídneme jen timeframy, které zdroj podporuje; dosavadní výběr případně nahradíme
-        timeframes = list(provider.timeframes.keys())
-        if state["timeframe"] not in timeframes:
-            state["timeframe"] = timeframes[0]
-        refresh_timeframes()
-        set_badge(None)
-        # Pásmo burzy (volba Exchange) a dostupnost přepínače RTH/ETH
-        chart.set_timezone(state["timezone"], provider.exchange_timezone(symbol))
-        refresh_session_button()
-        # Nadpis grafu: hned symbol, název a burzu doplní zdroj na pozadí
-        # (zdroje si metadata cachují samy)
-        key = f"{provider_id}:{symbol}"
-        state["symbol_meta"] = None
-        push_symbol_info()
-        asyncio.create_task(describe_symbol(provider, symbol, key))
-        await cache.set_setting("last_symbol", key)
-        await push_alert_lines()
-        await reload_chart()
-
-    def push_symbol_info() -> None:
-        # Nadpis tickeru v legendě grafu: „Název · timeframe · burza“
-        provider = state.get("provider")
-        symbol = state.get("symbol")
-        if provider is None or not symbol:
-            return
-        meta = state.get("symbol_meta") or {}
-        chart.set_symbol_info(
-            {
-                "symbol": symbol,
-                "name": meta.get("name") or symbol,
-                "exchange": meta.get("exchange") or provider.name,
-                "timeframe": state["timeframe"],
-                "source": provider.name,
-            }
+    async def save_layout() -> None:
+        """Uloží rozložení, synchronizaci, aktivní graf a stav všech grafů (přetrvá restart)."""
+        await cache.set_setting(
+            "layout",
+            json.dumps(
+                {
+                    "layout": state["layout"],
+                    "sync": state["sync"],
+                    "active": state["active"],
+                    "panes": [pane.config() for pane in panes],
+                }
+            ),
         )
 
-    async def describe_symbol(provider, symbol: str, key: str) -> None:
-        # Název a burzu zjistí zdroj (může trvat – Yahoo, TWS); výsledek se
-        # použije jen tehdy, když je symbol pořád zobrazený
-        try:
-            meta = await provider.describe(symbol)
-        except Exception:
-            # Bez metadat zůstane v nadpisu symbol a název zdroje
+    def refresh_active_ui() -> None:
+        """Horní lišta, watchlist a stavová lišta podle aktivního grafu."""
+        pane = active()
+        symbol_pill_label.text = pane.symbol or "—"
+        refresh_watchlist_active()
+        refresh_timeframes()
+        render_chart_type_bar()
+        refresh_session_button()
+        paint_badge()
+
+    async def load_symbol(key, pane: ChartPane | None = None) -> None:
+        """Zobrazí symbol "zdroj:symbol" v aktivním grafu (nebo v pane).
+
+        Se synchronizací symbolu (Sync in layout → Symbol) ho zobrazí všechny
+        grafy rozložení.
+        """
+        if not key or ":" not in str(key):
             return
-        if f"{state.get('provider_id')}:{state.get('symbol')}" == key:
-            state["symbol_meta"] = meta
-            push_symbol_info()
+        target = pane or active()
+        targets = list(panes) if state["sync"]["symbol"] and pane is None else [target]
+        changed = [item for item in targets if item.set_symbol(str(key))]
+        if not changed:
+            return
+        if active() in changed:
+            refresh_active_ui()
+        await save_layout()
+        await push_alert_lines()
+        # Grafy se načítají souběžně (každý má vlastní číslo načtení a zámek)
+        await asyncio.gather(*(item.reload_chart() for item in changed))
 
     async def set_timeframe(value) -> None:
         # Stejná hodnota = jen programové nastavení přepínače (load_symbol,
         # refresh_timeframes) – graf už se načítá, znovu ho nespouštíme
-        if not value or str(value) == state["timeframe"]:
+        if not value or str(value) == active().timeframe:
             return
-        state["timeframe"] = str(value)
+        # Se synchronizací intervalu se timeframe změní ve všech grafech
+        await apply_timeframe(list(panes) if state["sync"]["interval"] else [active()], str(value))
+
+    async def apply_timeframe(targets: list[ChartPane], value: str) -> None:
+        """Nastaví timeframe grafům targets (jen těm, jejichž zdroj ho podporuje) a přenačte je."""
+        changed = [pane for pane in targets if pane.set_timeframe(value)]
         # Neoblíbený timeframe zvolený z nabídky je v liště jen dočasně
         refresh_timeframes()
-        push_symbol_info()
-        await cache.set_setting("last_timeframe", str(value))
-        await reload_chart()
-
-    def set_badge(live: bool | None) -> None:
-        """Aktualizuje štítek zdroje jen při změně stavu (živě / zpožděno / —)."""
-        if state["badge_live"] == live:
-            return
-        state["badge_live"] = live
-        provider = state.get("provider")
-        name = provider.name if provider else "—"
-        if live is None:
-            text = "—"
-        elif live:
-            text = f"{name} · živě"
-        else:
-            text = f"{name} · zpožděno"
-        # Z background tasků (živý stream) musíme vstoupit do slotu prvku
-        with source_badge:
-            source_badge.text = text
-            source_badge.update()
-        # Barevná tečka stavu v nadpisu grafu (živě / zpožděno / bez dat)
-        chart.set_legend_status("none" if live is None else "live" if live else "delayed")
-
-    def merge_live_candle(candle: Candle) -> None:
-        # Promítne živou svíčku do state["candles"] (podklad indikátorů):
-        # stejná svíčka se nahradí, novější se připojí, starší se ignoruje
-        candles = state.get("candles")
-        if not candles:
-            return
-        if candle.open_time == candles[-1].open_time:
-            candles[-1] = candle
-        elif candle.open_time > candles[-1].open_time:
-            candles.append(candle)
-
-    async def push_indicators(tail: bool = False) -> None:
-        # Přepočet indikátorů nad state["candles"] (ve vlákně – pandas nad tisíci
-        # svíček by zdržel smyčku událostí); tail=True pošle jen poslední body
-        # (živý přepočet), jinak celé série
-        state["indicators_refreshed_at"] = time.monotonic()
-        payload = await asyncio.to_thread(
-            compute_indicators, list(state["indicators"]), list(state.get("candles") or [])
-        )
-        await chart.set_indicators(tail_payload(payload) if tail else payload)
-
-    def active_session():
-        # Hlavní seance aktuálního instrumentu, když je zvolené RTH (jinak None)
-        provider = state.get("provider")
-        if state["session"] != SESSION_RTH or provider is None or not state.get("symbol"):
-            return None
-        return provider.regular_session(state["symbol"])
-
-    def show_loaded_status(provider, symbol: str, timeframe: str) -> None:
-        # Souhrn načteného grafu ve stavové liště
-        count = len(state.get("candles") or [])
-        show_status(f"{symbol} · {timeframe} · {count} svíček · zdroj {provider.name}")
-
-    async def consume_stream(provider, symbol: str, timeframe: str, seq: int) -> None:
-        """Konzumuje živý stream zdroje: doplňuje svíčky do grafu, cache a indikátorů.
-
-        Stavové zprávy zdroje (výpadek / obnovení spojení) promítá do štítku
-        a stavové lišty; díru po výpadku (chybějící svíčky mezi poslední
-        známou a právě přišlou) doplní přes cache a historii zdroje.
-        """
-        step_ms = TIMEFRAME_MS[timeframe]
-        live = provider.is_live_for(timeframe)
-        market_closed_warned = False
-        try:
-            async for item in provider.stream(symbol, timeframe):
-                if seq != state["load_seq"]:
-                    # Mezitím se přepnulo zobrazení – stream ukončíme
-                    return
-                if isinstance(item, StreamStatus):
-                    # Výpadek / obnovení spojení se zdrojem; zdroj může zároveň
-                    # upřesnit, zda jsou data živá (IBKR podle předplatného)
-                    if item.live is not None:
-                        live = item.live
-                    set_badge(live if item.connected else False)
-                    if item.connected:
-                        show_status(f"{symbol}: {item.message}")
-                    else:
-                        show_status(
-                            f"Živý stream {symbol} přerušen, čekám na znovupřipojení: {item.message}",
-                            error=True,
-                        )
-                    continue
-                candle = item
-                set_badge(live)
-                session = active_session()
-                if session and not in_session(candle, timeframe, session):
-                    # RTH: svíčky pre-market / after-hours do grafu nepatří, do
-                    # cache ano (uzavřené) – pro přepnutí na ETH
-                    if is_closed(candle, step_ms, utc_now_ms()):
-                        await cache.store(provider.id, symbol, timeframe, [candle])
-                    continue
-                batch = [candle]
-                known = state.get("candles") or []
-                new_candle = bool(known) and candle.open_time > known[-1].open_time
-                if known and candle.open_time > known[-1].open_time + step_ms:
-                    # Mezi poslední známou a novou svíčkou chybí data (výpadek
-                    # websocketu, uspání počítače…) – doplníme je přes cache
-                    last_open = known[-1].open_time
-                    try:
-                        gap = await fetch_history(
-                            provider, cache, symbol, timeframe, last_open + step_ms, candle.open_time - 1
-                        )
-                    except Exception:
-                        # Doplnění se nepovedlo – díru doplní příští načtení grafu
-                        gap = []
-                    if seq != state["load_seq"]:
-                        return
-                    gap = filter_session(gap, timeframe, session)
-                    batch = [c for c in gap if last_open < c.open_time < candle.open_time] + batch
-                # Graf jedním voláním, podklad indikátorů a cache (jen uzavřená
-                # živá svíčka; doplněnou díru uložil už fetch_history)
-                await chart.update_candles(batch)
-                for batch_candle in batch:
-                    merge_live_candle(batch_candle)
-                now_ms = utc_now_ms()
-                if is_closed(candle, step_ms, now_ms):
-                    await cache.store(provider.id, symbol, timeframe, [candle])
-                # Indikátory: po doplnění díry celé, jinak jen poslední body a
-                # nejvýš jednou za LIVE_INDICATOR_REFRESH_S (nová svíčka hned)
-                if state["indicators"]:
-                    if len(batch) > 1:
-                        await push_indicators()
-                    elif new_candle or time.monotonic() - state["indicators_refreshed_at"] >= LIVE_INDICATOR_REFRESH_S:
-                        await push_indicators(tail=True)
-                # Nejnovější svíčka je starší než celé další období → nová
-                # nepřibývá, trh je pravděpodobně zavřený (hlásíme jen jednou).
-                # Uzavřená svíčka sama o sobě nestačí: websocket (Binance, Alpaca)
-                # ji posílá těsně po konci období i při otevřeném trhu.
-                if not market_closed_warned and candle.open_time + 2 * step_ms <= now_ms:
-                    market_closed_warned = True
-                    show_status(
-                        f"{symbol}: trh je pravděpodobně zavřený – živá data nepřibývají"
-                    )
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            # Neočekávaná chyba mimo zdroj (zdroje výpadky hlásí přes StreamStatus)
-            if seq == state["load_seq"]:
-                set_badge(False)
-                show_status(f"Živý stream ukončen chybou: {exc}", error=True)
-
-    def cancel_stream() -> None:
-        task = state.get("stream_task")
-        if task and not task.done():
-            task.cancel()
-        state["stream_task"] = None
-
-    def start_stream() -> None:
-        # Předchozí stream zrušíme (přepnutí symbolu/timeframu/klienta)
-        cancel_stream()
-        provider = state.get("provider")
-        if provider is None or not provider.supports_stream:
-            set_badge(False)
-            return
-        state["stream_task"] = asyncio.create_task(
-            consume_stream(
-                provider, state["symbol"], state["timeframe"], state["load_seq"]
-            )
-        )
-
-    async def reload_chart() -> None:
-        provider = state.get("provider")
-        symbol = state.get("symbol")
-        timeframe = state.get("timeframe")
-        if provider is None or not symbol:
-            return
-        state["load_seq"] += 1
-        seq = state["load_seq"]
-        cancel_stream()
-        set_badge(False)
-        show_status(f"Načítám {symbol} ({timeframe})…")
-        try:
-            # Aspoň tolik svíček, kolik je po načtení vidět (zbytek donačte load_older)
-            candles = await fetch_session_history(
-                provider, symbol, timeframe, utc_now_ms(), min_count=VISIBLE_BARS, seq=seq
-            )
-            if seq != state["load_seq"]:
-                # Mezitím uživatel zvolil jiný symbol/timeframe – zastaralou odpověď zahodíme
-                return
-            if not candles:
-                show_status(f"Pro {symbol} ({timeframe}) nejsou dostupná data.", error=True)
-                await clear_chart(timeframe)
-                return
-            # Vykreslení držíme pod zámkem a číslo požadavku kontrolujeme znovu
-            # uvnitř: data do grafu smí zapsat jen nejnovější načtení
-            async with state["load_lock"]:
-                if seq != state["load_seq"]:
-                    return
-                await chart.set_candles(candles, TIMEFRAME_MS[timeframe], visible_bars=VISIBLE_BARS)
-                state["candles"] = candles
-                # Přepočet aktivních indikátorů nad novými daty
-                await push_indicators()
-            # Kresby patří k symbolu/timeframu – načteme uložené
-            await reload_drawings()
-            if seq != state["load_seq"]:
-                return
-            show_loaded_status(provider, symbol, timeframe)
-            # Historie načtena → spustíme živý stream pro aktuální zobrazení
-            start_stream()
-        except Exception as exc:
-            if seq != state["load_seq"]:
-                return
-            show_status(f"Načtení dat selhalo: {exc}", error=True)
-            await clear_chart(timeframe)
-
-    async def clear_chart(timeframe: str) -> None:
-        # Bez dat nesmí v grafu zůstat svíčky ani kresby předchozího symbolu
-        # pod nadpisem nového (např. MSFT s cenami EUR.USD po výpadku TWS);
-        # pod zámkem vykreslení jako úspěšné načtení
-        seq = state["load_seq"]
-        async with state["load_lock"]:
-            if seq != state["load_seq"]:
-                return
-            state["candles"] = []
-            await chart.set_candles([], TIMEFRAME_MS[timeframe], visible_bars=VISIBLE_BARS)
-            await chart.set_drawings([])
-            await push_indicators()
-
-    async def fetch_session_history(
-        provider, symbol: str, timeframe: str, end_ms: int, *, min_count: int, seq: int
-    ) -> list[Candle]:
-        """Stáhne svíčky končící v end_ms, odfiltrované na zvolenou seanci.
-
-        Začne oknem DEFAULT_BARS svíček; dokud jich je méně než min_count,
-        stáhne i úsek před ním a okno zdvojnásobí (celkem nejvýš
-        OLDER_LOAD_ATTEMPTS oken) – noc, víkend nebo RTH mimo hlavní hodiny
-        jinak vrátí málo nebo nic. Přestane i tehdy, když mezitím začalo jiné
-        načtení (seq), nebo když filtr seance nic neodebral a úsek přesto
-        nestačil (dosažen začátek historie, např. mladý symbol).
-
-        Parametry:
-            provider, symbol, timeframe: co se stahuje.
-            end_ms: konec intervalu (ms UTC, včetně).
-            min_count: kolik svíček po filtru seance stačí.
-            seq: číslo načtení, ke kterému dotaz patří (state["load_seq"]).
-        """
-        span_ms = DEFAULT_BARS * TIMEFRAME_MS[timeframe]
-        session = active_session()
-        candles: list[Candle] = []
-        for _ in range(OLDER_LOAD_ATTEMPTS):
-            chunk = await fetch_history(provider, cache, symbol, timeframe, end_ms - span_ms, end_ms)
-            filtered = filter_session(chunk, timeframe, session)
-            # Starší úsek jde před dosud stažené svíčky (úseky se nepřekrývají)
-            candles = filtered + candles
-            if len(candles) >= min_count or seq != state["load_seq"]:
-                break
-            # Neprázdný úsek bez mezer po filtru seance a přesto krátký = data
-            # dřív nezačínají; další (prázdné, necachované) dotazy by byly zbytečné
-            if chunk and len(filtered) == len(chunk):
-                break
-            # Stažený úsek už znovu nestahujeme – další pokus končí těsně před
-            # jeho začátkem (interval je včetně obou mezí, svíčka by se zdvojila)
-            end_ms -= span_ms + 1
-            span_ms *= 2
-        return candles
-
-    async def load_older(before_s) -> None:
-        """Donačte starší svíčky před první svíčkou grafu (posun grafu doleva).
-
-        Když nic nevrátí ani poslední okno fetch_session_history, graf
-        historii označí za vyčerpanou.
-        """
-        provider = state.get("provider")
-        symbol = state.get("symbol")
-        timeframe = state.get("timeframe")
-        seq = state["load_seq"]
-        if provider is None or not symbol or before_s is None:
-            return
-        try:
-            older = await fetch_session_history(
-                provider, symbol, timeframe, int(before_s) * 1000 - 1, min_count=1, seq=seq
-            )
-        except Exception as exc:
-            if seq == state["load_seq"]:
-                show_status(f"Starší data {symbol} se nepodařilo načíst: {exc}", error=True)
-                # Nic nepřidáno, historie ale není vyčerpaná – graf to zkusí později
-                await chart.prepend_candles([], exhausted=False)
-            return
-        async with state["load_lock"]:
-            if seq != state["load_seq"]:
-                return
-            await chart.prepend_candles(older, exhausted=not older)
-            if not older:
-                show_status(f"{symbol} ({timeframe}): starší data nejsou k dispozici.")
-                return
-            first_open = state["candles"][0].open_time if state.get("candles") else None
-            state["candles"] = [
-                c for c in older if first_open is None or c.open_time < first_open
-            ] + (state.get("candles") or [])
-            if state["indicators"]:
-                await push_indicators()
-            show_loaded_status(provider, symbol, timeframe)
-
-    def start_load_older(before_s) -> None:
-        # Donačítání běží na pozadí, aby nezdrželo zpracování ostatních událostí grafu
-        async def run() -> None:
-            try:
-                await load_older(before_s)
-            except Exception as exc:
-                show_status(f"Starší data se nepodařilo načíst: {exc}", error=True)
-
-        asyncio.create_task(run())
+        await save_layout()
+        await asyncio.gather(*(pane.reload_chart() for pane in changed if pane.key))
 
     async def set_chart_type(chart_type: str) -> None:
-        # Typ grafu z lišty nebo nabídky: graf, tlačítka v liště, zvýraznění; přetrvá restart
+        # Typ grafu z lišty nebo nabídky (aktivní graf): graf, tlačítka v liště,
+        # zvýraznění; přetrvá restart v konfiguraci rozložení
         chart_type = normalize_chart_type(chart_type)
-        state["chart_type"] = chart_type
-        chart.set_chart_type(chart_type)
+        pane = active()
+        pane.chart_type = chart_type
+        pane.chart.set_chart_type(chart_type)
         render_chart_type_bar()
-        await cache.set_setting("chart_type", chart_type)
+        await save_layout()
 
     def make_chart_type_click(chart_type: str):
         async def _handler() -> None:
@@ -823,18 +554,19 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
     def paint_star(key: str, value: str) -> None:
         # Plná žlutá hvězdička = oblíbená položka
         span, icon = menu_stars[(key, value)]
-        active = value in state[key]
-        span.classes(add="on" if active else "", remove="" if active else "on")
-        icon.content = svg("star" if active else "star_border")
+        active_item = value in state[key]
+        span.classes(add="on" if active_item else "", remove="" if active_item else "on")
+        icon.content = svg("star" if active_item else "star_border")
 
     def bar_items(allowed: list[str], key: str, current: str) -> list[str]:
         # Položky lišty: oblíbené a vždy aktuální, v pořadí nabídky
         return [item for item in allowed if item in state[key] or item == current]
 
     def render_chart_type_bar() -> None:
-        # Horní lišta: tlačítka oblíbených typů grafu (a aktuální typ, i když
-        # oblíbený není) jako v TradingView; v nabídce jen zvýrazní aktuální typ
-        current = state["chart_type"]
+        # Horní lišta: tlačítka oblíbených typů grafu (a aktuální typ aktivního
+        # grafu, i když oblíbený není) jako v TradingView; v nabídce jen
+        # zvýrazní aktuální typ
+        current = active().chart_type
         chart_type_bar.clear()
         with chart_type_bar:
             for type_id in bar_items(list(CHART_TYPES), "favorite_chart_types", current):
@@ -865,8 +597,8 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
     # ---------- timeframy (oblíbené v liště, všechny v nabídce) ----------
 
     def supported_timeframes() -> list[str]:
-        # Timeframy aktuálního zdroje v pořadí nabídky (bez zdroje všechny)
-        provider = state.get("provider")
+        # Timeframy zdroje aktivního grafu v pořadí nabídky (bez zdroje všechny)
+        provider = active().provider
         supported = set(provider.timeframes) if provider else set(TIMEFRAMES)
         return [timeframe for timeframe in TIMEFRAMES if timeframe in supported]
 
@@ -874,7 +606,7 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
         # Lišta: oblíbené timeframy, které zdroj podporuje, a vždy aktuální;
         # nabídka se přestaví jen při změně podporovaných timeframů (jiný zdroj)
         supported = supported_timeframes()
-        current = state["timeframe"]
+        current = active().timeframe
         timeframe_toggle.options = bar_items(supported, "favorite_timeframes", current)
         timeframe_toggle.value = current
         timeframe_toggle.update()
@@ -909,7 +641,9 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
 
     async def toggle_theme(value: bool) -> None:
         dark_mode.set_value(value)
-        await chart.set_theme(value)
+        state["dark"] = value
+        for pane in panes:
+            await pane.chart.set_theme(value)
         await cache.set_setting("theme", "dark" if value else "light")
 
     # ---------- kreslení (lišta ve stylu TradingView) ----------
@@ -991,7 +725,8 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
 
     async def set_drawing_mode(mode) -> None:
         # Aktivní nástroj zvýrazníme na skupině, do které patří (jako v TradingView);
-        # None (JS po dokončení kresby vrací kurzor) znamená režim kurzoru
+        # None (JS po dokončení kresby vrací kurzor) znamená režim kurzoru.
+        # Nástroj platí pro všechny grafy rozložení – kreslit lze do kteréhokoli
         mode = mode or "cursor"
         state["drawing_mode"] = mode
         for group in DRAWING_GROUPS:
@@ -1003,12 +738,13 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
                 add="drawing-btn-active" if mode in group_modes else "",
                 remove="" if mode in group_modes else "drawing-btn-active",
             )
-        await chart.set_drawing_mode(None if mode == "cursor" else mode)
+        for pane in panes:
+            await pane.chart.set_drawing_mode(None if mode == "cursor" else mode)
 
-    async def push_drawing_defaults() -> None:
-        # Výchozí styl nových kreseb pro graf: uživatelská výchozí šablona typu
-        # kresby („Save as default“ v Settings kresby), jinak tovární styl;
-        # všechny výchozí šablony kreseb jedním dotazem do databáze
+    async def load_drawing_defaults() -> dict:
+        # Výchozí styl nových kreseb: uživatelská výchozí šablona typu kresby
+        # („Save as default“ v Settings kresby), jinak tovární styl; všechny
+        # výchozí šablony kreseb jedním dotazem do databáze
         saved = await cache.get_settings_prefix(default_template_key(drawing_scope("")))
         defaults = {}
         for kind in DRAWING_KINDS:
@@ -1017,7 +753,14 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
             except ValueError:
                 template = {}
             defaults[kind] = normalize_drawing_style(template, kind)
-        chart.set_drawing_defaults(defaults)
+        return defaults
+
+    async def push_drawing_defaults() -> None:
+        # Výchozí styl nových kreseb do všech grafů rozložení (načte se jednou
+        # a drží ve state pro grafy přidané později)
+        state["drawing_defaults"] = await load_drawing_defaults()
+        for pane in panes:
+            pane.chart.set_drawing_defaults(state["drawing_defaults"])
 
     # ---------- oblíbené nástroje (plovoucí panel) ----------
 
@@ -1042,17 +785,18 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
         state["favorites_visible"] = not state.get("favorites_visible", True)
         visible = state["favorites_visible"]
         paint_favorites_button()
-        chart.set_favorites_visible(visible)
+        active().chart.set_favorites_visible(visible)
         await cache.set_setting("favorites_visible", "1" if visible else "0")
         show_status(f"Panel oblíbených nástrojů {'zobrazen' if visible else 'skryt'}.")
 
     async def restore_favorites() -> None:
-        # Oblíbené nástroje, pozice a viditelnost panelu z minula (po init grafu)
+        # Oblíbené nástroje, pozice a viditelnost panelu z minula (po init
+        # prvního grafu; panel je společný všem grafům)
         favorites = load_favorites(await cache.get_setting("favorite_tools"), TOOL_MODES)
         position = load_panel_position(await cache.get_setting("favorites_position"))
         state["favorites_visible"] = (await cache.get_setting("favorites_visible", "1")) != "0"
         paint_favorites_button()
-        chart.set_favorites(favorites, position, state["favorites_visible"])
+        active().chart.set_favorites(favorites, position, state["favorites_visible"])
 
     # Popisy režimů magnetu pro stavovou lištu
     MAGNET_LABELS = {
@@ -1065,90 +809,157 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
         # Vymění SVG piktogram akčního tlačítka lišty (zámek, oko, hvězda)
         action_icons[action].content = svg(icon)
 
-    async def set_magnet(mode, announce: bool = True) -> None:
-        # Magnet: přichytávání bodů kreseb k OHLC svíčky pod kurzorem; režim se
-        # ukládá a přetrvá restart
+    def paint_action(action: str, on: bool) -> None:
+        # Zvýrazní akční tlačítko lišty (magnet, tužka, zámek, oko)
+        action_buttons[action].classes(add="drawing-btn-active" if on else "", remove="" if on else "drawing-btn-active")
+
+    async def set_magnet(mode) -> None:
+        # Magnet: přichytávání bodů kreseb k OHLC svíčky pod kurzorem (všechny
+        # grafy rozložení); režim se ukládá a přetrvá restart
         mode = mode if mode in MAGNET_LABELS else "off"
-        active = mode != "off"
-        button = action_buttons["magnet"]
-        button.classes(add="drawing-btn-active" if active else "", remove="" if active else "drawing-btn-active")
-        await chart.set_magnet(mode)
-        # Obnova uloženého režimu při načtení stránky ho znovu neukládá
-        if announce:
-            await cache.set_setting("magnet", mode)
-            show_status(f"Magnet {MAGNET_LABELS[mode]}.")
+        state["magnet"] = mode
+        paint_action("magnet", mode != "off")
+        for pane in panes:
+            await pane.chart.set_magnet(mode)
+        await cache.set_setting("magnet", mode)
+        show_status(f"Magnet {MAGNET_LABELS[mode]}.")
 
     async def toggle_pencil() -> None:
         # Režim tužky: nástroj zůstává vybraný i po nakreslení (jako v TradingView)
         state["keep_tool"] = not state.get("keep_tool", False)
-        button = action_buttons["pencil"]
-        button.classes(add="drawing-btn-active" if state["keep_tool"] else "", remove="" if state["keep_tool"] else "drawing-btn-active")
-        await chart.set_keep_tool(state["keep_tool"])
+        paint_action("pencil", state["keep_tool"])
+        for pane in panes:
+            await pane.chart.set_keep_tool(state["keep_tool"])
         show_status(f"Režim kreslení {'zapnut' if state['keep_tool'] else 'vypnut'}.")
 
     async def toggle_lock() -> None:
-        # Zámek: kresby nelze vybírat, posouvat ani mazat
+        # Zámek: kresby nelze vybírat, posouvat ani mazat (všechny grafy)
         state["locked"] = not state.get("locked", False)
-        button = action_buttons["lock"]
         set_action_icon("lock", "lock" if state["locked"] else "lock_open")
-        button.classes(add="drawing-btn-active" if state["locked"] else "", remove="" if state["locked"] else "drawing-btn-active")
-        await chart.set_locked(state["locked"])
+        paint_action("lock", state["locked"])
+        for pane in panes:
+            await pane.chart.set_locked(state["locked"])
         show_status(f"Kresby {'uzamčeny' if state['locked'] else 'odemčeny'}.")
 
     async def toggle_hide_drawings() -> None:
-        # Skrytí/zobrazení všech kreseb (ikona oka)
+        # Skrytí/zobrazení všech kreseb (ikona oka, všechny grafy)
         state["hidden"] = not state.get("hidden", False)
-        button = action_buttons["eye"]
         set_action_icon("eye", "eye_off" if state["hidden"] else "eye")
-        button.classes(add="drawing-btn-active" if state["hidden"] else "", remove="" if state["hidden"] else "drawing-btn-active")
-        await chart.set_drawings_hidden(state["hidden"])
+        paint_action("eye", state["hidden"])
+        for pane in panes:
+            await pane.chart.set_drawings_hidden(state["hidden"])
 
     async def trash_drawings() -> None:
-        # Koš: smaže označenou kresbu, jinak všechny; do databáze se smazání
-        # propíše přes události "delete" ve frontě grafu (viz on_drawing_finished)
-        removed = await chart.trash_drawings()
+        # Koš: smaže označenou kresbu aktivního grafu, jinak všechny jeho
+        # kresby; do databáze se smazání propíše přes události "delete"
+        removed = await active().chart.trash_drawings()
         if removed:
             show_status(f"Smazáno kreseb: {removed}.")
 
-    # ---------- textové kresby ----------
+    async def apply_pane_settings(pane: ChartPane) -> None:
+        """Pošle nově inicializovanému grafu společné nastavení kreslení a rozložení."""
+        chart = pane.chart
+        if "drawing_defaults" not in state:
+            state["drawing_defaults"] = await load_drawing_defaults()
+        chart.set_drawing_defaults(state["drawing_defaults"])
+        await chart.set_drawing_mode(None if state["drawing_mode"] in (None, "cursor") else state["drawing_mode"])
+        await chart.set_magnet(state["magnet"])
+        await chart.set_keep_tool(state.get("keep_tool", False))
+        await chart.set_locked(state.get("locked", False))
+        await chart.set_drawings_hidden(state.get("hidden", False))
+        if pane is active():
+            chart.set_active()
 
-    async def open_text_dialog(time_s: int, price: float) -> None:
-        # Dialog pro vložení textu na plátno (anchora v čase a ceně); úprava
-        # existujícího textu jde přes Settings kresby
-        state["text_pending"] = {"time": int(time_s), "price": float(price)}
-        text_input.value = ""
-        text_dialog.open()
-
-    async def save_text() -> None:
-        pending = state.get("text_pending")
-        value = (text_input.value or "").strip()
-        text_dialog.close()
-        if not pending or not value:
-            return
-        await chart.add_text(pending["time"], pending["price"], value)
-        show_status("Text přidán a uložen.")
-        state["text_pending"] = None
-
-    # ---------- Settings kresby a grafu (pravý klik / dvojklik) ----------
+    # ---------- Settings kresby včetně textu (pravý klik / dvojklik / nástroj Text) ----------
 
     # Kresby bez čáry (šířka a styl nemají smysl)
     NO_LINE_KINDS = {"text", "sticker"}
+    # Stav přepínačů tučného písma a kurzívy v dialogu Text
+    text_flags: dict = {"bold": False, "italic": False}
+    # Potlačení vazeb polí viditelnosti při hromadném vyplňování
+    visibility_state: dict = {"filling": False}
+
+    def paint_text_flags() -> None:
+        # Tlačítka B / I v dialogu Text: zvýrazněné = zapnuté
+        for key, button in (("bold", text_bold), ("italic", text_italic)):
+            on = text_flags[key]
+            button.classes(add="active" if on else "", remove="" if on else "active")
+
+    def toggle_text_flag(key: str) -> None:
+        text_flags[key] = not text_flags[key]
+        paint_text_flags()
+
+    def fill_visibility(visibility: dict) -> None:
+        # Záložka Visibility: zaškrtnutí, meze a posuvník každé jednotky timeframu
+        values = normalize_visibility(visibility)
+        visibility_state["filling"] = True
+        try:
+            for unit, fields in visibility_fields.items():
+                fields["enabled"].value = values[unit]["enabled"]
+                fields["from"].value = values[unit]["from"]
+                fields["to"].value = values[unit]["to"]
+                fields["range"].value = {"min": values[unit]["from"], "max": values[unit]["to"]}
+        finally:
+            visibility_state["filling"] = False
+
+    def collect_visibility() -> dict:
+        # Viditelnost z polí záložky Visibility (normalizace srovná neplatné meze)
+        return normalize_visibility(
+            {
+                unit: {"enabled": fields["enabled"].value, "from": fields["from"].value, "to": fields["to"].value}
+                for unit, fields in visibility_fields.items()
+            }
+        )
+
+    def make_visibility_sync(unit: str, source: str):
+        # Vazba mezí a posuvníku jednotky: změna čísla posune posuvník a naopak
+        def _handler(_event=None) -> None:
+            if visibility_state["filling"]:
+                return
+            fields = visibility_fields[unit]
+            visibility_state["filling"] = True
+            try:
+                if source == "range":
+                    fields["from"].value = fields["range"].value["min"]
+                    fields["to"].value = fields["range"].value["max"]
+                else:
+                    # Ořez do rozsahu jednotky a srovnání mezí jako při uložení
+                    rule = normalize_visibility({unit: {"from": fields["from"].value, "to": fields["to"].value}})[unit]
+                    fields["range"].value = {"min": rule["from"], "max": rule["to"]}
+            finally:
+                visibility_state["filling"] = False
+
+        return _handler
 
     def apply_drawing_template(values: dict) -> None:
-        # Promítne hodnoty šablony (barva, šířka a styl čáry, velikost písma,
-        # u pozice parametry výpočtu) do polí dialogu; neplatné nebo chybějící
-        # hodnoty nahradí výchozími
+        # Promítne hodnoty šablony (barva, šířka a styl čáry, písmo, pozadí
+        # a rámeček textu, viditelnost, u pozice parametry výpočtu) do polí
+        # dialogu; neplatné nebo chybějící hodnoty nahradí výchozími
         kind = (state.get("drawing_settings") or {}).get("kind")
         style = normalize_drawing_style(values, kind)
+        options = style["options"]
         drawing_color.value = style["color"]
-        drawing_width.value = style["options"]["width"]
-        drawing_style.value = style["options"]["lineStyle"]
-        drawing_font.value = style["options"]["fontSize"]
+        text_color.value = style["color"]
+        drawing_width.value = options["width"]
+        drawing_style.value = options["lineStyle"]
+        text_size.value = options["fontSize"] if options["fontSize"] in TEXT_FONT_SIZES else min(
+            TEXT_FONT_SIZES, key=lambda size: abs(size - options["fontSize"])
+        )
+        text_options = normalize_text_options(options)
+        text_flags["bold"] = text_options["bold"]
+        text_flags["italic"] = text_options["italic"]
+        paint_text_flags()
+        text_background.value = text_options["background"]
+        text_background_color.value = text_options["backgroundColor"]
+        text_border.value = text_options["border"]
+        text_border_color.value = text_options["borderColor"]
+        text_wrap.value = text_options["wrap"]
+        fill_visibility(options["visibility"])
         if kind in POSITION_KINDS:
-            position_account.value = style["options"]["accountSize"]
-            position_risk.value = style["options"]["risk"]
-            position_risk_unit.value = style["options"]["riskUnit"]
-            position_lot.value = style["options"]["lotSize"]
+            position_account.value = options["accountSize"]
+            position_risk.value = options["risk"]
+            position_risk_unit.value = options["riskUnit"]
+            position_lot.value = options["lotSize"]
 
     def apply_drawing_factory() -> None:
         # „Apply defaults“ bez uložené výchozí šablony: tovární styl kresby
@@ -1156,15 +967,26 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
 
     def collect_drawing_settings() -> dict | None:
         # Styl kresby z polí dialogu (bez textu – ten do šablony nepatří)
-        if not state.get("drawing_settings"):
+        current = state.get("drawing_settings")
+        if not current:
             return None
+        is_text = current["kind"] == "text"
         return normalize_drawing_style(
             {
-                "color": drawing_color.value,
+                "color": text_color.value if is_text else drawing_color.value,
                 "options": {
                     "width": drawing_width.value,
                     "lineStyle": drawing_style.value,
-                    "fontSize": drawing_font.value,
+                    "fontSize": text_size.value,
+                    "visibility": collect_visibility(),
+                    # Vzhled textu (u ostatních kreseb ho normalizace zahodí)
+                    "bold": text_flags["bold"],
+                    "italic": text_flags["italic"],
+                    "background": text_background.value,
+                    "backgroundColor": text_background_color.value,
+                    "border": text_border.value,
+                    "borderColor": text_border_color.value,
+                    "wrap": text_wrap.value,
                     # Parametry pozice (u ostatních kreseb je normalizace zahodí)
                     "accountSize": position_account.value,
                     "risk": position_risk.value,
@@ -1172,42 +994,86 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
                     "lotSize": position_lot.value,
                 },
             },
-            state["drawing_settings"]["kind"],
+            current["kind"],
         )
 
-    async def open_drawing_settings(payload: dict) -> None:
-        # Dialog Settings kresby podle jejího typu: barva, šířka a styl čáry,
-        # u textu obsah a velikost písma; šablony podle typu kresby
-        kind = payload.get("kind")
-        points = drawing_points(payload)
-        state["drawing_settings"] = {"id": int(payload["id"]), "kind": kind, "points": points}
-        drawing_settings_title.text = DRAWING_LABELS.get(kind, kind)
-        apply_drawing_template({"color": payload.get("color"), "options": payload.get("options") or {}})
-        # Pozice: parametry výpočtu a ceny vstupu, cíle a stopu místo barvy a čáry
+    def set_price_decimals(decimals) -> None:
+        # Ceny pozice s přesností instrumentu (529.95, forex 1.10025) místo
+        # dlouhých desetinných čísel; krok šipek = jeden tick
+        try:
+            digits = max(0, min(8, int(decimals)))
+        except (TypeError, ValueError):
+            digits = 2
+        for field in (position_entry, position_target, position_stop):
+            field.format = f"%.{digits}f"
+            field.props(f"step={10 ** -digits:.{digits}f}")
+        return digits
+
+    async def show_drawing_dialog(kind: str, title: str) -> None:
+        # Společné nastavení dialogu podle druhu kresby: první záložka (Text /
+        # Inputs / Style), viditelná pole a šablony; druhá záložka Visibility
         is_position = kind in POSITION_KINDS
+        is_text = kind == "text"
+        drawing_settings_title.text = title
+        style_tab.props(f'label="{"Text" if is_text else "Inputs" if is_position else "Style"}"')
+        drawing_tabs.value = style_tab
+        text_fields.set_visibility(is_text)
+        line_fields.set_visibility(kind not in NO_LINE_KINDS and not is_position)
         position_fields.set_visibility(is_position)
-        if is_position and len(points) >= 3:
-            position_entry.value = points[0]["price"]
-            position_target.value = points[1]["price"]
-            position_stop.value = points[2]["price"]
-        has_line = kind not in NO_LINE_KINDS and not is_position
-        drawing_color_row.set_visibility(kind != "sticker" and not is_position)
-        drawing_width.set_visibility(has_line)
-        drawing_style.set_visibility(has_line)
-        drawing_text.value = payload.get("text") or ""
-        drawing_text.set_visibility(kind == "text")
-        drawing_font.set_visibility(kind == "text")
-        # Sticker nemá nastavitelný styl – šablony nedávají smysl
+        sticker_note.set_visibility(kind == "sticker")
         drawing_templates.set_visible(kind != "sticker")
         await drawing_templates.refresh()
         drawing_settings_dialog.open()
 
+    async def open_text_dialog(pane: ChartPane, time_s: int, price: float) -> None:
+        # Nástroj Text: dialog jako v TradingView se objeví hned po kliknutí do
+        # grafu; Ok vytvoří kresbu s vyplněným vzhledem (výchozí šablona typu)
+        state["drawing_settings"] = {
+            "id": None,
+            "kind": "text",
+            "points": [{"time": int(time_s), "price": float(price)}],
+            "pane": pane,
+        }
+        default = await load_default_template(cache, drawing_scope("text")) or {}
+        apply_drawing_template(default)
+        drawing_text.value = ""
+        await show_drawing_dialog("text", "Text")
+        drawing_text.run_method("focus")
+
+    async def open_drawing_settings(payload: dict, pane: ChartPane) -> None:
+        # Dialog Settings existující kresby podle jejího typu
+        kind = payload.get("kind")
+        points = drawing_points(payload)
+        state["drawing_settings"] = {"id": int(payload["id"]), "kind": kind, "points": points, "pane": pane}
+        apply_drawing_template({"color": payload.get("color"), "options": payload.get("options") or {}})
+        if kind in POSITION_KINDS and len(points) >= 3:
+            digits = set_price_decimals(payload.get("decimals"))
+            state["drawing_settings"]["decimals"] = digits
+            position_entry.value = round(points[0]["price"], digits)
+            position_target.value = round(points[1]["price"], digits)
+            position_stop.value = round(points[2]["price"], digits)
+        drawing_text.value = payload.get("text") or ""
+        await show_drawing_dialog(kind, DRAWING_LABELS.get(kind, kind))
+
+    async def refresh_symbol_drawings(key: str | None, skip: ChartPane | None = None) -> None:
+        """Znovu načte kresby ve všech grafech se symbolem key (kromě skip).
+
+        Kresby patří k symbolu, takže změna v jednom grafu se projeví i v dalších
+        grafech rozložení se stejným symbolem (třeba na jiném timeframu).
+        """
+        targets = [pane for pane in panes if pane is not skip and key and pane.key == key]
+        if not targets:
+            return
+        drawings = await cache.load_drawings(targets[0].provider_id, targets[0].symbol)
+        for pane in targets:
+            await pane.reload_drawings(drawings)
+
     async def submit_drawing_settings() -> None:
-        # Uloží nastavení kresby do databáze a promítne ho do grafu
+        # Uloží nastavení kresby do databáze (nový text vytvoří) a promítne ho do grafů
         current = state.get("drawing_settings")
-        provider_id, symbol, timeframe = state.get("provider_id"), state.get("symbol"), state.get("timeframe")
         values = collect_drawing_settings()
-        if not current or not provider_id or values is None:
+        pane = (current or {}).get("pane")
+        if not current or values is None or pane is None or pane.closed or not pane.key:
             drawing_settings_dialog.close()
             return
         kind = current["kind"]
@@ -1222,7 +1088,8 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
         if kind in POSITION_KINDS:
             try:
                 points = normalize_position_points(
-                    kind, position_entry.value, position_target.value, position_stop.value, current["points"]
+                    kind, position_entry.value, position_target.value, position_stop.value, current["points"],
+                    current.get("decimals"),
                 )
             except ValueError as exc:
                 ui.notify(str(exc), type="warning")
@@ -1231,28 +1098,38 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
         color = values["color"] if kind != "sticker" else None
         options = values["options"]
         drawing_settings_dialog.close()
-        await cache.update_drawing_style(provider_id, symbol, timeframe, current["id"], color, text, options)
+        if current["id"] is None:
+            # Nový text z nástroje Text: graf ho přidá a pošle k uložení
+            anchor = current["points"][0]
+            await pane.chart.add_text(anchor["time"], anchor["price"], text, color, options)
+            show_status("Text přidán a uložen.")
+            return
+        await cache.update_drawing_style(pane.provider_id, pane.symbol, current["id"], color, text, options)
         if points is not None:
-            await cache.update_drawing(provider_id, symbol, timeframe, current["id"], points, None)
+            await cache.update_drawing(pane.provider_id, pane.symbol, current["id"], points, None)
             alert_engine.drawing_changed(current["id"])
-        chart.apply_drawing_settings(current["id"], {"color": color, "text": text, "options": options, "points": points})
+        # Grafy se symbolem kresby si ji načtou znovu (viditelnost podle
+        # timeframu může kresbu v některém grafu skrýt nebo ukázat)
+        await refresh_symbol_drawings(pane.key)
         show_status(f"{DRAWING_LABELS.get(kind, kind)}: nastavení uloženo.")
 
     async def set_volume_visible(visible: bool) -> None:
-        # Zobrazení objemu (Settings grafu / oko v legendě); přetrvá restart.
-        # Stejná hodnota (i programové nastavení přepínače) nic nedělá
+        # Zobrazení objemu (Settings grafu / oko v legendě; všechny grafy);
+        # přetrvá restart. Stejná hodnota (i programové nastavení přepínače) nic nedělá
         if bool(visible) == state["show_volume"]:
             return
         state["show_volume"] = bool(visible)
-        chart.set_volume_visible(state["show_volume"])
+        for pane in panes:
+            pane.chart.set_volume_visible(state["show_volume"])
         await cache.set_setting("show_volume", "1" if state["show_volume"] else "0")
 
     # ---------- časové pásmo a obchodní seance (stavová lišta) ----------
 
-    def mark_active(items: dict, active: str) -> None:
+    def mark_active(items: dict, active_value: str) -> None:
         # Zvýrazní zvolenou položku nabídky (ostatním zvýraznění odebere)
         for value, item in items.items():
-            item.classes(add="menu-item-active" if value == active else "", remove="" if value == active else "menu-item-active")
+            on = value == active_value
+            item.classes(add="menu-item-active" if on else "", remove="" if on else "menu-item-active")
 
     def make_timezone_click(value: str):
         async def _handler() -> None:
@@ -1261,19 +1138,18 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
         return _handler
 
     async def set_timezone(value: str) -> None:
-        # Časové pásmo osy, crosshairu a hodin; uloží se a přetrvá restart
+        # Časové pásmo osy, crosshairu a hodin (všechny grafy); uloží se a přetrvá restart
         state["timezone"] = value
         mark_active(timezone_items, value)
-        provider = state.get("provider")
-        exchange = provider.exchange_timezone(state["symbol"]) if provider and state.get("symbol") else "UTC"
-        chart.set_timezone(value, exchange)
+        for pane in panes:
+            pane.apply_timezone()
         await cache.set_setting("timezone", value)
 
     def refresh_session_button() -> None:
-        # Popisek RTH/ETH; u instrumentu bez rozšířených hodin (krypto, forex,
-        # Yahoo) přepínač nemá vliv, proto je neaktivní
-        provider = state.get("provider")
-        available = bool(provider and state.get("symbol") and provider.regular_session(state["symbol"]))
+        # Popisek RTH/ETH; u instrumentu aktivního grafu bez rozšířených hodin
+        # (krypto, forex, Yahoo) přepínač nemá vliv, proto je neaktivní
+        pane = active()
+        available = bool(pane.provider and pane.symbol and pane.provider.regular_session(pane.symbol))
         session_button.text = "RTH" if state["session"] == SESSION_RTH else "ETH"
         if available:
             session_button.props(remove="disable")
@@ -1282,18 +1158,18 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
         mark_active(session_items, state["session"])
 
     async def set_session(value: str) -> None:
-        # Přepnutí seance: uloží volbu a přenačte graf (RTH filtruje svíčky)
+        # Přepnutí seance: uloží volbu a přenačte grafy (RTH filtruje svíčky)
         if value == state["session"]:
             return
         state["session"] = value
         await cache.set_setting("session", value)
         refresh_session_button()
-        await reload_chart()
+        await asyncio.gather(*(pane.reload_chart() for pane in panes))
 
     # ---------- Settings grafu (styl svíček, objem, šablony) ----------
 
     # Stav dialogu: „filling“ potlačí náhled při hromadném vyplňování polí,
-    # „dirty“ = graf ukazuje neuložený náhled (zavření bez Ok ho vrátí)
+    # „dirty“ = grafy ukazují neuložený náhled (zavření bez Ok ho vrátí)
     chart_dialog_state: dict = {"filling": False, "dirty": False}
 
     def collect_chart_values() -> dict:
@@ -1315,18 +1191,23 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
         if preview:
             preview_chart_style()
 
+    def broadcast_chart_style(style: dict, volume: bool) -> None:
+        # Styl svíček a objem platí pro všechny grafy rozložení
+        for pane in panes:
+            pane.chart.set_chart_style(style)
+            pane.chart.set_volume_visible(volume)
+
     def preview_chart_style() -> None:
-        # Živý náhled v grafu (jako v TradingView); uloží se až tlačítkem Ok
+        # Živý náhled v grafech (jako v TradingView); uloží se až tlačítkem Ok
         if chart_dialog_state["filling"]:
             return
         values = collect_chart_values()
         chart_dialog_state["dirty"] = True
-        chart.set_chart_style(normalize_chart_style(values))
-        chart.set_volume_visible(values["volume"])
+        broadcast_chart_style(normalize_chart_style(values), values["volume"])
 
     def has_volume() -> bool:
-        # Posílá zdroj u zobrazeného instrumentu objem? (forex MIDPOINT ani indexy ne)
-        return any(candle.volume > 0 for candle in state.get("candles") or [])
+        # Posílá zdroj u instrumentu aktivního grafu objem? (forex MIDPOINT ani indexy ne)
+        return any(candle.volume > 0 for candle in active().candles or [])
 
     async def open_chart_settings() -> None:
         # Pole se vyplní uloženým stavem bez náhledu (graf ho už ukazuje)
@@ -1339,7 +1220,7 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
 
     async def submit_chart_settings() -> None:
         # Ok: styl svíček uloží do nastavení, objem přes set_volume_visible;
-        # graf už ukazuje potvrzené hodnoty, zavření nic nevrací
+        # grafy už ukazují potvrzené hodnoty, zavření nic nevrací
         values = collect_chart_values()
         state["chart_style"] = normalize_chart_style(values)
         chart_dialog_state["dirty"] = False
@@ -1353,18 +1234,7 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
         if event.value or not chart_dialog_state["dirty"]:
             return
         chart_dialog_state["dirty"] = False
-        chart.set_chart_style(state["chart_style"])
-        chart.set_volume_visible(state["show_volume"])
-
-    async def reload_drawings() -> None:
-        """Načte kresby pro aktuální symbol z cache a pošle je do grafu."""
-        provider_id = state.get("provider_id")
-        symbol = state.get("symbol")
-        timeframe = state.get("timeframe")
-        if not provider_id or not symbol:
-            return
-        drawings = await cache.load_drawings(provider_id, symbol, timeframe)
-        await chart.set_drawings(drawings)
+        broadcast_chart_style(state["chart_style"], state["show_volume"])
 
     def drawing_points(payload: dict) -> list[dict]:
         # Body kresby z události grafu (čas v sekundách UTC + cena)
@@ -1373,100 +1243,123 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
             for p in (payload.get("points") or [])
         ]
 
-    async def on_drawing_finished() -> None:
-        # Stránkový timer vyzvedne události z grafu (kresby, nástroje, akce,
-        # donačtení historie) a projeví je v databázi a v UI. Graf má stav kreseb
-        # aktuální sám – nové kresbě jen pošleme id z databáze, nic se nenačítá znovu
-        provider_id = state.get("provider_id")
-        symbol = state.get("symbol")
-        timeframe = state.get("timeframe")
-        if not provider_id or not symbol:
+    # Události grafu, které vznikly interakcí uživatele v konkrétním grafu –
+    # ten se před zpracováním stane aktivním (dialogy pak míří na něj)
+    USER_EVENTS = {
+        "indicator", "text_request", "sticker_request", "drawing_settings", "chart_settings",
+        "volume", "symbol_search", "alert_request",
+    }
+
+    async def process_chart_events() -> None:
+        # Stránkový timer vyzvedne události všech grafů jedním dotazem
+        # (kresby, nástroje, akce, donačtení historie) a projeví je v databázi
+        # a v UI. Grafy mají stav kreseb aktuální samy – nové kresbě jen
+        # pošleme id z databáze, nic se nenačítá znovu
+        if not panes:
             return
-        for payload in await chart.pop_events():
-            if not isinstance(payload, dict):
+        try:
+            result = await ui.run_javascript("return window.TickViewChart.popAllEvents();")
+        except TimeoutError:
+            # Prohlížeč neodpověděl včas (zaneprázdněný / uspaný) – zkusíme příště
+            return
+        by_id = {pane.chart.js_id: pane for pane in panes}
+        for chart_id, events in (result or {}).items():
+            pane = by_id.get(chart_id)
+            if pane is None or not isinstance(events, list):
                 continue
-            if payload.get("type") == "load_older":
-                # Graf se posunul k začátku dat – donačteme starší svíčky
-                start_load_older(payload.get("before"))
-            elif payload.get("type") == "indicator":
-                await on_indicator_event(payload)
-            elif payload.get("type") == "tool":
-                await set_drawing_mode(payload.get("mode"))
-            elif payload.get("type") == "action":
-                action = payload.get("action")
-                if action == "magnet":
-                    await set_magnet(payload.get("mode"))
-                elif action == "pencil":
-                    await toggle_pencil()
-                elif action == "lock":
-                    await toggle_lock()
-                elif action == "eye":
-                    await toggle_hide_drawings()
-                elif action == "trash":
-                    await trash_drawings()
-                elif action == "favorites":
-                    await toggle_favorites_bar()
-            elif payload.get("type") == "favorites":
-                await save_favorites(payload.get("modes"))
-            elif payload.get("type") == "favorites_position":
-                await save_favorites_position(payload.get("left"), payload.get("top"))
-            elif payload.get("type") == "sticker_request":
-                state["sticker_pending"] = {
-                    "time": int(payload.get("time")),
-                    "price": float(payload.get("price")),
-                }
-                sticker_dialog.open()
-            elif payload.get("type") == "delete":
-                drawing_id = payload.get("id")
-                if drawing_id:
-                    await cache.delete_drawing(provider_id, symbol, timeframe, int(drawing_id))
-                    # Alert na kresbu si změnu (posun / smazání) načte znovu
-                    alert_engine.drawing_changed(int(drawing_id))
-                    show_status("Kresba smazána.")
-            elif payload.get("type") == "update":
-                drawing_id = payload.get("id")
-                if drawing_id:
-                    await cache.update_drawing(
-                        provider_id, symbol, timeframe, int(drawing_id),
-                        drawing_points(payload), payload.get("text"),
-                    )
-                    alert_engine.drawing_changed(int(drawing_id))
-            elif payload.get("type") == "text_request":
-                await open_text_dialog(payload.get("time"), payload.get("price"))
-            elif payload.get("type") == "drawing_settings" and payload.get("id"):
-                await open_drawing_settings(payload)
-            elif payload.get("type") == "chart_settings":
-                await open_chart_settings()
-            elif payload.get("type") == "volume":
-                await set_volume_visible(bool(payload.get("visible")))
-            elif payload.get("type") == "symbol_search":
-                # Psaní nad grafem otevře hledání symbolu s napsanými znaky
-                await open_symbol_search(str(payload.get("text") or ""))
-            elif payload.get("type") == "alert_request":
-                # Pravý klik: alert na ceně pod kurzorem, nebo na čáře kresby
-                drawing_id = payload.get("drawingId")
-                await open_alert_dialog(
-                    price=payload.get("price"), drawing_id=int(drawing_id) if drawing_id else None
-                )
-            elif payload.get("type") == "add" and payload.get("kind") in DRAWING_KINDS:
-                # Styl nové kresby (výchozí šablona typu poslaná z grafu) zkontrolujeme
-                style = normalize_drawing_style(payload, payload["kind"])
-                drawing_id = await cache.add_drawing(
-                    provider_id,
-                    symbol,
-                    timeframe,
-                    payload["kind"],
-                    drawing_points(payload),
-                    style["color"],
-                    payload.get("text"),
-                    style["options"],
-                )
-                # Graf si kresbu spáruje podle lokálního id (další úpravy už jdou s id)
-                if payload.get("localId") is not None:
-                    await chart.assign_drawing_id(payload["localId"], drawing_id)
-                show_status(
-                    f"Kresba uložena ({DRAWING_LABELS[payload['kind']]}) k {symbol} ({timeframe})"
-                )
+            for payload in events:
+                if isinstance(payload, dict):
+                    await handle_chart_event(pane, payload)
+
+    async def handle_chart_event(pane: ChartPane, payload: dict) -> None:
+        """Zpracuje jednu událost grafu pane (viz process_chart_events)."""
+        event_type = payload.get("type")
+        provider_id, symbol, timeframe = pane.provider_id, pane.symbol, pane.timeframe
+        # Lišta, nástroje a oblíbené jsou společné stránce; ostatní události
+        # patří ke grafu se symbolem
+        if event_type not in ("tool", "action", "favorites", "favorites_position") and (not provider_id or not symbol):
+            return
+        if event_type in USER_EVENTS:
+            await activate_pane(pane)
+        if event_type == "load_older":
+            # Graf se posunul k začátku dat – donačteme starší svíčky
+            pane.start_load_older(payload.get("before"))
+        elif event_type == "indicator":
+            await on_indicator_event(payload)
+        elif event_type == "tool":
+            await set_drawing_mode(payload.get("mode"))
+        elif event_type == "action":
+            action = payload.get("action")
+            if action == "magnet":
+                await set_magnet(payload.get("mode"))
+            elif action == "pencil":
+                await toggle_pencil()
+            elif action == "lock":
+                await toggle_lock()
+            elif action == "eye":
+                await toggle_hide_drawings()
+            elif action == "trash":
+                await trash_drawings()
+            elif action == "favorites":
+                await toggle_favorites_bar()
+        elif event_type == "favorites":
+            await save_favorites(payload.get("modes"))
+        elif event_type == "favorites_position":
+            await save_favorites_position(payload.get("left"), payload.get("top"))
+        elif event_type == "sticker_request":
+            state["sticker_pending"] = {
+                "pane": pane,
+                "time": int(payload.get("time")),
+                "price": float(payload.get("price")),
+            }
+            sticker_dialog.open()
+        elif event_type == "delete":
+            drawing_id = payload.get("id")
+            if drawing_id:
+                await cache.delete_drawing(provider_id, symbol, int(drawing_id))
+                # Alert na kresbu si změnu (posun / smazání) načte znovu
+                alert_engine.drawing_changed(int(drawing_id))
+                await refresh_symbol_drawings(pane.key, skip=pane)
+                show_status("Kresba smazána.")
+        elif event_type == "update":
+            drawing_id = payload.get("id")
+            if drawing_id:
+                await cache.update_drawing(provider_id, symbol, int(drawing_id), drawing_points(payload), payload.get("text"))
+                alert_engine.drawing_changed(int(drawing_id))
+                await refresh_symbol_drawings(pane.key, skip=pane)
+        elif event_type == "text_request":
+            await open_text_dialog(pane, payload.get("time"), payload.get("price"))
+        elif event_type == "drawing_settings" and payload.get("id"):
+            await open_drawing_settings(payload, pane)
+        elif event_type == "chart_settings":
+            await open_chart_settings()
+        elif event_type == "volume":
+            await set_volume_visible(bool(payload.get("visible")))
+        elif event_type == "symbol_search":
+            # Psaní nad grafem otevře hledání symbolu s napsanými znaky
+            await open_symbol_search(str(payload.get("text") or ""))
+        elif event_type == "alert_request":
+            # Pravý klik: alert na ceně pod kurzorem, nebo na čáře kresby
+            drawing_id = payload.get("drawingId")
+            await open_alert_dialog(price=payload.get("price"), drawing_id=int(drawing_id) if drawing_id else None)
+        elif event_type == "add" and payload.get("kind") in DRAWING_KINDS:
+            # Styl nové kresby (výchozí šablona typu nebo dialog Text) zkontrolujeme
+            style = normalize_drawing_style(payload, payload["kind"])
+            drawing_id = await cache.add_drawing(
+                provider_id,
+                symbol,
+                timeframe,
+                payload["kind"],
+                drawing_points(payload),
+                style["color"],
+                payload.get("text"),
+                style["options"],
+            )
+            # Graf si kresbu spáruje podle lokálního id (další úpravy už jdou s id)
+            if payload.get("localId") is not None:
+                await pane.chart.assign_drawing_id(payload["localId"], drawing_id)
+            await refresh_symbol_drawings(pane.key, skip=pane)
+            show_status(f"Kresba uložena ({DRAWING_LABELS[payload['kind']]}) k {symbol}")
 
     # ---------- watchlist ----------
 
@@ -1528,12 +1421,9 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
         return _handler
 
     async def watchlist_add_current() -> None:
-        # Přidá aktuálně zobrazený symbol do watchlistu
-        provider_id = state.get("provider_id")
-        symbol = state.get("symbol")
-        if not provider_id or not symbol:
-            return
-        await add_key_to_watchlist(f"{provider_id}:{symbol}")
+        # Přidá symbol aktivního grafu do watchlistu
+        if active().key:
+            await add_key_to_watchlist(active().key)
 
     # ---------- seznamy symbolů (více watchlistů jako v TradingView) ----------
 
@@ -1658,28 +1548,32 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
         await refresh_watchlist_prices()
 
     def refresh_watchlist_active() -> None:
-        # Zvýrazní řádek aktuálně zobrazeného tickeru (jako v TradingView)
-        current = (state.get("provider_id"), state.get("symbol"))
+        # Zvýrazní řádek tickeru aktivního grafu (jako v TradingView)
+        current = active().key
         for key, row in watch_rows.items():
-            provider_id, _, symbol = key.partition(":")
-            active = (provider_id, symbol) == current
-            element = row["row"]
-            element.classes(
-                add="watch-row-active" if active else "",
-                remove="" if active else "watch-row-active",
-            )
+            on = key == current
+            row["row"].classes(add="watch-row-active" if on else "", remove="" if on else "watch-row-active")
 
-    async def initial_load() -> None:
-        # Po inicializaci grafu obnovíme poslední symbol a výchozí režim kurzoru
-        await set_drawing_mode("cursor")
-        await set_magnet(saved_magnet, announce=False)
-        await push_drawing_defaults()
-        await restore_favorites()
-        mark_active(timezone_items, state["timezone"])
-        build_chart_type_menu()
-        render_chart_type_bar()
-        refresh_session_button()
-        await load_symbol(last_symbol)
+    async def on_pane_ready(pane: ChartPane) -> None:
+        # Graf je inicializovaný v prohlížeči: první graf obnoví i společné
+        # prvky stránky (lišta, nabídky, oblíbené), každý graf dostane
+        # společné nastavení kreslení a načte svůj symbol
+        if not state.get("page_ready"):
+            state["page_ready"] = True
+            await set_drawing_mode("cursor")
+            paint_action("magnet", state["magnet"] != "off")
+            await restore_favorites()
+            mark_active(timezone_items, state["timezone"])
+            build_chart_type_menu()
+        await apply_pane_settings(pane)
+        # Uložený symbol grafu: rozložení se kvůli tomu znovu neukládá a čáry
+        # alertů dostane jen tento graf
+        if not pane.set_symbol(pane.initial_key):
+            return
+        if pane is active():
+            refresh_active_ui()
+        pane.push_alert_lines(await cache.alerts(active_only=True))
+        await pane.reload_chart()
 
     # ---------- nastavení API klíčů (volitelný zdroj Alpaca) ----------
 
@@ -1753,20 +1647,17 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
 
     # ---------- indikátory ----------
 
-    async def save_indicators() -> None:
-        # Aktivní indikátory přetrvají restart (nastavení v SQLite)
-        await cache.set_setting("indicators", json.dumps(state["indicators"]))
-
     async def indicators_changed() -> None:
-        # Po každé změně sady indikátorů: uložit, přepočítat, obnovit nabídku
-        await save_indicators()
-        await push_indicators()
+        # Po každé změně sady indikátorů aktivního grafu: uložit (konfigurace
+        # rozložení), přepočítat, obnovit nabídku
+        await save_layout()
+        await active().push_indicators()
         # Nabídku přestavujeme jen otevřenou (jinak se postaví při otevření)
         if indicator_dialog.value:
             render_indicator_menu()
 
     def find_indicator(indicator_id) -> dict | None:
-        return next((spec for spec in state["indicators"] if spec["id"] == indicator_id), None)
+        return next((spec for spec in active().indicators if spec["id"] == indicator_id), None)
 
     async def add_indicator(kind: str) -> None:
         # Klik v nabídce přidá indikátor s výchozími parametry (jako v TradingView;
@@ -1780,7 +1671,7 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
             spec = new_indicator(kind)
         if color := normalize_color(default.get("color")):
             spec["color"] = color
-        state["indicators"].append(spec)
+        active().indicators.append(spec)
         await indicators_changed()
         show_status(f"Přidán indikátor {indicator_title(spec)} – nastavení přes ozubené kolečko v legendě grafu.")
 
@@ -1788,7 +1679,7 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
         spec = find_indicator(indicator_id)
         if not spec:
             return
-        state["indicators"] = [item for item in state["indicators"] if item["id"] != indicator_id]
+        active().indicators = [item for item in active().indicators if item["id"] != indicator_id]
         await indicators_changed()
         show_status(f"Indikátor {indicator_title(spec)} odebrán.")
 
@@ -1844,12 +1735,12 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
         category = menu_state["category"]
         query = menu_state["query"].strip()
         counts: dict[str, int] = {}
-        for spec in state["indicators"]:
+        for spec in active().indicators:
             counts[spec["kind"]] = counts.get(spec["kind"], 0) + 1
 
         indicator_categories.clear()
         with indicator_categories:
-            entries = [("all", "Všechny indikátory"), ("active", f"Aktivní ({len(state['indicators'])})")]
+            entries = [("all", "Všechny indikátory"), ("active", f"Aktivní ({len(active().indicators)})")]
             entries += list(CATEGORIES.items())
             for key, label in entries:
                 ui.label(label).classes("ind-cat" + (" active" if key == category and not query else "")).on(
@@ -1860,9 +1751,9 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
         with indicator_list:
             if category == "active" and not query:
                 # Aktivní instance s nastavením / skrytím / odebráním
-                if not state["indicators"]:
+                if not active().indicators:
                     ui.label("Žádný aktivní indikátor – vyberte ze seznamu.").classes("ind-empty")
-                for spec in state["indicators"]:
+                for spec in active().indicators:
                     definition = INDICATOR_DEFS[spec["kind"]]
                     with ui.row().classes("ind-item ind-item-active w-full"):
                         with ui.column().classes("ind-item-text"):
@@ -1946,7 +1837,7 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
         definition = INDICATOR_DEFS[spec["kind"]]
         settings_title.text = f"{definition['name']} ({definition['title']})"
         fill_indicator_settings(spec["kind"], spec["params"])
-        index = state["indicators"].index(spec)
+        index = active().indicators.index(spec)
         settings_color.value = indicator_color(spec, index)
         await indicator_templates.refresh()
         indicator_settings_dialog.open()
@@ -1959,7 +1850,7 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
             return
         params = values.get("params") if isinstance(values.get("params"), dict) else {}
         fill_indicator_settings(spec["kind"], params)
-        palette_color = indicator_color({}, state["indicators"].index(spec))
+        palette_color = indicator_color({}, active().indicators.index(spec))
         settings_color.value = normalize_color(values.get("color")) or palette_color
 
     def reset_indicator_settings() -> None:
@@ -2056,18 +1947,19 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
             price: počáteční cena nového alertu (None = poslední cena grafu).
             drawing_id: kresba, na kterou se nový alert nastaví (pravý klik na čáru).
         """
+        pane = active()
         if alert is None:
-            if not state.get("provider_id") or not state.get("symbol"):
+            if not pane.key:
                 ui.notify("Nejdřív zvolte symbol.", type="warning")
                 return
-            source, symbol, timeframe = state["provider_id"], state["symbol"], state["timeframe"]
+            source, symbol, timeframe = pane.provider_id, pane.symbol, pane.timeframe
         else:
             source, symbol, timeframe = alert["source"], alert["symbol"], alert["timeframe"]
         alert_form.update(
             {"id": alert["id"] if alert else None, "source": source, "symbol": symbol, "timeframe": timeframe}
         )
         # Cíle: cena a čáry kreseb symbolu a timeframu alertu
-        drawings = [d for d in await cache.load_drawings(source, symbol, timeframe) if d["kind"] in LINE_KINDS]
+        drawings = [d for d in await cache.load_drawings(source, symbol) if d["kind"] in LINE_KINDS]
         alert_form["drawing_kinds"] = {d["id"]: d["kind"] for d in drawings}
         options = {"value": "Cena (hodnota)"}
         for drawing in drawings:
@@ -2077,10 +1969,10 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
             options[f"drawing:{drawing['id']}"] = f"{label} (#{drawing['id']})"
         alert_target.options = options
         alert_target.update()
-        candles = state.get("candles") or []
+        candles = pane.candles or []
         has_telegram = telegram_configured()
         if alert is None:
-            last_price = candles[-1].close if candles and source == state.get("provider_id") else None
+            last_price = candles[-1].close if candles and source == pane.provider_id else None
             spec = {
                 "condition": "crossing",
                 "target": {"type": "drawing", "id": drawing_id} if drawing_id else {"type": "value", "price": price if price is not None else last_price},
@@ -2186,18 +2078,11 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
             await render_alert_log()
 
     async def push_alert_lines(alerts: list[dict] | None = None) -> None:
-        # Čárkované čáry aktivních cenových alertů zobrazeného symbolu (všechny timeframy)
+        # Čárkované čáry aktivních cenových alertů symbolu každého grafu (všechny timeframy)
         if alerts is None:
             alerts = await cache.alerts(active_only=True)
-        lines = [
-            {"price": alert["target"]["price"], "title": "Alert"}
-            for alert in alerts
-            if alert["active"]
-            and alert["source"] == state.get("provider_id")
-            and alert["symbol"] == state.get("symbol")
-            and alert["target"]["type"] == "value"
-        ]
-        chart.set_alert_lines(lines)
+        for pane in panes:
+            pane.push_alert_lines(alerts)
 
     def make_alert_action(action: str, alert: dict):
         async def _handler(_event=None):
@@ -2301,9 +2186,259 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
                         timeout=20000,
                         multi_line=True,
                     )
-                if event.get("sound"):
-                    chart.play_sound()
+                if event.get("sound") and panes:
+                    active().chart.play_sound()
         background_tasks.create(refresh_alerts_ui())
+
+    # ---------- rozložení více grafů (Layout setup jako v TradingView) ----------
+
+    def make_pane_activate(pane: ChartPane):
+        # Klik (pointerdown) do grafu ho udělá aktivním
+        async def _handler(_event=None) -> None:
+            await activate_pane(pane)
+
+        return _handler
+
+    def create_pane(config: dict) -> ChartPane:
+        """Vytvoří graf rozložení v mřížce grafů (načte se po inicializaci v prohlížeči)."""
+        with chart_grid:
+            pane = ChartPane(page, config, on_pane_ready)
+        pane.chart.on("pointerdown", make_pane_activate(pane), [])
+        # Definice skupin pro flyout nabídky lišty, SVG ikony a synchronizace
+        # jsou v JS společné všem grafům – posílají se jednou za stránku
+        # (můžou přijít i před init grafu)
+        if not state.get("js_shared_sent"):
+            state["js_shared_sent"] = True
+            pane.chart.set_icons(ICONS)
+            pane.chart.set_alert_kinds(list(LINE_KINDS))
+            pane.chart.set_tool_groups(DRAWING_GROUPS)
+            pane.chart.set_layout_sync(state["sync"])
+        return pane
+
+    async def activate_pane(pane: ChartPane) -> None:
+        """Udělá graf aktivním: horní lišta, watchlist a dialogy pak míří na něj."""
+        if pane.closed or pane not in panes or pane is active():
+            return
+        state["active"] = panes.index(pane)
+        pane.chart.set_active()
+        refresh_active_ui()
+        await save_layout()
+
+    def paint_layout() -> None:
+        # Třída mřížky podle rozložení a zvýraznění rozložení v nabídce
+        chart_grid.classes(replace=f"chart-grid layout-{state['layout']}")
+        mark_active(layout_items, state["layout"])
+        for key, switch in sync_switches.items():
+            switch.value = state["sync"][key]
+
+    async def set_layout(layout_id: str) -> None:
+        """Změní rozložení: přebývající grafy odebere, nové převezmou symbol aktivního grafu."""
+        if layout_id not in LAYOUTS or layout_id == state["layout"]:
+            return
+        configs = resize_panes([pane.config() for pane in panes], layout_id, state["active"])
+        count = len(configs)
+        for pane in panes[count:]:
+            pane.close()
+            pane.chart.destroy()
+        del panes[count:]
+        if state["active"] >= count:
+            state["active"] = 0
+        for config in configs[len(panes):]:
+            panes.append(create_pane(config))
+        state["layout"] = layout_id
+        paint_layout()
+        active().chart.set_active()
+        refresh_active_ui()
+        await save_layout()
+        show_status(f"Rozložení: {plural(count, 'graf', 'grafy', 'grafů')}.")
+
+    def make_layout_click(layout_id: str):
+        # Výběr rozložení zavře nabídku (jako v TradingView) a změní rozložení
+        async def _handler() -> None:
+            layout_menu.close()
+            await set_layout(layout_id)
+
+        return _handler
+
+    async def set_sync(key: str, value: bool) -> None:
+        """Zapne / vypne synchronizaci rozložení (symbol, interval, crosshair, čas, rozsah)."""
+        value = bool(value)
+        if state["sync"].get(key) == value:
+            return
+        state["sync"][key] = value
+        # Crosshair a čas synchronizuje JS (nastavení je společné všem grafům)
+        if panes:
+            active().chart.set_layout_sync(state["sync"])
+        await save_layout()
+        # Zapnutí synchronizace symbolu / intervalu hned srovná ostatní grafy
+        # podle aktivního grafu (jako v TradingView)
+        if value and key == "symbol" and active().key:
+            await load_symbol(active().key)
+        elif value and key == "interval":
+            await apply_timeframe(list(panes), active().timeframe)
+
+    def make_sync_change(key: str):
+        async def _handler(event) -> None:
+            await set_sync(key, event.value)
+
+        return _handler
+
+    # ---------- šablony indikátorů (sada indikátorů grafu jako v TradingView) ----------
+
+    async def store_indicator_templates(templates: list[dict]) -> None:
+        # Uloží šablony a obnoví nabídku i tlačítka oblíbených šablon v liště
+        state["indicator_templates"] = templates
+        await cache.set_setting(INDICATOR_TEMPLATES_KEY, json.dumps(templates))
+        render_indicator_templates()
+
+    def render_indicator_templates() -> None:
+        """Nabídka šablon u tlačítka Indikátory a tlačítka oblíbených šablon v liště."""
+        templates = state["indicator_templates"]
+        # Oblíbené šablony: kulatá tlačítka s iniciálou (jako v TradingView)
+        template_quick.clear()
+        with template_quick:
+            for template in favorite_indicator_templates(templates):
+                ui.button(template["name"][:1].upper(), color=None, on_click=make_template_apply(template["name"])).props(
+                    "flat dense round no-caps"
+                ).classes("tpl-quick-btn").tooltip(f"{template['name']} – {describe_indicator_template(template)}")
+        template_menu.clear()
+        with template_menu:
+            with ui.row().classes("tpl-tabs w-full"):
+                ui.button("Indicators", color=None, on_click=open_indicator_dialog).props("flat dense no-caps").classes("tpl-tab")
+                ui.button("Templates", color=None).props("flat dense no-caps").classes("tpl-tab active")
+            with ui.menu_item(on_click=open_save_template_dialog).classes("tpl-menu-item"):
+                ui.icon("cloud_upload").classes("tpl-menu-icon")
+                ui.label("Save indicator template…")
+            ui.separator()
+            recent = recent_indicator_templates(templates)
+            if recent:
+                ui.label("Recently used").classes("menu-section tpl-section")
+            for template in recent:
+                with ui.menu_item(on_click=make_template_apply(template["name"])).classes("tpl-menu-item tpl-recent"):
+                    with ui.column().classes("tpl-recent-text"):
+                        ui.label(template["name"]).classes("tpl-recent-name")
+                        ui.label(describe_indicator_template(template)).classes("tpl-recent-desc")
+                    ui.space()
+                    template_star(template)
+            if recent:
+                ui.separator()
+            with ui.menu_item(on_click=open_templates_dialog).classes("tpl-menu-item"):
+                ui.icon("folder_open").classes("tpl-menu-icon")
+                ui.label("Open template…")
+
+    def template_star(template: dict) -> None:
+        # Hvězdička šablony: oblíbená šablona má tlačítko v horní liště;
+        # .stop zabrání současnému použití šablony a zavření nabídky
+        on = template["favorite"]
+        with ui.element("span").classes("menu-star" + (" on" if on else "")).on(
+            "click.stop", make_template_favorite(template["name"])
+        ):
+            icon_html("star" if on else "star_border")
+
+    def make_template_apply(name: str):
+        async def _handler(_event=None) -> None:
+            await apply_template_set(name)
+
+        return _handler
+
+    def make_template_favorite(name: str):
+        async def _handler(_event=None) -> None:
+            template = find_indicator_template(state["indicator_templates"], name)
+            if template:
+                await store_indicator_templates(
+                    update_indicator_template(state["indicator_templates"], name, favorite=not template["favorite"])
+                )
+                if templates_dialog.value:
+                    render_templates_dialog()
+
+        return _handler
+
+    def make_template_delete(name: str):
+        async def _handler(_event=None) -> None:
+            await store_indicator_templates(delete_indicator_template(state["indicator_templates"], name))
+            render_templates_dialog()
+            show_status(f"Šablona indikátorů „{name}“ smazána.")
+
+        return _handler
+
+    async def apply_template_set(name: str) -> None:
+        """Použije šablonu indikátorů v aktivním grafu (nahradí jeho indikátory).
+
+        Šablona se zapamatovaným symbolem / intervalem graf přepne i na ně.
+        """
+        template = find_indicator_template(state["indicator_templates"], name)
+        if not template:
+            return
+        templates_dialog.close()
+        pane = active()
+        pane.indicators = template_indicators(template)
+        await store_indicator_templates(update_indicator_template(state["indicator_templates"], name, used_at=utc_now_ms()))
+        timeframe_changed = bool(template["timeframe"]) and pane.set_timeframe(template["timeframe"])
+        if timeframe_changed:
+            refresh_timeframes()
+        if template["symbol"] and template["symbol"] != pane.key:
+            # Načtení symbolu přepočítá i nové indikátory
+            await load_symbol(template["symbol"], pane=pane)
+        elif timeframe_changed:
+            # Přenačtení grafu na novém timeframu přepočítá i nové indikátory
+            await save_layout()
+            await pane.reload_chart()
+        else:
+            await indicators_changed()
+        if indicator_dialog.value:
+            render_indicator_menu()
+        show_status(f"Šablona indikátorů „{name}“: {describe_indicator_template(template)}.")
+
+    def open_save_template_dialog() -> None:
+        # Dialog „Save indicator template“: název a zapamatování symbolu / intervalu
+        template_name_input.value = ""
+        template_remember_symbol.value = False
+        template_remember_interval.value = False
+        save_template_dialog.open()
+
+    async def submit_save_template() -> None:
+        # Uloží aktuální indikátory aktivního grafu jako šablonu (stejný název přepíše)
+        name = clean_name(template_name_input.value)
+        if not name:
+            ui.notify(f"Zadejte název šablony (1–{MAX_NAME_LENGTH} znaků).", type="warning")
+            return
+        pane = active()
+        overwritten = find_indicator_template(state["indicator_templates"], name) is not None
+        templates = save_indicator_template(
+            state["indicator_templates"],
+            name,
+            pane.indicators,
+            symbol=pane.key if template_remember_symbol.value else None,
+            timeframe=pane.timeframe if template_remember_interval.value else None,
+            now_ms=utc_now_ms(),
+        )
+        save_template_dialog.close()
+        await store_indicator_templates(templates)
+        show_status(f"Šablona indikátorů „{name}“ {'přepsána' if overwritten else 'uložena'} ({plural(len(pane.indicators), 'indikátor', 'indikátory', 'indikátorů')}).")
+
+    def render_templates_dialog() -> None:
+        # Seznam všech šablon s hledáním: klik použije, hvězdička, křížek smaže
+        query = (templates_search.value or "").strip().lower()
+        templates_list.clear()
+        with templates_list:
+            shown = [t for t in state["indicator_templates"] if not query or query in t["name"].lower()]
+            if not shown:
+                ui.label("Žádné šablony – uložte je přes „Save indicator template…“.").classes("ind-empty")
+            for template in shown:
+                with ui.row().classes("ind-item w-full").on("click", make_template_apply(template["name"])):
+                    with ui.column().classes("ind-item-text"):
+                        ui.label(template["name"]).classes("ind-item-title")
+                        ui.label(describe_indicator_template(template)).classes("ind-item-desc")
+                    ui.space()
+                    template_star(template)
+                    ui.button(icon="close", color=None).props("flat dense round size=sm").classes("tpl-delete-btn").tooltip(
+                        "Smazat šablonu"
+                    ).on("click.stop", make_template_delete(template["name"]))
+
+    def open_templates_dialog() -> None:
+        templates_search.value = ""
+        render_templates_dialog()
+        templates_dialog.open()
 
     # ---------- UI ----------
 
@@ -2336,6 +2471,16 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
                     "Typ grafu"
                 ):
                     chart_type_menu = ui.menu().classes("chart-type-menu")
+            # Indikátory, šablony indikátorů (šipka) a tlačítka oblíbených šablon
+            with ui.row().classes("tf-bar"):
+                ui.button("Indikátory", icon="add_chart", on_click=open_indicator_dialog, color=None).props(
+                    "flat dense no-caps"
+                ).classes("topbar-btn indicator-add").tooltip("Indikátory (nabídka s hledáním a kategoriemi)")
+                with ui.button(icon="expand_more", color=None).props("flat dense").classes("bar-arrow").tooltip(
+                    "Šablony indikátorů"
+                ):
+                    template_menu = ui.menu().classes("tpl-set-menu")
+                template_quick = ui.row().classes("tpl-quick")
             # Alerty: vytvoření alertu pro graf a správa alertů s počtem aktivních
             ui.button("Alert", icon="alarm_add", color=None, on_click=open_alert_for_chart).props(
                 "flat dense no-caps"
@@ -2346,10 +2491,34 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
                 alerts_badge = ui.badge("0").props("floating").classes("alerts-badge")
                 alerts_badge.set_visibility(False)
             source_badge = ui.badge("—").classes("source-badge")
+            # Layout setup jako v TradingView: počet a uspořádání grafů, synchronizace
+            layout_items: dict = {}
+            sync_switches: dict = {}
+            with ui.button(color=None).props("flat dense").classes("topbar-btn layout-button").tooltip("Layout setup"):
+                ui.icon("grid_view")
+                with ui.menu().classes("layout-menu") as layout_menu:
+                    for count, items in LAYOUT_SECTIONS:
+                        with ui.row().classes("layout-menu-row w-full"):
+                            ui.label(str(count)).classes("layout-menu-count")
+                            for layout_id, layout_label in items:
+                                # Piktogram = zmenšená mřížka stejného rozložení (CSS layout-<id>)
+                                with ui.element("div").classes("layout-option").on(
+                                    "click", make_layout_click(layout_id)
+                                ).tooltip(layout_label) as option:
+                                    with ui.element("div").classes(f"layout-icon layout-{layout_id}"):
+                                        for _ in range(LAYOUTS[layout_id]):
+                                            ui.element("div").classes("layout-icon-cell")
+                                layout_items[layout_id] = option
+                    ui.label("Sync in layout").classes("menu-section layout-sync-title")
+                    for sync_key, (sync_label, sync_help) in SYNC_OPTIONS.items():
+                        with ui.row().classes("layout-sync-row w-full"):
+                            ui.label(sync_label)
+                            ui.icon("info_outline").classes("layout-sync-info").tooltip(sync_help)
+                            ui.space()
+                            sync_switches[sync_key] = ui.switch(
+                                value=state["sync"][sync_key], on_change=make_sync_change(sync_key)
+                            ).props("dense")
             theme_switch = ui.switch("Tmavý motiv", value=dark)
-            ui.button("Indikátory", icon="add_chart", on_click=open_indicator_dialog).props(
-                "flat"
-            ).classes("indicator-add").tooltip("Indikátory (nabídka s hledáním a kategoriemi)")
             ui.button(icon="settings", on_click=open_settings_dialog).props("flat dense").classes(
                 "settings-button"
             )
@@ -2404,18 +2573,8 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
                             ):
                                 action_icons[action] = icon_html(icon)
                             action_buttons[action] = action_button
-                    chart = LightweightChart(
-                        dark=dark,
-                        on_ready=initial_load,
-                        show_volume=show_volume,
-                        chart_style=chart_style,
-                        chart_type=state["chart_type"],
-                    )
-                    # Definice skupin pro flyout nabídky lišty a SVG ikony (můžou
-                    # přijít i před init grafu)
-                    chart.set_icons(ICONS)
-                    chart.set_alert_kinds(list(LINE_KINDS))
-                    chart.set_tool_groups(DRAWING_GROUPS)
+                    # Mřížka grafů rozložení (CSS třída layout-<id> určuje uspořádání)
+                    chart_grid = ui.element("div").classes(f"chart-grid layout-{state['layout']}")
                 # Stavová lišta: zprávy vlevo, vpravo seance (RTH/ETH) a hodiny
                 # s volbou časového pásma (jako v TradingView)
                 with ui.row().classes("statusbar-row w-full"):
@@ -2468,23 +2627,14 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
                     ).classes("emoji-button")
 
     async def place_sticker(emoji: str) -> None:
-        # Po výběru emoji umístí sticker na uloženou pozici kliku
+        # Po výběru emoji umístí sticker na uloženou pozici kliku (v grafu kliku)
         pending = state.get("sticker_pending")
         sticker_dialog.close()
-        if not pending:
+        if not pending or pending["pane"].closed:
             return
-        await chart.add_sticker(pending["time"], pending["price"], emoji)
+        await pending["pane"].chart.add_sticker(pending["time"], pending["price"], emoji)
         show_status(f"Sticker {emoji} přidán a uložen.")
         state["sticker_pending"] = None
-
-    # Dialog pro textové kresby (textový nástroj + dvojklik na existující text)
-    with ui.dialog() as text_dialog, ui.card().classes("settings-dialog"):
-        with ui.column().classes("indicator-dialog-body"):
-            ui.label("Text na graf").classes("settings-note")
-            text_input = ui.input("Text").props("outlined dense autofocus")
-            with ui.row().classes("dialog-actions"):
-                ui.button("Uložit", on_click=save_text).props("unelevated")
-                ui.button("Zrušit", on_click=text_dialog.close).props("flat")
 
     # Nabídka indikátorů ve stylu TradingView: hledání, kategorie vlevo, seznam vpravo
     with ui.dialog() as indicator_dialog, ui.card().classes("ind-dialog"):
@@ -2521,28 +2671,86 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
             )
             settings_buttons(indicator_settings_dialog, submit_indicator_settings)
 
-    # Dialog Settings kresby (pravý klik → Settings… nebo dvojklik na kresbu)
-    with ui.dialog() as drawing_settings_dialog, ui.card().classes("tv-settings"):
+    # Dialog Settings kresby jako v TradingView (pravý klik → Settings…, dvojklik
+    # na kresbu, nástroj Text): záložka Text / Style / Inputs podle druhu kresby
+    # a záložka Visibility (na kterých timeframech je kresba vidět)
+    with ui.dialog() as drawing_settings_dialog, ui.card().classes("tv-settings drawing-settings"):
         drawing_settings_title = settings_header(drawing_settings_dialog, "Settings")
-        drawing_text = ui.input("Text").props("outlined dense").classes("w-full")
-        drawing_font = ui.number("Velikost písma (px)", value=DEFAULT_FONT_SIZE, min=8, max=72, step=1).props("outlined dense")
-        with ui.row().classes("tv-settings-row") as drawing_color_row:
-            ui.label("Barva").classes("tv-settings-label")
-            drawing_color = ColorButton(DEFAULT_DRAWING_COLOR, title="Barva kresby")
-        drawing_width = ui.select(DRAWING_LINE_WIDTHS, value=DEFAULT_LINE_WIDTH, label="Šířka čáry").props("outlined dense").classes("w-full")
-        drawing_style = ui.select(DRAWING_LINE_STYLES, value="solid", label="Styl čáry").props("outlined dense").classes("w-full")
-        # Pozice (Long / Short): parametry výpočtu množství a ceny úrovní
-        with ui.column().classes("position-fields w-full") as position_fields:
-            ui.label("Inputs").classes("tv-settings-section")
-            position_account = ui.number("Velikost účtu", value=POSITION_DEFAULTS["accountSize"], min=0).props("outlined dense")
-            with ui.row().classes("position-row w-full"):
-                position_risk = ui.number("Riziko", value=POSITION_DEFAULTS["risk"], min=0).props("outlined dense")
-                position_risk_unit = ui.select(POSITION_RISK_UNITS, value=POSITION_DEFAULTS["riskUnit"]).props("outlined dense")
-            position_lot = ui.number("Velikost lotu", value=POSITION_DEFAULTS["lotSize"], min=0).props("outlined dense")
-            ui.label("Úrovně").classes("tv-settings-section")
-            position_entry = ui.number("Vstup (cena)").props("outlined dense")
-            position_target = ui.number("Cíl – Profit level (cena)").props("outlined dense")
-            position_stop = ui.number("Stop level (cena)").props("outlined dense")
+        with ui.tabs().props("dense no-caps align=left indicator-color=primary").classes("tv-tabs w-full") as drawing_tabs:
+            style_tab = ui.tab("style", label="Style")
+            visibility_tab = ui.tab("visibility", label="Visibility")
+        with ui.tab_panels(drawing_tabs, value=style_tab).props("animated=false").classes("tv-tab-panels w-full"):
+            with ui.tab_panel(style_tab).classes("tv-tab-panel"):
+                # Text: barva, velikost, tučné, kurzíva, obsah, pozadí, rámeček, zalomení
+                with ui.column().classes("text-fields w-full") as text_fields:
+                    with ui.row().classes("text-toolbar"):
+                        text_color = ColorButton(DEFAULT_DRAWING_COLOR, title="Barva textu")
+                        text_size = ui.select(TEXT_FONT_SIZES, value=DEFAULT_FONT_SIZE).props(
+                            "outlined dense options-dense"
+                        ).classes("text-size")
+                        text_bold = ui.button("B", color=None, on_click=lambda: toggle_text_flag("bold")).props(
+                            "outline no-caps"
+                        ).classes("text-flag text-flag-bold").tooltip("Tučné")
+                        text_italic = ui.button("I", color=None, on_click=lambda: toggle_text_flag("italic")).props(
+                            "outline no-caps"
+                        ).classes("text-flag text-flag-italic").tooltip("Kurzíva")
+                    drawing_text = ui.textarea(placeholder="Text").props("outlined rows=5").classes("w-full text-area")
+                    with ui.row().classes("tv-settings-row"):
+                        text_background = ui.checkbox("Background").classes("tv-settings-check")
+                        text_background_color = ColorButton(DEFAULT_TEXT_BACKGROUND, title="Barva pozadí")
+                    with ui.row().classes("tv-settings-row"):
+                        text_border = ui.checkbox("Border").classes("tv-settings-check")
+                        text_border_color = ColorButton(DEFAULT_TEXT_BORDER, title="Barva rámečku")
+                    text_wrap = ui.checkbox("Text wrap")
+                # Čáry a tvary: barva, šířka a styl čáry
+                with ui.column().classes("line-fields w-full") as line_fields:
+                    with ui.row().classes("tv-settings-row"):
+                        ui.label("Barva").classes("tv-settings-label")
+                        drawing_color = ColorButton(DEFAULT_DRAWING_COLOR, title="Barva kresby")
+                    drawing_width = ui.select(DRAWING_LINE_WIDTHS, value=DEFAULT_LINE_WIDTH, label="Šířka čáry").props(
+                        "outlined dense"
+                    ).classes("w-full")
+                    drawing_style = ui.select(DRAWING_LINE_STYLES, value="solid", label="Styl čáry").props(
+                        "outlined dense"
+                    ).classes("w-full")
+                sticker_note = ui.label(
+                    "Sticker nemá nastavitelný styl – na záložce Visibility zvolte, na kterých timeframech je vidět."
+                ).classes("settings-note")
+                # Pozice (Long / Short): parametry výpočtu množství a ceny úrovní
+                with ui.column().classes("position-fields w-full") as position_fields:
+                    position_account = ui.number("Velikost účtu", value=POSITION_DEFAULTS["accountSize"], min=0).props("outlined dense")
+                    with ui.row().classes("position-row w-full"):
+                        position_risk = ui.number("Riziko", value=POSITION_DEFAULTS["risk"], min=0).props("outlined dense")
+                        position_risk_unit = ui.select(POSITION_RISK_UNITS, value=POSITION_DEFAULTS["riskUnit"]).props("outlined dense")
+                    position_lot = ui.number("Velikost lotu", value=POSITION_DEFAULTS["lotSize"], min=0).props("outlined dense")
+                    ui.label("Úrovně").classes("tv-settings-section")
+                    position_entry = ui.number("Vstup (cena)", format="%.2f").props("outlined dense")
+                    position_target = ui.number("Cíl – Profit level (cena)", format="%.2f").props("outlined dense")
+                    position_stop = ui.number("Stop level (cena)", format="%.2f").props("outlined dense")
+            with ui.tab_panel(visibility_tab).classes("tv-tab-panel"):
+                # Viditelnost podle timeframu: jednotka, od, posuvník rozsahu, do
+                visibility_fields: dict = {}
+                with ui.element("div").classes("visibility-grid w-full"):
+                    for unit, (unit_label, unit_low, unit_high) in VISIBILITY_UNITS.items():
+                        fields = {
+                            "enabled": ui.checkbox(unit_label, value=True).classes("visibility-check"),
+                            "from": ui.number(value=unit_low, min=unit_low, max=unit_high, step=1, format="%d").props(
+                                "outlined dense"
+                            ).classes("visibility-num"),
+                            "range": ui.range(min=unit_low, max=unit_high, step=1, value={"min": unit_low, "max": unit_high}).classes(
+                                "visibility-range"
+                            ),
+                            "to": ui.number(value=unit_high, min=unit_low, max=unit_high, step=1, format="%d").props(
+                                "outlined dense"
+                            ).classes("visibility-num"),
+                        }
+                        fields["from"].on_value_change(make_visibility_sync(unit, "from"))
+                        fields["to"].on_value_change(make_visibility_sync(unit, "to"))
+                        fields["range"].on_value_change(make_visibility_sync(unit, "range"))
+                        visibility_fields[unit] = fields
+                ui.label(
+                    "Kresba patří k symbolu a je vidět na timeframech, které odpovídají zaškrtnutým jednotkám a rozsahům."
+                ).classes("settings-note")
         with ui.row().classes("tv-settings-actions w-full"):
             drawing_templates = TemplateMenu(
                 cache,
@@ -2554,6 +2762,29 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
                 on_default_change=push_drawing_defaults,
             )
             settings_buttons(drawing_settings_dialog, submit_drawing_settings)
+
+    # Uložení šablony indikátorů (Save indicator template) – aktuální indikátory aktivního grafu
+    with ui.dialog() as save_template_dialog, ui.card().classes("tpl-name-dialog"):
+        settings_header(save_template_dialog, "Save indicator template")
+        template_name_input = ui.input("Název šablony").props("outlined dense autofocus").classes("w-full")
+        template_name_input.on("keydown.enter", submit_save_template)
+        template_remember_symbol = ui.checkbox("Remember symbol")
+        template_remember_interval = ui.checkbox("Remember interval")
+        with ui.row().classes("tv-settings-actions w-full"):
+            settings_buttons(save_template_dialog, submit_save_template, "Save")
+
+    # Seznam šablon indikátorů (Open template…): hledání, použití, oblíbené, smazání
+    with ui.dialog() as templates_dialog, ui.card().classes("ind-dialog tpl-list-dialog"):
+        with ui.row().classes("ind-dialog-header w-full"):
+            ui.label("Indicator templates").classes("ind-dialog-title")
+            ui.space()
+            ui.button(icon="close", on_click=templates_dialog.close).props("flat dense round")
+        templates_search = (
+            ui.input(placeholder="Hledat šablonu…", on_change=lambda _e: render_templates_dialog())
+            .props("outlined dense clearable autofocus")
+            .classes("ind-search w-full")
+        )
+        templates_list = ui.column().classes("ind-list tpl-list w-full")
 
     # Settings grafu (pravý klik do grafu → Settings…): styl svíček, objem, šablony
     with ui.dialog() as chart_settings_dialog, ui.card().classes("tv-settings"):
@@ -2700,8 +2931,14 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
     timeframe_toggle.on_value_change(lambda event: set_timeframe(event.value))
     theme_switch.on_value_change(lambda event: toggle_theme(bool(event.value)))
 
-    # Průběžné vyzvedávání dokončených kreseb z grafu (viz on_drawing_finished)
-    ui.timer(0.5, on_drawing_finished)
+    # Grafy rozložení (vytvoří se v mřížce; data načtou po inicializaci v prohlížeči)
+    for pane_config in layout_config["panes"]:
+        panes.append(create_pane(pane_config))
+    paint_layout()
+    render_indicator_templates()
+
+    # Průběžné vyzvedávání událostí všech grafů (viz process_chart_events)
+    ui.timer(0.5, process_chart_events)
 
     # Aktualizace cen watchlistu (Binance 5 s, Yahoo throttlováno na zdroji)
     ui.timer(5.0, refresh_watchlist_prices)
@@ -2714,8 +2951,9 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
     ui.timer(0.3, refresh_alerts_ui, once=True)
 
     def on_disconnect() -> None:
-        # Při odpojení klienta ukončíme jeho živý stream a odhlásíme ho od alertů
-        cancel_stream()
+        # Při odpojení klienta ukončíme živé streamy jeho grafů a odhlásíme ho od alertů
+        for pane in panes:
+            pane.close()
         alert_engine.remove_listener(on_alert_event)
 
     context.client.on_disconnect(on_disconnect)

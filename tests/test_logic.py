@@ -498,9 +498,16 @@ class StylesTest(unittest.TestCase):
 
     def test_drawing_style_and_chart_type(self) -> None:
         style = normalize_drawing_style({"color": "rgba(1, 2, 3, 0.5)", "options": {"width": 3, "lineStyle": "x", "fontSize": 200}})
-        self.assertEqual(style, {"color": "rgba(1, 2, 3, 0.5)", "options": {"width": 3, "lineStyle": "solid", "fontSize": 72}})
+        options = dict(style["options"])
+        # Viditelnost podle timeframu je vždy doplněná (výchozí = všude), testuje ji test_layouts
+        self.assertIn("visibility", options)
+        options.pop("visibility")
+        self.assertEqual(style["color"], "rgba(1, 2, 3, 0.5)")
+        self.assertEqual(options, {"width": 3, "lineStyle": "solid", "fontSize": 72})
         # Prázdná šablona = tovární styl
-        self.assertEqual(normalize_drawing_style(None)["options"], {"width": 1.5, "lineStyle": "solid", "fontSize": 13})
+        factory = dict(normalize_drawing_style(None)["options"])
+        factory.pop("visibility")
+        self.assertEqual(factory, {"width": 1.5, "lineStyle": "solid", "fontSize": 13})
         self.assertEqual(normalize_chart_type("heikin"), "heikin")
         self.assertEqual(normalize_chart_type("renko"), "candles")
 

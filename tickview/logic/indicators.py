@@ -194,6 +194,15 @@ def load_saved_indicators(raw: str | None) -> list[dict]:
         items = json.loads(raw or "[]")
     except ValueError:
         return []
+    return normalize_indicators(items)
+
+
+def normalize_indicators(items) -> list[dict]:
+    """Zkontroluje seznam indikátorů (rozložení, šablona, nastavení); neplatné položky vynechá.
+
+    Parametry:
+        items: seznam [{"id", "kind", "params", "visible"?, "color"?}] (jiný typ = prázdný seznam).
+    """
     indicators: list[dict] = []
     for item in items if isinstance(items, list) else []:
         try:
