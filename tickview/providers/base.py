@@ -6,6 +6,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
 from typing import AsyncIterator, Awaitable, Callable, Optional, Union
 
+import numpy as np
+
 # Kanonické timeframy aplikace; každý zdroj si je mapuje na vlastní API hodnoty
 CANONICAL_TIMEFRAMES = ("1m", "2m", "5m", "10m", "15m", "1h", "4h", "1D", "1W")
 
@@ -129,6 +131,24 @@ def aggregate_candles(candles: list["Candle"], step_ms: int) -> list["Candle"]:
 def poll_seconds_for(timeframe: str) -> float:
     """Vrátí interval pollingu pro timeframe (denní/týdenní data stačí obnovovat řidčeji)."""
     return POLL_SECONDS_DAILY if timeframe in ("1D", "1W") else POLL_SECONDS_INTRADAY
+
+
+def clean_float32_price(value: float) -> float:
+    """Odstraní šum převodu z float32 (23.110000610351562 → 23.11).
+
+    Yahoo Finance posílá ceny ve float32; po převodu na float64 mají až osm
+    „falešných“ desetinných míst, podle kterých by se špatně určila přesnost
+    ceny. Hodnota přesně reprezentovatelná ve float32 se nahradí nejkratším
+    desetinným zápisem, který dá stejný float32; ostatní hodnoty se nemění.
+
+    Parametry:
+        value: cena (float64).
+    """
+    # str(np.float32) dává nejkratší zápis, který se vrátí na stejný float32;
+    # srovnání ve float64 (mimo rozsah float32 vyjde inf a hodnota se nemění)
+    with np.errstate(over="ignore"):
+        as_float32 = np.float32(value)
+    return float(str(as_float32)) if float(as_float32) == value else value
 
 
 async def poll_latest_candles(

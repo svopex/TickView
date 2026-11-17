@@ -8,7 +8,14 @@ import json
 import sqlite3
 from typing import Callable, Optional
 
-from tickview.providers.base import TIMEFRAME_MS, Candle, DataProvider, is_closed, utc_now_ms
+from tickview.providers.base import (
+    TIMEFRAME_MS,
+    Candle,
+    DataProvider,
+    clean_float32_price,
+    is_closed,
+    utc_now_ms,
+)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS klines (
@@ -156,6 +163,16 @@ class KlineCache:
         except sqlite3.OperationalError:
             # Sloupec už existuje
             pass
+        # Jednorázově (verze schématu 1): svíčky Yahoo uložené dřív se šumem
+        # převodu z float32 (23.11000061) očistíme stejně jako nově stažené;
+        # další jednorázové úpravy dat zvyšují PRAGMA user_version
+        if self._conn.execute("PRAGMA user_version").fetchone()[0] < 1:
+            self._conn.create_function("clean_float32_price", 1, clean_float32_price, deterministic=True)
+            self._conn.execute(
+                "UPDATE klines SET open = clean_float32_price(open), high = clean_float32_price(high), "
+                "low = clean_float32_price(low), close = clean_float32_price(close) WHERE source = 'yahoo'"
+            )
+            self._conn.execute("PRAGMA user_version = 1")
         # Bez seznamů (první spuštění nebo databáze s jediným watchlistem):
         # vytvoříme výchozí seznam a převedeme do něj symboly původní tabulky
         if self._conn.execute("SELECT COUNT(*) FROM watchlists").fetchone()[0] == 0:

@@ -17,6 +17,7 @@ from tickview.providers.base import (
     DataProvider,
     StreamItem,
     SymbolInfo,
+    clean_float32_price,
     poll_latest_candles,
     poll_seconds_for,
 )
@@ -134,8 +135,8 @@ class YahooProvider(DataProvider):
     def price_tick(self, symbol: str, price: float) -> Optional[float]:
         """Forex: standardní tick brokerů (0.00001, JPY páry s cenou nad 20 – 0.001).
 
-        Ceny forexu z Yahoo mají šum plovoucí čárky, odhad z dat by vyšel
-        příliš jemný; ostatní instrumenty se odhadují z dat.
+        Odhad z dat by u forexu nemusel odpovídat ticku brokerů (Yahoo ceny
+        zaokrouhluje různě); ostatní instrumenty se odhadují z dat.
         """
         if self.symbol_kind(symbol) != "forex":
             return None
@@ -207,6 +208,9 @@ class YahooProvider(DataProvider):
         # yfinance vrací MultiIndex sloupce i pro jeden symbol → srovnáme
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
+        # Ceny přicházejí ve float32 – bez šumu převodu (23.11 místo 23.11000061)
+        price_columns = ["Open", "High", "Low", "Close"]
+        df[price_columns] = df[price_columns].map(clean_float32_price)
         candles: list[Candle] = []
         for timestamp, row in df.iterrows():
             if pd.isna(row.get("Open")) or pd.isna(row.get("Close")):

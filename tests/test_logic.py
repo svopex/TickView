@@ -40,7 +40,7 @@ from tickview.logic.styles import (
     normalize_panel_position,
     save_template,
 )
-from tickview.providers.base import split_symbol
+from tickview.providers.base import clean_float32_price, split_symbol
 from tickview.providers.base import (
     TIMEFRAME_MS,
     Candle,
@@ -412,6 +412,14 @@ class ForexTest(unittest.TestCase):
 
 class ProvidersBaseTest(unittest.IsolatedAsyncioTestCase):
     """Omezovač dotazů a smyčka pollingu."""
+
+    def test_clean_float32_price(self) -> None:
+        # Šum převodu z float32 (Yahoo) zmizí, přesné float64 ceny se nemění
+        self.assertEqual(clean_float32_price(23.110000610351562), 23.11)
+        self.assertEqual(clean_float32_price(1.1010999679565430), 1.1011)
+        self.assertEqual(clean_float32_price(1.10114), 1.10114)
+        self.assertEqual(clean_float32_price(63735.99), 63735.99)
+        self.assertEqual(clean_float32_price(25.0), 25.0)
 
     async def test_rate_limiter_spreads_concurrent_calls(self) -> None:
         limiter = RateLimiter(min_interval=0.05)

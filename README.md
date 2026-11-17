@@ -277,7 +277,9 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   zpožděno), O/H/L/C obarvené podle směru svíčky, změna proti předchozímu
   závěru (absolutně i v %), řádek Vol (skrytý u instrumentů bez objemu –
   forex, indexy) a pod ním řádky indikátorů s hodnotami pod kurzorem. Přesnost
-  cen (osa i legenda) se určuje z dat (forex 5 míst, akcie 2).
+  cen (osa i legenda) se určuje z dat (forex 5 míst, akcie 2); ceny z Yahoo
+  Finance přicházejí ve float32 a čistí se od šumu převodu (VIX 23.11, ne
+  23.11000061), i ve svíčkách uložených v cache.
 - Indikátory: tlačítko „Indikátory“ otevře nabídku jako v TradingView –
   hledání, kategorie (klouzavé průměry, pásma a kanály, trend, oscilátory,
   volatilita, objem, vlastní, aktivní, oblíbené) a seznam s popisem; klik indikátor přidá
