@@ -113,7 +113,9 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   zadání ve tvaru „zdroj:SYMBOL“ (např. `yahoo:GC=F`, `ibkr:XAUUSD`, jako ve
   vstupech Svopex TTW) hledá jen v daném zdroji a symbol nabídne, i když ho
   hledání zdroje nevrátí;
-  klik nebo Enter načte graf, šipky posouvají výběr, Esc zavře, tlačítko +
+  klik nebo Enter načte graf (cenová osa se po přepnutí symbolu nebo
+  timeframu vrátí do automatického měřítka, i když byla ručně roztažená),
+  šipky posouvají výběr, Esc zavře, tlačítko +
   přidá symbol do aktivního seznamu (fajfka = už v seznamu); do watchlistu
   lze přidat i aktuální symbol tlačítkem v hlavičce watchlistu. Svíčkové grafy
   + objem, timeframy 1m/2m/5m/10m/15m/1h/4h/1D/1W (jen co zdroj podporuje;
@@ -137,7 +139,8 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   kanál, pitchfork, obdélník, štětec, text, sticker (emoji), Long a Short
   position (viz níže), měřič; výběr
   kresby klikem s úchopy a tažením (celá kresba i jednotlivé body; výběr
-  zůstává i po uložení), kresby lze umístit i mimo existující svíčky
+  zůstává i po uložení); úchopy jsou jako v TradingView kolečka (u pozice
+  Target a Stop čtverečky) a ukážou se už při najetí myší na kresbu; kresby lze umístit i mimo existující svíčky
   (vpravo do budoucna, přes víkendové mezery), mazání
   přes pravoklikové menu („Smazat objekt“), Del nebo koš, magnet na OHLC,
   tužka (nástroj zůstává aktivní), zámek a skrytí kreseb; text i sticker se
@@ -284,7 +287,12 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   MACD, Stochastic, Stoch RSI, CCI, Williams %R, Momentum, ROC, Awesome
   Oscillator, TRIX, TSI, ATR, OBV, MFI, CMF a vlastní Svopex TTW. Řádek indikátoru v legendě (i
   v titulku panelu) má při najetí myší oko (skrýt/zobrazit), ozubené kolečko
-  (Settings) a křížek (odebrat). Dialog Settings má u každého indikátoru
+  (Settings) a křížek (odebrat). Najetí myší na čáru indikátoru (v grafu
+  i v panelu) nebo na jeho řádek v legendě ho zvýrazní jako v TradingView:
+  kolečka na jeho čarách v pravidelném rozestupu a podbarvený řádek legendy;
+  klik (i pravý) ho označí – kolečka zůstanou a řádek legendy má modrý
+  rámeček; klik jinam nebo Esc označení zruší, Del označený indikátor
+  odebere. Dialog Settings má u každého indikátoru
   jako v TradingView záložky Inputs, Style a Visibility; přepnutí záložky
   nemění velikost okna (zvětší se jen, když se obsah nevejde). Style jako
   v TradingView: u každého výstupu (čáry, histogramu) zaškrtávátko zobrazení,

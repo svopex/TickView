@@ -241,8 +241,14 @@
   cursor: default;
 }
 
-.legend-ind:hover {
+.legend-ind:hover,
+.legend-ind.legend-ind-hover {
   border-color: rgba(128, 128, 128, 0.45);
+}
+
+/* Označený indikátor: modrý rámeček řádku legendy (jako v TradingView; i při najetí) */
+.legend-ind.legend-ind-selected {
+  border-color: #2962ff;
 }
 
 .legend-ind-hidden .legend-ind-title,
@@ -335,9 +341,11 @@
 }
 
 .lwchart-pane-host {
+  position: relative;
   flex: 1 1 auto;
   min-height: 0;
 }
+
 
 .body--dark .lwchart-pane-title {
   color: #d1d4dc;
@@ -426,9 +434,11 @@
   color: #2962ff;
 }
 
-/* Překryvný canvas pro kreslení: průchodný myši, v módě kreslení zachytává kliky.
+/* Překryvný canvas pro kreslení a canvas koleček zvýrazněného indikátoru nad
+   panelem: průchodné myši, overlay v módě kreslení zachytává kliky.
    Canvas je replaced element, takže inset samo o sobě nenatáhne – je potřeba 100 %. */
-.lwchart-overlay {
+.lwchart-overlay,
+.lwchart-pane-markers {
   position: absolute;
   inset: 0;
   width: 100%;
