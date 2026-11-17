@@ -625,6 +625,14 @@ class StylesTest(unittest.TestCase):
         self.assertEqual(normalize_favorites("trend", allowed), [])
         self.assertEqual(normalize_panel_position({"left": 3, "top": 4}), {"left": 3, "top": 4})
 
+    def test_favorite_indicators(self) -> None:
+        # Bez seznamu povolených zůstanou i neznámé druhy (dočasně nenačtený vlastní
+        # indikátor); duplicity a ne-řetězce ne, pořadí abecední
+        self.assertEqual(load_favorites('["rsi", "my_custom", 3, "rsi"]', None), ["my_custom", "rsi"])
+        self.assertEqual(load_favorites(None, None), [])
+        self.assertEqual(load_favorites('{"rsi": 1}', None), [])
+        self.assertEqual(load_favorites("x", None), [])
+
 
 if __name__ == "__main__":
     unittest.main()

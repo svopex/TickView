@@ -1241,6 +1241,7 @@
 
 .tool-flyout-item:hover .tool-flyout-star,
 .q-item:hover .menu-star,
+.ind-item:hover .menu-star,
 .tool-flyout-star.on,
 .menu-star.on {
   opacity: 1;
@@ -2054,7 +2055,10 @@
   font-weight: 600;
 }
 
+/* Panely záložek vyplní zbylou výšku karty – po zamknutí výšky při přepnutí
+   záložky (dialog_tabs.js) zůstane patička s tlačítky dole */
 .tv-tab-panels {
+  flex: 1 1 auto;
   background: transparent;
 }
 

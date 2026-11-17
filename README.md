@@ -276,14 +276,17 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   cen (osa i legenda) se určuje z dat (forex 5 míst, akcie 2).
 - Indikátory: tlačítko „Indikátory“ otevře nabídku jako v TradingView –
   hledání, kategorie (klouzavé průměry, pásma a kanály, trend, oscilátory,
-  volatilita, objem, vlastní, aktivní) a seznam s popisem; klik indikátor přidá
-  s výchozími parametry. K dispozici SMA, EMA, WMA, HMA, VWMA, VWAP, Bollinger
+  volatilita, objem, vlastní, aktivní, oblíbené) a seznam s popisem; klik indikátor přidá
+  s výchozími parametry. Hvězdička vpravo u položky (při najetí myší, oblíbený
+  má plnou žlutou) přidá indikátor do kategorie Oblíbené / odebere ho; oblíbené
+  se ukládají. K dispozici SMA, EMA, WMA, HMA, VWMA, VWAP, Bollinger
   Bands, Keltner, Donchian, Ichimoku, Parabolic SAR, Supertrend, ADX, RSI,
   MACD, Stochastic, Stoch RSI, CCI, Williams %R, Momentum, ROC, Awesome
   Oscillator, TRIX, TSI, ATR, OBV, MFI, CMF a vlastní Svopex TTW. Řádek indikátoru v legendě (i
   v titulku panelu) má při najetí myší oko (skrýt/zobrazit), ozubené kolečko
   (Settings) a křížek (odebrat). Dialog Settings má u každého indikátoru
-  jako v TradingView záložky Inputs, Style a Visibility. Style: barva (jen
+  jako v TradingView záložky Inputs, Style a Visibility; přepnutí záložky
+  nemění velikost okna (zvětší se jen, když se obsah nevejde). Style: barva (jen
   u indikátorů s hlavní barvou), Graphic objects – Lines (úsečky indikátoru,
   např. trendové linky Svopex TTW) a Tables (tabulka scanneru) jen
   u indikátorů, které je kreslí, a Input values – Inputs in status line
@@ -596,6 +599,8 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   lišta a klávesnice, synchronizace crosshairu a času)
 - `tickview/ui/static/color_picker.js` – výběr barvy ve stylu TradingView
   (paleta, vlastní barvy, průhlednost)
+- `tickview/ui/static/dialog_tabs.js` – stálá velikost dialogů Settings
+  při přepínání záložek
 - `tickview/ui/static/style.css` – styly UI
 - `tickview/ui/static/lightweight-charts.standalone.production.js` – vendored
   knihovna TradingView Lightweight Charts 4.2.3 (licence Apache-2.0)

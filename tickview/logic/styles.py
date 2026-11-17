@@ -439,28 +439,32 @@ def delete_template(templates: dict[str, dict], name: str) -> dict[str, dict]:
     return {key: value for key, value in templates.items() if key != name}
 
 
-def normalize_favorites(values, allowed: list[str]) -> list[str]:
-    """Zkontroluje oblíbené položky (nástroje kreslení, typy grafu, timeframy).
+def normalize_favorites(values, allowed: list[str] | None) -> list[str]:
+    """Zkontroluje oblíbené položky (nástroje kreslení, typy grafu, timeframy, indikátory).
 
     Neznámé a duplicitní hodnoty vynechá; pořadí odpovídá pořadí v allowed
     (pořadí lišty / nabídky), stejně jako se oblíbené zobrazují.
 
     Parametry:
         values: seznam hodnot, např. ["trend", "hline"] (jiný typ = prázdný seznam).
-        allowed: všechny povolené hodnoty v pořadí zobrazení.
+        allowed: všechny povolené hodnoty v pořadí zobrazení; None = neznámé
+            hodnoty se ponechají (seznam se může měnit, např. dočasně nenačtený
+            vlastní indikátor) a seřadí se abecedně.
     """
     if not isinstance(values, list):
         return []
     wanted = {item for item in values if isinstance(item, str)}
+    if allowed is None:
+        return sorted(wanted)
     return [value for value in allowed if value in wanted]
 
 
-def load_favorites(raw: str | None, allowed: list[str], default: list[str] | None = None) -> list[str]:
+def load_favorites(raw: str | None, allowed: list[str] | None, default: list[str] | None = None) -> list[str]:
     """Načte oblíbené položky z JSON nastavení (viz normalize_favorites).
 
     Parametry:
         raw: JSON seznam z nastavení, nebo None (dosud neuloženo).
-        allowed: povolené hodnoty v pořadí zobrazení.
+        allowed: povolené hodnoty v pořadí zobrazení (None = viz normalize_favorites).
         default: oblíbené, když nastavení ještě neexistuje.
     """
     try:

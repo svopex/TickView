@@ -131,6 +131,15 @@ ui.dialog.default_props("transition-duration=120")
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
+# Skripty UI v pořadí načítání (vendored knihovna grafu před komponentou grafu)
+STATIC_SCRIPTS = (
+    "lightweight-charts.standalone.production.js",
+    "color_picker.js",
+    "dialog_tabs.js",
+    "lightweight_chart.js",
+)
+
+
 def _static_version() -> str:
     """Verze statických souborů pro cache-busting: otisk obsahu CSS a JS.
 
@@ -138,7 +147,7 @@ def _static_version() -> str:
     nepoužije starou verzi z cache – verzi není potřeba ručně zvyšovat.
     """
     digest = hashlib.sha1()
-    for name in ("style.css", "color_picker.js", "lightweight_chart.js", "lightweight-charts.standalone.production.js"):
+    for name in ("style.css", *STATIC_SCRIPTS):
         digest.update((STATIC_DIR / name).read_bytes())
     return digest.hexdigest()[:10]
 
@@ -195,9 +204,7 @@ async def _build_index(
     # verze v URL zajistí, že prohlížeč po změně souborů nepoužije starou cache
     ui.add_head_html(
         f'<link rel="stylesheet" href="/static/style.css?v={STATIC_VERSION}">'
-        f'<script src="/static/lightweight-charts.standalone.production.js?v={STATIC_VERSION}"></script>'
-        f'<script src="/static/color_picker.js?v={STATIC_VERSION}"></script>'
-        f'<script src="/static/lightweight_chart.js?v={STATIC_VERSION}"></script>'
+        + "".join(f'<script src="/static/{name}?v={STATIC_VERSION}"></script>' for name in STATIC_SCRIPTS)
     )
 
     # Nastavení z minula: motiv, poslední symbol a timeframe (starší nastavení
@@ -257,6 +264,9 @@ async def _build_index(
             await cache.get_setting("favorite_chart_types"), list(CHART_TYPES), DEFAULT_FAVORITE_CHART_TYPES
         ),
         "favorite_timeframes": load_favorites(await cache.get_setting("favorite_timeframes"), TIMEFRAMES, TIMEFRAMES),
+        # Oblíbené indikátory (hvězdička v nabídce indikátorů); neznámé druhy se
+        # nefiltrují, aby se dočasně nenačtený vlastní indikátor neztratil z oblíbených
+        "favorite_indicators": load_favorites(await cache.get_setting("favorite_indicators"), None),
         "timezone": saved_timezone,
         "session": saved_session,
         "magnet": saved_magnet,
@@ -633,9 +643,10 @@ async def _build_index(
     # Prvky hvězdiček v nabídkách: (klíč oblíbených, hodnota) -> (span, ikona)
     menu_stars: dict = {}
 
-    def favorite_star(key: str, value: str, allowed: list[str], on_change) -> None:
+    def favorite_star(key: str, value: str, allowed: list[str] | None, on_change) -> None:
         # Hvězdička položky nabídky: přidá / odebere oblíbenou položku (state[key]
-        # = klíč nastavení); .stop zabrání zároveň výběru položky a zavření nabídky
+        # = klíč nastavení, allowed viz normalize_favorites); .stop zabrání zároveň
+        # výběru položky a zavření nabídky
         async def toggle() -> None:
             state[key] = normalize_favorites(list(set(state[key]) ^ {value}), allowed)
             paint_star(key, value)
@@ -1869,7 +1880,13 @@ async def _build_index(
 
         indicator_categories.clear()
         with indicator_categories:
-            entries = [("all", "Všechny indikátory"), ("active", f"Aktivní ({len(active().indicators)})")]
+            indicators = all_indicators()
+            favorite_count = sum(1 for kind in state["favorite_indicators"] if kind in indicators)
+            entries = [
+                ("all", "Všechny indikátory"),
+                ("favorites", f"Oblíbené ({favorite_count})"),
+                ("active", f"Aktivní ({len(active().indicators)})"),
+            ]
             entries += list(CATEGORIES.items())
             for key, label in entries:
                 ui.label(label).classes("ind-cat" + (" active" if key == category and not query else "")).on(
@@ -1901,17 +1918,24 @@ async def _build_index(
                             "flat dense round size=sm"
                         ).tooltip("Odebrat")
                 return
-            # Seznam indikátorů registru: filtr kategorie (při hledání se prohledávají všechny)
-            indicators = all_indicators()
+            # Seznam indikátorů registru: při hledání se prohledávají všechny,
+            # jinak filtr kategorie, nebo oblíbené
+            favorites = state["favorite_indicators"]
+            show_favorites = not query and category == "favorites"
             kinds = [
                 kind
                 for kind, indicator in indicators.items()
-                if (query and indicator_matches(indicator, query))
-                or (not query and category in ("all", indicator.category))
+                if (
+                    indicator_matches(indicator, query)
+                    if query
+                    else category in ("all", indicator.category) or (show_favorites and kind in favorites)
+                )
             ]
             kinds.sort(key=lambda kind: indicators[kind].name.lower())
             if not kinds:
-                ui.label("Nic nenalezeno.").classes("ind-empty")
+                ui.label(
+                    "Žádný oblíbený indikátor – označte ho hvězdičkou vpravo." if show_favorites else "Nic nenalezeno."
+                ).classes("ind-empty")
             # Vlastní indikátory, které se nenačetly (chyba v souboru), ukážeme v kategorii Vlastní
             if category == "custom" and not query:
                 for error in load_errors().values():
@@ -1928,6 +1952,8 @@ async def _build_index(
                     ui.label(CATEGORIES[indicator.category]).classes("ind-item-cat")
                     if counts.get(kind):
                         ui.badge(str(counts[kind])).classes("ind-item-count").tooltip("Počet aktivních instancí")
+                    # Hvězdička oblíbeného (.stop – kliknutí na ni indikátor do grafu nepřidá)
+                    favorite_star("favorite_indicators", kind, None, render_indicator_menu)
 
     def on_indicator_search(event) -> None:
         menu_state["query"] = event.value or ""
