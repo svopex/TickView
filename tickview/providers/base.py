@@ -7,18 +7,23 @@ from dataclasses import dataclass
 from typing import AsyncIterator, Awaitable, Callable, Optional, Union
 
 # Kanonické timeframy aplikace; každý zdroj si je mapuje na vlastní API hodnoty
-CANONICAL_TIMEFRAMES = ("1m", "5m", "15m", "1h", "4h", "1D", "1W")
+CANONICAL_TIMEFRAMES = ("1m", "2m", "5m", "10m", "15m", "1h", "4h", "1D", "1W")
 
 # Délka timeframeu v milisekundách (UTC), klíč = kanonický timeframe
 TIMEFRAME_MS = {
     "1m": 60_000,
+    "2m": 120_000,
     "5m": 300_000,
+    "10m": 600_000,
     "15m": 900_000,
     "1h": 3_600_000,
     "4h": 14_400_000,
     "1D": 86_400_000,
     "1W": 604_800_000,
 }
+
+# Hlavní obchodní seance amerických akcií (RTH): pásmo, otevření, zavření
+US_EQUITY_SESSION = ("America/New_York", "09:30", "16:00")
 
 # Interval dotazování (polling) živých dat v sekundách: intraday vs. denní/týdenní
 POLL_SECONDS_INTRADAY = 15.0
@@ -57,6 +62,32 @@ class FailureLatch:
             return None
         self.failing = False
         return StreamStatus(True, message)
+
+
+def aggregate_candles(candles: list["Candle"], step_ms: int) -> list["Candle"]:
+    """Sloučí kratší svíčky do delšího timeframu (např. 1m → 2m, 5m → 10m).
+
+    Svíčky se seskupí podle začátku období zarovnaného na step_ms od epochy
+    (UTC); open = první, close = poslední, high/low = extrémy, objem = součet.
+
+    Parametry:
+        candles: svíčky kratšího timeframu (pořadí nevadí).
+        step_ms: délka cílového timeframu v ms.
+    """
+    merged: list[Candle] = []
+    for candle in sorted(candles, key=lambda item: item.open_time):
+        bucket = candle.open_time - candle.open_time % step_ms
+        if merged and merged[-1].open_time == bucket:
+            last = merged[-1]
+            last.high = max(last.high, candle.high)
+            last.low = min(last.low, candle.low)
+            last.close = candle.close
+            last.volume += candle.volume
+        else:
+            merged.append(
+                Candle(bucket, candle.open, candle.high, candle.low, candle.close, candle.volume)
+            )
+    return merged
 
 
 def poll_seconds_for(timeframe: str) -> float:
@@ -204,6 +235,59 @@ class DataProvider(ABC):
     # kratší než tato doba cache nepovažuje za kompletně stažený
     data_delay_ms: int = 0
     timeframes: dict[str, str] = {}
+    # Timeframy, které zdroj nemá nativně a skládají se z kratších:
+    # kanonický timeframe -> základní timeframe (musí být v self.timeframes)
+    aggregated: dict[str, str] = {}
+
+    async def _aggregated_history(
+        self, symbol: str, timeframe: str, start_ms: int, end_ms: int
+    ) -> list[Candle]:
+        """Historie složeného timeframu: stáhne základní svíčky a sloučí je.
+
+        Základní data se stahují od začátku období, do kterého spadá start_ms,
+        do konce období s end_ms (nejvýš do současnosti), takže každá vrácená
+        svíčka je složená ze všech svých částí a smí do cache. Svíčka, která
+        začíná před start_ms, se nevrací (patří do předchozího úseku).
+        """
+        base_timeframe = self.aggregated[timeframe]
+        step_ms = TIMEFRAME_MS[timeframe]
+        fetch_start = start_ms - start_ms % step_ms
+        fetch_end = min(end_ms - end_ms % step_ms + step_ms - 1, utc_now_ms())
+        base = await self.history(symbol, base_timeframe, fetch_start, max(fetch_end, start_ms))
+        return [c for c in aggregate_candles(base, step_ms) if start_ms <= c.open_time <= end_ms]
+
+    async def _aggregated_stream(self, symbol: str, timeframe: str) -> AsyncIterator[StreamItem]:
+        """Živý stream složeného timeframu nad streamem základního timeframu.
+
+        Rozpracovanou svíčku skládá z částí; když stream začne uprostřed
+        období (nebo začne nové období a chybí jeho první části), doplní
+        chybějící části z historie, aby open a objem odpovídaly skutečnosti.
+        Stavové zprávy (výpadek / obnovení) předává beze změny.
+        """
+        base_timeframe = self.aggregated[timeframe]
+        step_ms = TIMEFRAME_MS[timeframe]
+        bucket: Optional[int] = None
+        parts: dict[int, Candle] = {}
+        async for item in self.stream(symbol, base_timeframe):
+            if isinstance(item, StreamStatus):
+                yield item
+                continue
+            item_bucket = item.open_time - item.open_time % step_ms
+            if bucket is not None and item_bucket < bucket:
+                # Opožděná část už uzavřeného období – ignorujeme
+                continue
+            if bucket is None or item_bucket > bucket:
+                bucket = item_bucket
+                parts = {}
+                if item.open_time > bucket:
+                    # Chybí začátek období → doplníme z historie základního timeframu
+                    try:
+                        seed = await self.history(symbol, base_timeframe, bucket, item.open_time - 1)
+                    except Exception:
+                        seed = []
+                    parts.update({c.open_time: c for c in seed if bucket <= c.open_time < item.open_time})
+            parts[item.open_time] = item
+            yield aggregate_candles(list(parts.values()), step_ms)[0]
 
     def is_live_for(self, timeframe: str) -> bool:
         """Zda jsou živá data pro daný timeframe skutečně živá (štítek „živě“)."""
@@ -238,6 +322,26 @@ class DataProvider(ABC):
 
     async def close(self) -> None:
         """Uvolní síťové prostředky zdroje (volá se při ukončení aplikace)."""
+
+    def exchange_timezone(self, symbol: str) -> str:
+        """IANA časové pásmo burzy instrumentu (volba „Exchange“ u času grafu)."""
+        return "UTC"
+
+    def regular_session(self, symbol: str) -> Optional[tuple[str, str, str]]:
+        """Hlavní obchodní seance pro filtr RTH: (pásmo, "HH:MM" od, "HH:MM" do).
+
+        None = zdroj rozšířené hodiny neposílá nebo instrument žádné nemá
+        (krypto, forex) – přepínač RTH/ETH pak nemá vliv.
+        """
+        return None
+
+    async def describe(self, symbol: str) -> dict:
+        """Název instrumentu a burza pro nadpis grafu: {"name", "exchange"}.
+
+        Výchozí implementace vrací jen symbol a název zdroje; zdroje s
+        metadaty (název firmy, burza) ji přepisují.
+        """
+        return {"name": symbol, "exchange": self.name}
 
     async def tickers(self, symbols: list[str]) -> dict[str, dict]:
         """Poslední cena a denní změna pro watchlist: {symbol: {"price", "change_pct"}}.

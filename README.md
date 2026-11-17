@@ -87,6 +87,8 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
 - Automatické otevření prohlížeče: `python main.py --open`.
 - Nativní okno (ui.run(native=True)): `pip install pywebview` a `python main.py --native`.
 - Testy (bez dalších závislostí): `python -m unittest`.
+- Jiná datová složka (cache, nastavení, kresby): proměnná prostředí
+  `TICKVIEW_DATA_DIR`, např. `TICKVIEW_DATA_DIR=/tmp/tv python main.py`.
 
 ### Data a nastavení
 
@@ -105,8 +107,10 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   přidá do watchlistu, jen když tam ještě není, a načte graf; Enter přidá
   bez přepnutí grafu; šipky/Esc ovládají nabídku; do watchlistu lze přidávat
   i tlačítkem +), svíčkové grafy
-  + objem, timeframy 1m/5m/15m/1h/4h/1D/1W (jen co zdroj podporuje), tmavý a
-  světlý motiv, crosshair s OHLC legendou, cache historie v SQLite,
+  + objem, timeframy 1m/2m/5m/10m/15m/1h/4h/1D/1W (jen co zdroj podporuje;
+  2m a 10m, které Binance ani Yahoo nemají, se skládají z 1m / 5m svíček
+  včetně živé svíčky), tmavý a světlý motiv, crosshair s OHLC legendou,
+  cache historie v SQLite,
   donačítání starší historie při posunu grafu doleva (prázdné okno – noc,
   víkend – se postupně zvětšuje, pak se historie bere jako vyčerpaná),
   ukládání posledního symbolu/timeframu/motivu, živé svíčky Binance přes
@@ -114,10 +118,10 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   „živě / zpožděno“; výpadek a obnovení spojení se hlásí ve stavové liště a
   chybějící svíčky po výpadku se doplní z historie), akcie/ETF/indexy/forex
   přes Yahoo Finance s živým pollingem a hlášením zavřeného trhu, indikátory
-  SMA, EMA, Bollinger Bands, RSI a MACD (RSI/MACD ve vlastních panelech se
-  synchronizovaným časem, nastavitelné a kontrolované parametry, mazání
-  čipem, průběžný přepočet z živých svíček nejvýš jednou za 2 s, aktivní
-  indikátory se ukládají a přetrvávají restart), kreslení s lištou nástrojů 1:1 ve
+  (28 typů – viz níže; oscilátory ve vlastních panelech se synchronizovaným
+  časem, nastavitelné a kontrolované parametry, průběžný přepočet z živých
+  svíček nejvýš jednou za 2 s, aktivní indikátory se ukládají a přetrvávají
+  restart), kreslení s lištou nástrojů 1:1 ve
   stylu TradingView: skupiny nástrojů s flyout nabídkami — trendová čára,
   polopřímka, přímka, trendová šipka, horizontální/svislá linie, horizontální
   polopřímka, kříž, Fibonacci retracement i extension (s popisky), paralelní
@@ -132,6 +136,39 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   panelu (přidat/odebrat, klik přepne graf a řádek se zvýrazní jako aktuální,
   poslední cena a denní změna – Binance živě po 5 s, Yahoo po 60 s, IBKR po
   30 s, Alpaca snapshots po 5 s).
+- Nadpis grafu ve stylu TradingView: „Název · timeframe · burza“ (název firmy
+  / páru a burzu dodá zdroj), barevná tečka stavu dat (zelená živě, oranžová
+  zpožděno), O/H/L/C obarvené podle směru svíčky, změna proti předchozímu
+  závěru (absolutně i v %), řádek Vol (skrytý u instrumentů bez objemu –
+  forex, indexy) a pod ním řádky indikátorů s hodnotami pod kurzorem. Přesnost
+  cen (osa i legenda) se určuje z dat (forex 5 míst, akcie 2).
+- Indikátory: tlačítko „Indikátory“ otevře nabídku jako v TradingView –
+  hledání, kategorie (klouzavé průměry, pásma a kanály, trend, oscilátory,
+  volatilita, objem, aktivní) a seznam s popisem; klik indikátor přidá
+  s výchozími parametry. K dispozici SMA, EMA, WMA, HMA, VWMA, VWAP, Bollinger
+  Bands, Keltner, Donchian, Ichimoku, Parabolic SAR, Supertrend, ADX, RSI,
+  MACD, Stochastic, Stoch RSI, CCI, Williams %R, Momentum, ROC, Awesome
+  Oscillator, TRIX, TSI, ATR, OBV, MFI a CMF. Řádek indikátoru v legendě (i
+  v titulku panelu) má při najetí myší oko (skrýt/zobrazit), ozubené kolečko
+  (Settings – parametry a barva) a křížek (odebrat).
+- Pravý klik a dvojklik (jako v TradingView): na kresbě menu „Settings…“
+  (barva, šířka a styl čáry, u textu obsah a velikost písma) a „Smazat
+  objekt“, dvojklik rovnou Settings; na čáře indikátoru, v jeho panelu nebo na
+  řádku legendy menu „Settings…“ (parametry), „Skrýt“, „Odebrat indikátor“,
+  dvojklik rovnou Settings; jinde v grafu „Settings…“ grafu se zapnutím /
+  vypnutím objemu (Volume; uloží se, objem lze skrýt i okem v řádku Vol).
+- Kreslení: výběr textu klikem kamkoli do textu (rámeček označení), Del /
+  pravý klik ho smaže. Magnet má režimy slabý (přichytí bod k O/H/L/C, když je
+  kurzor do 25 px) a silný (vždy na nejbližší O/H/L/C); při kreslení ukazuje
+  crosshair i kroužek na místě přichycení, Ctrl/⌘ magnet dočasně přepne a
+  režim se ukládá. Aktivní nástroj ukončí Esc, pravý klik, opakovaný klik na
+  nástroj i vypnutí režimu tužky.
+- Stavová lišta vpravo: přepínač seance RTH / ETH (Regular / Extended trading
+  hours – u IBKR a Alpaca akcií; RTH zobrazí jen svíčky 9:30–16:00 New York,
+  cache drží všechna data; u krypta, forexu a Yahoo je neaktivní) a hodiny
+  s časovým pásmem grafu – nabídka UTC, Exchange (pásmo burzy), místní čas
+  a města jako v TradingView; pásmo platí pro časovou osu i crosshair, denní
+  svíčky se ukazují v UTC; volba se ukládá.
 - Do cache se ukládají jen uzavřené svíčky; rozpracovaná poslední svíčka se
   při každém načtení stahuje znovu. Cache si pamatuje skutečně stažené
   intervaly, takže se doplní i díry uprostřed uložených dat.
@@ -150,7 +187,8 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
            api_key: PK...
            secret: ...
 
-- Živá data: timeframe 1m přes websocket IEX (minutové bary), delší
+- Živá data: timeframe 1m přes websocket IEX (minutové bary; z nich se
+  skládá i živá 2m svíčka), delší
   timeframy dotazováním REST v intervalu (15 s intraday, 60 s denní) –
   websocket Alpaca jiné než minutové bary neposílá. Všechny 1m grafy
   (i ve více záložkách) sdílí jedno websocket spojení, protože bezplatný
@@ -170,6 +208,9 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
         port: 7497
         client_id: 30
 
+- Forex IDEALPRO: dotaz typu `EURUSD`, `EUR/USD` nebo jen `EUR` nabídne
+  páry IBKR (symbol `EUR.USD`, data MIDPOINT, bez objemu) – návrhy fungují
+  i bez běžící TWS, data se pak stahují z TWS.
 - Historie, vyhledávání (matching symbols) i ceny watchlistu jdou přes TWS;
   živá data se dotazují v intervalu (15 s intraday, 60 s denní), proto má
   zdroj štítek „zpožděno“. Když TWS neběží, zdroj to nahlásí a ostatní zdroje
@@ -186,17 +227,18 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
 - `tickview/config.py` – cesty k runtime datům, cache DB, načítání
   konfigurace `config.yaml` a zápis sekce se zachováním komentářů
 - `tickview/providers/base.py` – rozhraní DataProvider (search/history/stream/
-  tickers/close), Candle, StreamStatus (výpadek/obnovení streamu),
-  SymbolInfo, kanonické timeframy, omezovač dotazů a společná smyčka pollingu
-  živých dat
+  tickers/describe/close, pásmo burzy, hlavní seance), Candle, StreamStatus
+  (výpadek/obnovení streamu), SymbolInfo, kanonické timeframy, skládání
+  2m/10m z kratších svíček (historie i živě), omezovač dotazů a společná
+  smyčka pollingu živých dat
 - `tickview/providers/binance.py` – zdroj Binance: vyhledání symbolů + historie
   přes veřejný REST, živý websocket stream, omezovač dotazů, exponenciální
   backoff po 429
 - `tickview/providers/yahoo.py` – zdroj Yahoo Finance (yfinance): akcie, ETF,
   indexy, forex; historie v to_thread, živá aktualizace pollingem
 - `tickview/providers/ibkr.py` – zdroj Interactive Brokers (TWS API, ib_async):
-  americké akcie; napojení na TWS 127.0.0.1:7497, clientId 30 (při obsazení
-  další), polling živých dat
+  americké akcie a forex IDEALPRO; napojení na TWS 127.0.0.1:7497, clientId
+  30 (při obsazení další), polling živých dat
 - `tickview/providers/alpaca.py` – volitelný zdroj Alpaca (americké akcie):
   historie feed=iex, sdílený živý websocket IEX (1m) / polling (delší
   timeframy), aktivace po zadání klíčů
@@ -204,19 +246,24 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
 - `tickview/logic/cache.py` – SQLite cache svíček, nastavení, kreseb,
   watchlistu a evidence stažených intervalů; skládání historie z cache a sítě
   (ze sítě stahuje jen chybějící úseky)
-- `tickview/logic/indicators.py` – výpočet SMA/EMA/BB/RSI/MACD přes pandas-ta,
-  payload overlay čar a panelů pro graf, kontrola parametrů a načtení
-  uložených indikátorů
+- `tickview/logic/indicators.py` – definice (kategorie, popis, parametry)
+  a výpočet 28 indikátorů přes pandas-ta, payload overlay čar, panelů
+  a skupin legendy pro graf, kontrola parametrů a načtení uložených indikátorů
+- `tickview/logic/sessions.py` – filtr hlavní obchodní seance (RTH) a seznam
+  časových pásem pro nabídku
 - `tickview/ui/lightweight_chart.py` – vlastní komponenta NiceGUI obalující
   Lightweight Charts (init, výměna dat, inkrementální svíčka, motiv,
   indikátory, kreslení, fronta událostí z grafu)
 - `tickview/ui/main_window.py` – hlavní stránka: vyhledání symbolu, timeframy,
-  watchlist, indikátory, lišta kreslení, živý stream, dialogy, stavová lišta
+  watchlist, nabídka a Settings indikátorů, lišta kreslení, Settings kreseb
+  a grafu, živý stream, stavová lišta se seancí a časovým pásmem
 - `tickview/ui/static/lightweight_chart.js` – JS komponenta grafu (svíčky,
-  objem, OHLC legenda, motivy, inkrementální update, donačítání historie,
-  panely indikátorů, kreslicí nástroje na překryvném canvasu)
+  objem, nadpis a legenda ve stylu TradingView, motivy, časové pásmo,
+  inkrementální update, donačítání historie, panely indikátorů, kontextová
+  menu, kreslicí nástroje na překryvném canvasu)
 - `tickview/ui/static/style.css` – styly UI
 - `tickview/ui/static/lightweight-charts.standalone.production.js` – vendored
   knihovna TradingView Lightweight Charts 4.2.3 (licence Apache-2.0)
 - `tests/` – unit testy logiky (cache, indikátory, polling, omezovač dotazů,
-  konfigurace); spuštění `python -m unittest`
+  konfigurace, skládání timeframů, seance, časová pásma, forex);
+  spuštění `python -m unittest`

@@ -17,9 +17,10 @@ class LightweightChart(ui.element):
     Parametry:
         dark: počáteční motiv grafu.
         on_ready: async callback volaný po inicializaci grafu v prohlížeči.
+        show_volume: zda zobrazit objem (Settings grafu).
     """
 
-    def __init__(self, dark: bool = True, on_ready=None) -> None:
+    def __init__(self, dark: bool = True, on_ready=None, show_volume: bool = True) -> None:
         super().__init__("div")
         self._js_id = f"tickview-chart-{uuid.uuid4().hex[:8]}"
         # JS graf hledá kontejner přes data-chart-id (vlastní id prvku necháme
@@ -27,6 +28,7 @@ class LightweightChart(ui.element):
         self.props(f"data-chart-id={self._js_id}")
         self.classes("chart-container")
         self._dark = dark
+        self._show_volume = show_volume
         self._on_ready = on_ready
         # Graf inicializujeme až po prvním vykreslení stránky v prohlížeči
         ui.timer(0.1, self._init_in_browser, once=True)
@@ -49,7 +51,7 @@ class LightweightChart(ui.element):
             return await ui.run_javascript("return " + self._js(method, args) + ";")
 
     async def _init_in_browser(self) -> None:
-        self._call("init", {"dark": self._dark})
+        self._call("init", {"dark": self._dark, "showVolume": self._show_volume})
         if self._on_ready:
             await self._on_ready()
 
@@ -109,9 +111,17 @@ class LightweightChart(ui.element):
         """Nastaví barvu nových kreseb."""
         self._call("setDrawingColor", color)
 
-    async def set_magnet(self, enabled: bool) -> None:
-        """Zapne/vypne magnet (přichytávání k OHLC svíček)."""
-        self._call("setMagnet", enabled)
+    async def set_magnet(self, mode: str) -> None:
+        """Nastaví režim magnetu: "off", "weak" (jen v blízkosti OHLC) nebo "strong" (vždy na OHLC)."""
+        self._call("setMagnet", mode)
+
+    def set_symbol_info(self, info: dict) -> None:
+        """Nastaví nadpis tickeru v legendě: {"symbol", "name", "exchange", "timeframe", "source"}."""
+        self._call("setSymbolInfo", info)
+
+    def set_legend_status(self, status: str) -> None:
+        """Stav dat v nadpisu legendy: "live", "delayed" nebo "none"."""
+        self._call("setLegendStatus", status)
 
     async def set_keep_tool(self, enabled: bool) -> None:
         """Zapne/vypne režim tužky (nástroj zůstává aktivní i po nakreslení)."""
@@ -133,9 +143,22 @@ class LightweightChart(ui.element):
         """Přidá sticker (emoji) na pozici kliku (po výběru v dialogu)."""
         self._call("addSticker", int(time_s), float(price), emoji)
 
-    async def update_text(self, drawing_id: int, text: str) -> None:
-        """Aktualizuje text existující textové kresby."""
-        self._call("updateText", int(drawing_id), text)
+    def apply_drawing_settings(self, drawing_id: int, settings: dict) -> None:
+        """Použije nastavení kresby z dialogu Settings: {"color", "text", "options"}."""
+        self._call("applyDrawingSettings", int(drawing_id), settings)
+
+    def set_timezone(self, setting: str, exchange_timezone: str) -> None:
+        """Časové pásmo zobrazení: "local", "exchange", "UTC" nebo IANA název.
+
+        Parametry:
+            setting: volba uživatele.
+            exchange_timezone: IANA pásmo burzy aktuálního instrumentu (pro "exchange").
+        """
+        self._call("setTimezone", setting, exchange_timezone)
+
+    def set_volume_visible(self, visible: bool) -> None:
+        """Zapne/vypne zobrazení objemu v grafu."""
+        self._call("setVolumeVisible", visible)
 
     async def assign_drawing_id(self, local_id: int, drawing_id: int) -> None:
         """Přiřadí nově uložené kresbě její id z databáze (podle lokálního id z grafu)."""

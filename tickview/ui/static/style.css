@@ -122,24 +122,158 @@
   position: relative;
 }
 
-/* Legenda s OHLC hodnotami jako překryv nad grafem */
+/* Legenda jako překryv nad grafem (styl TradingView): nadpis tickeru + OHLC,
+   objem a řádky indikátorů; myš propouští do grafu kromě řádků indikátorů */
 .lwchart-legend {
   position: absolute;
-  top: 8px;
-  left: 12px;
+  top: 6px;
+  left: 10px;
   z-index: 10;
-  font-size: 12px;
-  line-height: 1.6;
+  font-size: 13px;
+  line-height: 1.5;
   pointer-events: none;
+  max-width: calc(100% - 90px);
+}
+
+.legend-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  column-gap: 8px;
   white-space: nowrap;
 }
 
-.lwchart-legend .ohlc-item {
-  margin-right: 10px;
+/* Nadpis tickeru: „Název · timeframe · burza“ */
+.legend-title {
+  font-size: 16px;
+  font-weight: 500;
 }
 
-.lwchart-legend .ohlc-value {
+/* Tečka stavu dat (živě / zpožděno / bez dat) */
+.legend-status {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-right: 4px;
+  pointer-events: auto;
+}
+
+.legend-status.live {
+  background: #26a69a;
+  box-shadow: 0 0 0 3px rgba(38, 166, 154, 0.25);
+}
+
+.legend-status.delayed {
+  background: #ff9800;
+  box-shadow: 0 0 0 3px rgba(255, 152, 0, 0.25);
+}
+
+.legend-status.none {
+  background: #787b86;
+}
+
+.legend-ohlc {
+  display: inline-flex;
+  flex-wrap: wrap;
+  column-gap: 8px;
+}
+
+/* Řádek objemu: jen v šířce obsahu a s myší (tlačítka skrýt / Settings) */
+.legend-volume {
+  display: inline-flex;
+  padding: 0 4px;
+  margin-left: -4px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  pointer-events: auto;
+}
+
+.legend-volume:hover {
+  border-color: rgba(128, 128, 128, 0.45);
+}
+
+.legend-volume:hover .legend-ind-actions {
+  visibility: visible;
+}
+
+.legend-volume.hidden {
+  display: none;
+}
+
+.legend-key {
+  margin-right: 2px;
+}
+
+.legend-val {
   font-variant-numeric: tabular-nums;
+}
+
+.legend-val.up {
+  color: #26a69a;
+}
+
+.legend-val.down {
+  color: #ef5350;
+}
+
+/* Řádky indikátorů v legendě a v titulcích panelů */
+.legend-indicators {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  margin-top: 2px;
+}
+
+.legend-ind {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px;
+  margin-left: -4px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font-size: 12px;
+  pointer-events: auto;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.legend-ind:hover {
+  border-color: rgba(128, 128, 128, 0.45);
+}
+
+.legend-ind-hidden .legend-ind-title,
+.legend-ind-hidden .legend-ind-val {
+  opacity: 0.45;
+}
+
+.legend-ind-val {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Tlačítka řádku (oko, nastavení, odebrání) jsou vidět při najetí myší */
+.legend-ind-actions {
+  display: inline-flex;
+  gap: 2px;
+  visibility: hidden;
+}
+
+.legend-ind:hover .legend-ind-actions,
+.legend-ind-hidden .legend-ind-actions {
+  visibility: visible;
+}
+
+.legend-ind-btn {
+  font-size: 16px !important;
+  padding: 1px;
+  border-radius: 3px;
+  cursor: pointer;
+  color: #808080;
+}
+
+.legend-ind-btn:hover {
+  background: rgba(128, 128, 128, 0.25);
+  color: inherit;
 }
 
 /* Barvy legendy podle motivu (Quasar přepíná třídy body--dark/light) */
@@ -151,41 +285,9 @@
   color: #131722;
 }
 
-/* Změna svíčky v legendě (třída up/down je na položce, ne na celé legendě) */
-.lwchart-legend .ohlc-item.up {
-  color: #26a69a;
-}
-
-.lwchart-legend .ohlc-item.down {
-  color: #ef5350;
-}
-
 /* Timeframy přesně tak, jak je definuje zdroj (bez transformace na velká písmena) */
 .timeframes .q-btn {
   text-transform: none;
-}
-
-/* Lišta aktivních indikátorů pod horní lištou */
-.indicator-bar {
-  min-height: 0;
-  padding: 2px 12px;
-  gap: 6px !important;
-  align-items: center;
-  flex-wrap: wrap;
-  border-bottom: 1px solid rgba(128, 128, 128, 0.25);
-}
-
-.indicator-bar.hidden {
-  display: none;
-}
-
-.indicator-label {
-  font-size: 12px;
-  color: #808080;
-}
-
-.indicator-chip {
-  font-size: 12px;
 }
 
 /* Panely indikátorů (RSI/MACD) pod hlavním grafem */
@@ -196,7 +298,11 @@
   border-top: 1px solid rgba(128, 128, 128, 0.25);
 }
 
-/* Výška panelů podle typu indikátoru */
+/* Výška panelů podle typu indikátoru (výchozí pro oscilátory, MACD vyšší) */
+.lwchart-pane {
+  height: 120px;
+}
+
 .lwchart-pane-rsi {
   height: 110px;
 }
@@ -209,6 +315,7 @@
   font-size: 11px;
   line-height: 1.4;
   padding: 2px 12px 0;
+  min-height: 20px;
 }
 
 .lwchart-pane-host {
@@ -469,6 +576,132 @@
   font-size: 18px !important;
 }
 
+/* Nápověda pod položkami flyoutu (např. Ctrl u magnetu) */
+.tool-flyout-hint {
+  padding: 6px 10px 4px;
+  font-size: 11px;
+  color: #808080;
+  border-top: 1px solid rgba(128, 128, 128, 0.25);
+  white-space: normal;
+  max-width: 300px;
+}
+
+/* Nabídka indikátorů ve stylu TradingView */
+.ind-dialog {
+  width: 760px;
+  max-width: 95vw;
+  height: 560px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+}
+
+.ind-dialog-header {
+  align-items: center;
+}
+
+.ind-dialog-title {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.ind-dialog-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 12px !important;
+  flex-wrap: nowrap;
+  align-items: stretch;
+}
+
+.ind-categories {
+  width: 190px;
+  min-width: 190px;
+  gap: 2px !important;
+  border-right: 1px solid rgba(128, 128, 128, 0.25);
+  padding-right: 8px;
+  overflow-y: auto;
+}
+
+.ind-cat {
+  padding: 7px 10px;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.ind-cat:hover {
+  background: rgba(128, 128, 128, 0.15);
+}
+
+.ind-cat.active {
+  background: rgba(41, 98, 255, 0.18);
+  color: #2962ff;
+  font-weight: 600;
+}
+
+.ind-list {
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 2px !important;
+  overflow-y: auto;
+  flex-wrap: nowrap;
+}
+
+.ind-item {
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 8px !important;
+  padding: 6px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.ind-item:hover {
+  background: rgba(41, 98, 255, 0.12);
+}
+
+.ind-item-active {
+  cursor: default;
+}
+
+.ind-item-text {
+  gap: 0 !important;
+  min-width: 0;
+}
+
+.ind-item-head {
+  gap: 8px !important;
+  align-items: baseline;
+  flex-wrap: nowrap;
+}
+
+.ind-item-title {
+  font-size: 14px;
+}
+
+.ind-item-abbr {
+  font-size: 11px;
+  color: #808080;
+}
+
+.ind-item-desc {
+  font-size: 12px;
+  color: #808080;
+}
+
+.ind-item-cat {
+  font-size: 11px;
+  color: #808080;
+  white-space: nowrap;
+}
+
+.ind-empty {
+  padding: 16px;
+  color: #808080;
+}
+
 /* Emoji stickers v dialogu */
 .emoji-row {
   flex-wrap: wrap;
@@ -512,18 +745,46 @@
   color: #131722;
 }
 
-.drawing-contextmenu-item:hover {
-  background: rgba(239, 83, 80, 0.18);
+/* Stavová lišta: zprávy vlevo, seance a hodiny s časovým pásmem vpravo */
+.statusbar-row {
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 4px !important;
+  padding: 0 8px 0 16px;
+  border-top: 1px solid rgba(128, 128, 128, 0.25);
 }
 
-/* Stavová lišta */
 .statusbar {
-  padding: 4px 16px;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px 0;
   font-size: 12px;
   color: #808080;
-  border-top: 1px solid rgba(128, 128, 128, 0.25);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .statusbar.error {
   color: #ef5350;
+}
+
+.statusbar-btn {
+  font-size: 12px;
+  min-height: 24px;
+  padding: 0 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.statusbar-menu-header {
+  padding: 8px 16px 4px;
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: #808080;
+}
+
+/* Zvolená položka nabídky (seance, časové pásmo) */
+.menu-item-active {
+  background: rgba(41, 98, 255, 0.18);
+  color: #2962ff;
 }

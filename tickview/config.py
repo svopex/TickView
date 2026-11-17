@@ -17,8 +17,9 @@ import yaml
 # Kořen projektu (složka o úroveň výš nad balíkem tickview)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-# Runtime data (cache databáze) nejsou verzovány
-DATA_DIR = PROJECT_ROOT / "data"
+# Runtime data (cache databáze) nejsou verzovány; proměnná prostředí
+# TICKVIEW_DATA_DIR umožní spustit aplikaci nad jinou složkou (testy, druhý profil)
+DATA_DIR = Path(os.environ.get("TICKVIEW_DATA_DIR") or PROJECT_ROOT / "data")
 DB_PATH = DATA_DIR / "tickview.db"
 
 # Konfigurace v kořenu projektu (šablona je config.example.yaml)

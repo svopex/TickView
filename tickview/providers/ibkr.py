@@ -13,10 +13,11 @@ import time as time_module
 from datetime import datetime, timezone
 from typing import AsyncIterator, Optional
 
-from ib_async import IB, Stock
+from ib_async import IB, Contract, Forex, Stock
 
 from tickview.config import load_config
 from tickview.providers.base import (
+    US_EQUITY_SESSION,
     Candle,
     DataProvider,
     RateLimiter,
@@ -35,10 +36,74 @@ CLIENT_ID_ATTEMPTS = 5
 # Jak často se obnovují ceny watchlistu (throttle kvůli TWS pacing)
 TICKER_TTL_S = 30.0
 
+# Měny forexu IDEALPRO v pořadí, ve kterém je IB řadí v páru (dřívější = základní
+# měna: EUR.USD, GBP.USD, USD.JPY, EUR.CZK…); slouží k sestavení páru z dotazu
+FOREX_CURRENCIES = [
+    "EUR", "GBP", "AUD", "NZD", "USD", "CAD", "CHF", "NOK", "SEK", "DKK", "CZK",
+    "PLN", "HUF", "TRY", "ZAR", "MXN", "SGD", "HKD", "CNH", "ILS", "JPY",
+]
+# České názvy měn pro popisky návrhů a nadpis grafu
+CURRENCY_NAMES = {
+    "EUR": "Euro", "GBP": "Britská libra", "AUD": "Australský dolar", "NZD": "Novozélandský dolar",
+    "USD": "Americký dolar", "CAD": "Kanadský dolar", "CHF": "Švýcarský frank", "NOK": "Norská koruna",
+    "SEK": "Švédská koruna", "DKK": "Dánská koruna", "CZK": "Česká koruna", "PLN": "Polský zlotý",
+    "HUF": "Maďarský forint", "TRY": "Turecká lira", "ZAR": "Jihoafrický rand", "MXN": "Mexické peso",
+    "SGD": "Singapurský dolar", "HKD": "Hongkongský dolar", "CNH": "Čínský jüan (offshore)",
+    "ILS": "Izraelský šekel", "JPY": "Japonský jen",
+}
+# Hlavní měny, se kterými se nabízí páry při dotazu na jednu měnu (např. "EUR")
+FOREX_MAJORS = ["EUR", "USD", "GBP", "JPY", "CHF", "AUD", "CAD", "NZD", "CZK"]
+# Kolik forexových návrhů se nabídne nejvýš
+FOREX_SUGGESTIONS = 6
+
+
+def forex_name(base: str, quote: str) -> str:
+    """Český název páru: "Euro / Americký dolar"."""
+    return f"{CURRENCY_NAMES[base]} / {CURRENCY_NAMES[quote]}"
+
+
+def forex_pair(first: str, second: str) -> str:
+    """Sestaví symbol páru ve tvaru IB ("EUR.USD") se základní měnou podle konvence."""
+    a, b = sorted((first, second), key=FOREX_CURRENCIES.index)
+    return f"{a}.{b}"
+
+
+def forex_parts(symbol: str) -> Optional[tuple[str, str]]:
+    """Rozloží symbol "EUR.USD" na (základní, kótovaná měna); jiný symbol → None."""
+    base, dot, quote = symbol.partition(".")
+    if dot and base in CURRENCY_NAMES and quote in CURRENCY_NAMES and base != quote:
+        return base, quote
+    return None
+
+
+def forex_suggestions(query: str) -> list[str]:
+    """Forexové páry odpovídající dotazu (EURUSD, EUR/USD, EUR.USD, EUR, EURU…).
+
+    Dotaz se zbaví oddělovačů; šest písmen dvou známých měn = konkrétní pár,
+    jinak se nabídnou páry hlavních měn, jejichž zápis (v obou pořadích) dotaz
+    začíná – např. "EUR" → EUR.USD, EUR.GBP, …
+    """
+    text = "".join(ch for ch in query.upper() if ch.isalpha())
+    if len(text) < 3 or text[:3] not in CURRENCY_NAMES:
+        return []
+    if len(text) == 6 and text[3:] in CURRENCY_NAMES and text[:3] != text[3:]:
+        return [forex_pair(text[:3], text[3:])]
+    if len(text) > 6:
+        return []
+    first = text[:3]
+    pairs: list[str] = []
+    for other in FOREX_MAJORS:
+        if other != first and (first + other).startswith(text):
+            pairs.append(forex_pair(first, other))
+    return pairs[:FOREX_SUGGESTIONS]
+
+
 # Mapování kanonických timeframeů na barSizeSetting TWS API
 BAR_SIZES = {
     "1m": "1 min",
+    "2m": "2 mins",
     "5m": "5 mins",
+    "10m": "10 mins",
     "15m": "15 mins",
     "1h": "1 hour",
     "4h": "4 hours",
@@ -67,6 +132,8 @@ class IbkrProvider(DataProvider):
         self._connect_lock = asyncio.Lock()
         # Cooldown po neúspěšném připojení (monotonic čas posledního selhání)
         self._last_fail = 0.0
+        # Názvy a burzy instrumentů pro nadpis grafu (symbol -> info)
+        self._describe_cache: dict[str, dict] = {}
         # Cache cen pro watchlist (symbol -> (čas, data))
         self._ticker_cache: dict[str, tuple[float, dict]] = {}
         # Omezovač dotazů kvůli TWS pacing limitům
@@ -131,9 +198,51 @@ class IbkrProvider(DataProvider):
             self._ib = None
 
     @staticmethod
-    def _stock(symbol: str) -> Stock:
-        # Kontrakt americké akcie/ETF na SMART burze v USD
+    def _contract(symbol: str) -> Contract:
+        """Kontrakt podle symbolu: "EUR.USD" = forex IDEALPRO, jinak americká
+        akcie/ETF na SMART burze v USD."""
+        if parts := forex_parts(symbol):
+            return Forex(parts[0] + parts[1])
         return Stock(symbol, "SMART", "USD")
+
+    @staticmethod
+    def _forex_label(pair: str) -> str:
+        # Popisek návrhu forexového páru: "EUR.USD – Euro / Americký dolar (Forex)"
+        return f"{pair} – {forex_name(*pair.split('.'))} (Forex)"
+
+    async def describe(self, symbol: str) -> dict:
+        """Název a burza pro nadpis grafu (forex lokálně, akcie z contract details TWS)."""
+        if parts := forex_parts(symbol):
+            return {"name": forex_name(*parts), "exchange": "IDEALPRO"}
+        if symbol in self._describe_cache:
+            return self._describe_cache[symbol]
+        ib = await self._ensure_connected()
+        details = await ib.reqContractDetailsAsync(self._contract(symbol))
+        if not details:
+            return await super().describe(symbol)
+        detail = details[0]
+        info = {
+            "name": detail.longName or symbol,
+            "exchange": detail.contract.primaryExchange or detail.contract.exchange or self.name,
+        }
+        self._describe_cache[symbol] = info
+        return info
+
+    def exchange_timezone(self, symbol: str) -> str:
+        """Americké akcie i forex IDEALPRO se v TWS řídí newyorským časem."""
+        return US_EQUITY_SESSION[0]
+
+    def regular_session(self, symbol: str) -> Optional[tuple[str, str, str]]:
+        """Akcie: historie se stahuje i mimo hlavní hodiny (useRTH=False), RTH
+        je 9:30–16:00 New York; forex obchoduje nepřetržitě."""
+        if forex_parts(symbol):
+            return None
+        return US_EQUITY_SESSION
+
+    @staticmethod
+    def _what_to_show(symbol: str) -> str:
+        # Forex nemá obchody (TRADES) – TWS u něj nabízí jen MIDPOINT/BID/ASK
+        return "MIDPOINT" if forex_parts(symbol) else "TRADES"
 
     @staticmethod
     def _duration(delta_seconds: int) -> str:
@@ -147,25 +256,45 @@ class IbkrProvider(DataProvider):
         return f"{days} D"
 
     async def search(self, query: str, limit: int = 30) -> list[SymbolInfo]:
-        """Vyhledá akcie/ETF přes TWS matching symbols (prefixová shoda)."""
+        """Vyhledá forexové páry (podle dotazu, bez TWS) a akcie/ETF přes TWS
+        matching symbols (prefixová shoda).
+
+        Forexové páry se nabízí i bez běžící TWS; chyba připojení se ohlásí
+        jen tehdy, když dotaz žádnému páru neodpovídá.
+        """
         q = query.strip().upper()
         if not q:
             # Prázdný dotaz: oblíbené tickery pro rychlý start
             popular = ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "SPY"]
             return [SymbolInfo(self.id, symbol, symbol) for symbol in popular]
-        ib = await self._ensure_connected()
-        await self._limiter.acquire()
+        results: list[SymbolInfo] = [
+            SymbolInfo(self.id, pair, self._forex_label(pair)) for pair in forex_suggestions(q)
+        ]
         try:
-            descriptions = await ib.reqMatchingSymbolsAsync(q)
+            ib = await self._ensure_connected()
+            await self._limiter.acquire()
+            descriptions = await ib.reqMatchingSymbolsAsync(q) or []
         except Exception:
+            # TWS neběží: forexové návrhy stačí; bez nich chybu ohlásíme výš
+            if results:
+                return results
+            if self._ib is None or not self._ib.isConnected():
+                raise
             # Neznámý dotaz TWS občas ukončí chybou – bereme jako prázdný výsledek
             return []
-        results: list[SymbolInfo] = []
-        seen: set[str] = set()
+        seen: set[str] = {info.symbol for info in results}
         for description in descriptions:
             contract = description.contract
-            # Jen akcie/ETF; duplicity napříč burzami sloučíme podle symbolu
-            if getattr(contract, "secType", "") != "STK":
+            sec_type = getattr(contract, "secType", "")
+            if sec_type == "CASH":
+                # Forex z TWS převedeme na tvar "EUR.USD"
+                pair = f"{contract.symbol}.{contract.currency}"
+                if forex_parts(pair) and pair not in seen:
+                    seen.add(pair)
+                    results.append(SymbolInfo(self.id, pair, self._forex_label(pair)))
+                continue
+            # Jinak jen akcie/ETF; duplicity napříč burzami sloučíme podle symbolu
+            if sec_type != "STK":
                 continue
             symbol = contract.symbol
             if not symbol or symbol in seen:
@@ -181,9 +310,10 @@ class IbkrProvider(DataProvider):
     async def history(
         self, symbol: str, timeframe: str, start_ms: int, end_ms: int
     ) -> list[Candle]:
-        """Stáhne historii svíček z TWS (TRADES, včetně mimo hlavní hodiny)."""
+        """Stáhne historii svíček z TWS (akcie TRADES, forex MIDPOINT; včetně
+        obchodování mimo hlavní hodiny)."""
         ib = await self._ensure_connected()
-        contract = self._stock(symbol)
+        contract = self._contract(symbol)
         # qualifyContracts doplní conId a ověří, že kontrakt existuje
         contract = (await ib.qualifyContractsAsync(contract))[0]
         delta_seconds = max(60, (end_ms - start_ms) // 1000)
@@ -197,7 +327,7 @@ class IbkrProvider(DataProvider):
             endDateTime=end_dt,
             durationStr=duration,
             barSizeSetting=self.timeframes[timeframe],
-            whatToShow="TRADES",
+            whatToShow=self._what_to_show(symbol),
             useRTH=False,
             formatDate=2,
             timeout=20,
@@ -223,7 +353,8 @@ class IbkrProvider(DataProvider):
                     high=float(bar.high),
                     low=float(bar.low),
                     close=float(bar.close),
-                    volume=float(bar.volume or 0),
+                    # Forex (MIDPOINT) objem nemá – TWS posílá -1
+                    volume=max(0.0, float(bar.volume or 0)),
                 )
             )
         # TWS může vrátit data mimo požadovaný interval – ořízneme a seřadíme
@@ -247,13 +378,13 @@ class IbkrProvider(DataProvider):
                 continue
             try:
                 ib = await self._ensure_connected()
-                contract = (await ib.qualifyContractsAsync(self._stock(symbol)))[0]
+                contract = (await ib.qualifyContractsAsync(self._contract(symbol)))[0]
                 bars = await ib.reqHistoricalDataAsync(
                     contract,
                     endDateTime="",
                     durationStr="3 D",
                     barSizeSetting="1 day",
-                    whatToShow="TRADES",
+                    whatToShow=self._what_to_show(symbol),
                     useRTH=False,
                     formatDate=2,
                 )

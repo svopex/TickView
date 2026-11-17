@@ -10,15 +10,24 @@ import yaml
 
 from tickview.config import update_config_section
 from tickview.logic.cache import KlineCache, fetch_history, uncovered_ranges
-from tickview.logic.indicators import compute_indicators, load_saved_indicators, normalize_params
+from tickview.logic.indicators import (
+    INDICATOR_DEFS,
+    compute_indicators,
+    load_saved_indicators,
+    new_indicator,
+    normalize_params,
+)
+from tickview.logic.sessions import filter_session, timezone_options, utc_offset_label
 from tickview.providers.base import (
     TIMEFRAME_MS,
     Candle,
     RateLimiter,
     StreamStatus,
+    aggregate_candles,
     poll_latest_candles,
     utc_now_ms,
 )
+from tickview.providers.ibkr import forex_parts, forex_suggestions
 
 
 def make_candle(open_time: int, close: float = 1.0) -> Candle:
@@ -125,7 +134,30 @@ class IndicatorsTest(unittest.TestCase):
     def test_short_history_skips_indicators(self) -> None:
         candles = [make_candle(i * 60_000) for i in range(10)]
         payload = compute_indicators(self.SPECS, candles)
-        self.assertEqual(payload, {"overlays": [], "panes": []})
+        self.assertEqual(payload["overlays"], [])
+        self.assertEqual(payload["panes"], [])
+        # Indikátory bez dat zůstanou v legendě (lze je nastavit / odebrat)
+        self.assertEqual([group["id"] for group in payload["groups"]], ["a", "b", "c", "d"])
+        self.assertTrue(all(group["pane"] is None for group in payload["groups"]))
+
+    def test_all_indicators_compute(self) -> None:
+        # Každý definovaný indikátor dá nad dostatečnou historií aspoň jednu sérii
+        candles = [make_candle(i * 60_000, close=10 + (i % 11) * 0.3) for i in range(300)]
+        specs = [new_indicator(kind) for kind in INDICATOR_DEFS]
+        payload = compute_indicators(specs, candles)
+        drawn = {overlay["group"] for overlay in payload["overlays"]} | {pane["group"] for pane in payload["panes"]}
+        self.assertEqual(drawn, {spec["id"] for spec in specs})
+        for pane in payload["panes"]:
+            for series in pane["series"]:
+                self.assertEqual(len(series["data"]), len(candles))
+
+    def test_hidden_and_color_in_groups(self) -> None:
+        candles = [make_candle(i * 60_000, close=1 + (i % 7) * 0.1) for i in range(100)]
+        spec = {"id": "x", "kind": "sma", "params": {"length": 5}, "visible": False, "color": "#123456"}
+        payload = compute_indicators([spec], candles)
+        self.assertEqual(payload["groups"][0]["visible"], False)
+        self.assertEqual(payload["overlays"][0]["color"], "#123456")
+        self.assertEqual(payload["groups"][0]["title"], "SMA 5")
 
     def test_series_keep_candle_count(self) -> None:
         candles = [make_candle(i * 60_000, close=1 + (i % 7) * 0.1) for i in range(100)]
@@ -144,6 +176,7 @@ class IndicatorsTest(unittest.TestCase):
             ("sma", {"length": 2.5}),
             ("bb", {"length": 20, "std": -1}),
             ("macd", {"fast": 26, "slow": 12, "signal": 9}),
+            ("ao", {"fast": 34, "slow": 5}),
         ]:
             with self.assertRaises(ValueError):
                 normalize_params(kind, values)
@@ -151,9 +184,89 @@ class IndicatorsTest(unittest.TestCase):
     def test_load_saved_indicators_skips_invalid(self) -> None:
         raw = '[{"id": "x", "kind": "ema", "params": {"length": 50}}, {"kind": "nope"}, 5]'
         self.assertEqual(
-            load_saved_indicators(raw), [{"id": "x", "kind": "ema", "params": {"length": 50}}]
+            load_saved_indicators(raw),
+            [{"id": "x", "kind": "ema", "params": {"length": 50}, "visible": True}],
         )
         self.assertEqual(load_saved_indicators("not json"), [])
+        # Viditelnost a platná vlastní barva se zachovají, neplatná barva ne
+        raw = '[{"id": "y", "kind": "rsi", "params": {}, "visible": false, "color": "#abcdef"},' \
+            ' {"id": "z", "kind": "rsi", "params": {}, "color": "red"}]'
+        loaded = load_saved_indicators(raw)
+        self.assertEqual(loaded[0]["visible"], False)
+        self.assertEqual(loaded[0]["color"], "#abcdef")
+        self.assertNotIn("color", loaded[1])
+
+
+class AggregationTest(unittest.TestCase):
+    """Skládání delších timeframů (2m, 10m) z kratších svíček."""
+
+    def test_aggregate_candles(self) -> None:
+        candles = [
+            Candle(0, 1, 3, 0.5, 2, 10),
+            Candle(60_000, 2, 4, 1.5, 3, 5),
+            Candle(120_000, 3, 3.5, 2.5, 2.8, 1),
+        ]
+        merged = aggregate_candles(list(reversed(candles)), TIMEFRAME_MS["2m"])
+        self.assertEqual([c.open_time for c in merged], [0, 120_000])
+        first = merged[0]
+        self.assertEqual((first.open, first.high, first.low, first.close, first.volume), (1, 4, 0.5, 3, 15))
+        # Vstupní svíčky se nemění (sloučení pracuje s kopiemi)
+        self.assertEqual(candles[0].volume, 10)
+
+
+class SessionsTest(unittest.TestCase):
+    """Filtr hlavní obchodní seance (RTH) a časová pásma."""
+
+    NY_SESSION = ("America/New_York", "09:30", "16:00")
+
+    def test_filter_session_intraday(self) -> None:
+        # Pondělí 16. 11. 2026: 9:25, 9:30, 15:55, 16:00 New York (UTC-5)
+        base = 1794839400_000  # 2026-11-16 14:30 UTC = 9:30 New York
+        times = [base - 300_000, base, base + 385 * 60_000, base + 390 * 60_000]
+        candles = [make_candle(t) for t in times]
+        kept = [c.open_time for c in filter_session(candles, "5m", self.NY_SESSION)]
+        self.assertEqual(kept, [base, base + 385 * 60_000])
+        # 1h svíčka 9:00 se seancí překrývá (9:30–10:00) → zůstává
+        hour = [make_candle(base - 30 * 60_000)]
+        self.assertEqual(len(filter_session(hour, "1h", self.NY_SESSION)), 1)
+        # Denní svíčky a instrumenty bez seance se nefiltrují
+        self.assertEqual(len(filter_session(candles, "1D", self.NY_SESSION)), 4)
+        self.assertEqual(len(filter_session(candles, "5m", None)), 4)
+
+    def test_filter_session_weekend(self) -> None:
+        saturday = 1794839400_000 - 2 * 86_400_000
+        self.assertEqual(filter_session([make_candle(saturday)], "5m", self.NY_SESSION), [])
+
+    def test_timezones(self) -> None:
+        from datetime import datetime, timezone as tz
+
+        winter = datetime(2026, 11, 17, tzinfo=tz.utc)
+        self.assertEqual(utc_offset_label("Europe/Prague", winter), "UTC+1")
+        self.assertEqual(utc_offset_label("America/New_York", winter), "UTC-5")
+        self.assertEqual(utc_offset_label("Asia/Kolkata", winter), "UTC+5:30")
+        self.assertEqual(utc_offset_label("Europe/London", winter), "UTC")
+        options = timezone_options(winter)
+        self.assertEqual(options[0], ("Pacific/Honolulu", "(UTC-10) Honolulu"))
+        self.assertIn(("Europe/Prague", "(UTC+1) Prague"), options)
+
+
+class ForexTest(unittest.TestCase):
+    """Forexové páry IBKR z vyhledávacího dotazu."""
+
+    def test_forex_suggestions(self) -> None:
+        self.assertEqual(forex_suggestions("eurusd"), ["EUR.USD"])
+        self.assertEqual(forex_suggestions("EUR/USD"), ["EUR.USD"])
+        # Obrácené pořadí se převede na konvenci IB (základní měna EUR)
+        self.assertEqual(forex_suggestions("usdeur"), ["EUR.USD"])
+        self.assertEqual(forex_suggestions("usdczk"), ["USD.CZK"])
+        self.assertIn("EUR.GBP", forex_suggestions("EUR"))
+        self.assertEqual(forex_suggestions("AAPL"), [])
+        self.assertEqual(forex_suggestions("EURUSD=X"), [])
+
+    def test_forex_parts(self) -> None:
+        self.assertEqual(forex_parts("EUR.USD"), ("EUR", "USD"))
+        self.assertIsNone(forex_parts("BRK.B"))
+        self.assertIsNone(forex_parts("MSFT"))
 
 
 class ProvidersBaseTest(unittest.IsolatedAsyncioTestCase):

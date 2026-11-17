@@ -40,20 +40,25 @@ class BinanceProvider(DataProvider):
     is_live = True
 
     def __init__(self) -> None:
-        # Mapování kanonických timeframeů na intervaly Binance (Binance umí všechny)
+        # Mapování kanonických timeframeů na intervaly Binance; 2m a 10m Binance
+        # nemá – skládají se z 1m / 5m svíček (hodnota None, viz self.aggregated)
         self.timeframes = {
             "1m": "1m",
+            "2m": None,
             "5m": "5m",
+            "10m": None,
             "15m": "15m",
             "1h": "1h",
             "4h": "4h",
             "1D": "1d",
             "1W": "1w",
         }
+        self.aggregated = {"2m": "1m", "10m": "5m"}
         self._client: Optional[httpx.AsyncClient] = None
         self._limiter = RateLimiter(min_interval=0.15)
         self._symbols: list[SymbolInfo] = []
         self._symbols_loaded_at = 0.0
+        self._pairs: dict[str, tuple] = {}
 
     async def _get_client(self) -> httpx.AsyncClient:
         # Lazy klient – vytvoří se až u prvního dotazu v běžící smyčce
@@ -96,6 +101,8 @@ class BinanceProvider(DataProvider):
         if self._symbols and now - self._symbols_loaded_at < EXCHANGE_INFO_TTL_S:
             return
         data = await self._request("GET", "/api/v3/exchangeInfo")
+        # Základní a kótovaná měna páru pro nadpis grafu ("BTC / USDT")
+        self._pairs = {s["symbol"]: (s.get("baseAsset"), s.get("quoteAsset")) for s in data["symbols"]}
         # Jen aktivní symboly; burza neposkytuje hezké názvy, stačí base/quote
         self._symbols = [
             SymbolInfo(
@@ -108,6 +115,13 @@ class BinanceProvider(DataProvider):
         ]
         self._symbols.sort(key=lambda si: si.symbol)
         self._symbols_loaded_at = now
+
+    async def describe(self, symbol: str) -> dict:
+        """Nadpis grafu: pár jako "BTC / USDT" na burze Binance."""
+        await self._ensure_symbols()
+        base, quote = self._pairs.get(symbol) or (None, None)
+        name = f"{base} / {quote}" if base and quote else symbol
+        return {"name": name, "exchange": self.name}
 
     async def search(self, query: str, limit: int = 30) -> list[SymbolInfo]:
         """Vyhledá páry podle dotazu; hledá prefix i výskyt uvnitř symbolu."""
@@ -133,6 +147,8 @@ class BinanceProvider(DataProvider):
         self, symbol: str, timeframe: str, start_ms: int, end_ms: int
     ) -> list[Candle]:
         """Stáhne svíčky po stránkách (max 1000 na dotaz) přes veřejný REST."""
+        if timeframe in self.aggregated:
+            return await self._aggregated_history(symbol, timeframe, start_ms, end_ms)
         interval = self.timeframes[timeframe]
         step_ms = TIMEFRAME_MS[timeframe]
         candles: list[Candle] = []
@@ -191,7 +207,14 @@ class BinanceProvider(DataProvider):
             for row in data
         }
 
-    async def stream(self, symbol: str, timeframe: str) -> AsyncIterator[StreamItem]:
+    def stream(self, symbol: str, timeframe: str) -> AsyncIterator[StreamItem]:
+        """Živé svíčky přes websocket; složené timeframy (2m, 10m) se skládají
+        z websocketu základního timeframu."""
+        if timeframe in self.aggregated:
+            return self._aggregated_stream(symbol, timeframe)
+        return self._kline_stream(symbol, timeframe)
+
+    async def _kline_stream(self, symbol: str, timeframe: str) -> AsyncIterator[StreamItem]:
         """Živé svíčky přes websocket kline stream s automatickým znovupřipojením.
 
         Po výpadku spojení pošle StreamStatus(connected=False), čeká exponenciálně

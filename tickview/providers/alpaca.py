@@ -16,6 +16,7 @@ import websockets
 
 from tickview.config import load_config
 from tickview.providers.base import (
+    US_EQUITY_SESSION,
     Candle,
     DataProvider,
     FailureLatch,
@@ -47,13 +48,18 @@ class AlpacaProvider(DataProvider):
         # Alpaca umí i 4h svíčky (na rozdíl od Yahoo)
         self.timeframes = {
             "1m": "1Min",
+            "2m": "2Min",
             "5m": "5Min",
+            "10m": "10Min",
             "15m": "15Min",
             "1h": "1Hour",
             "4h": "4Hour",
             "1D": "1Day",
             "1W": "1Week",
         }
+        # Historie 2m je nativní (REST), živá 2m svíčka se ale skládá z minutových
+        # barů websocketu, aby byla skutečně živá
+        self.aggregated = {"2m": "1m"}
         config = load_config().get("alpaca", {})
         self._key = config.get("api_key") or ""
         self._secret = config.get("secret") or ""
@@ -125,6 +131,12 @@ class AlpacaProvider(DataProvider):
             f"{self._endpoint}/assets",
             params={"status": "active", "asset_class": "us_equity"},
         )
+        # Název a burza instrumentů pro nadpis grafu
+        self._asset_meta = {
+            item["symbol"]: {"name": item.get("name") or item["symbol"], "exchange": item.get("exchange") or self.name}
+            for item in data
+            if item.get("symbol")
+        }
         # Popisek: symbol – název (burza); třídíme podle symbolu
         self._assets = sorted(
             (
@@ -139,6 +151,19 @@ class AlpacaProvider(DataProvider):
             key=lambda info: info.symbol,
         )
         self._assets_loaded_at = now
+
+    def exchange_timezone(self, symbol: str) -> str:
+        """Americké akcie – newyorský čas."""
+        return US_EQUITY_SESSION[0]
+
+    def regular_session(self, symbol: str) -> Optional[tuple[str, str, str]]:
+        """Bary Alpaca obsahují i pre-market a after-hours; RTH 9:30–16:00 New York."""
+        return US_EQUITY_SESSION
+
+    async def describe(self, symbol: str) -> dict:
+        """Název firmy a burza ze seznamu instrumentů Alpaca."""
+        await self._ensure_assets()
+        return self._asset_meta.get(symbol) or await super().describe(symbol)
 
     async def search(self, query: str, limit: int = 30) -> list[SymbolInfo]:
         """Vyhledá akcie/ETF podle dotazu v seznamu instrumentů Alpaca."""
@@ -237,11 +262,13 @@ class AlpacaProvider(DataProvider):
         """
         if timeframe == "1m":
             return self._stream_minute_bars(symbol)
+        if timeframe in self.aggregated:
+            return self._aggregated_stream(symbol, timeframe)
         return self._poll_history(symbol, timeframe)
 
     def is_live_for(self, timeframe: str) -> bool:
-        """Živě (websocket) jen 1m; delší timeframy se dotazují pollingem."""
-        return timeframe == "1m"
+        """Živě (websocket) jen 1m a z něj složené 2m; delší timeframy pollingem."""
+        return timeframe == "1m" or self.aggregated.get(timeframe) == "1m"
 
     async def _stream_minute_bars(self, symbol: str) -> AsyncIterator[StreamItem]:
         """Minutové bary (a stavové zprávy) ze sdíleného websocket spojení IEX.

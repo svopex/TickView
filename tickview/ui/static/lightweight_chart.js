@@ -45,12 +45,38 @@ window.TickViewChart = (function () {
     return candle.close >= candle.open ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)';
   }
 
-  // Cena s proměnným počtem desetinných míst podle řádu hodnoty
-  function formatPrice(value) {
+  // Počet desetinných míst cen instrumentu odhadnutý z dat (90. percentil
+  // počtu míst u OHLC posledních svíček, 2–8) – forex 5, akcie 2, krypto různě
+  function detectPriceDecimals(candles) {
+    const counts = [];
+    for (const candle of candles.slice(-300)) {
+      for (const value of [candle.open, candle.high, candle.low, candle.close]) {
+        const text = Number(value).toFixed(8).replace(/0+$/, '');
+        const dot = text.indexOf('.');
+        counts.push(dot < 0 ? 0 : text.length - dot - 1);
+      }
+    }
+    if (!counts.length) return 2;
+    counts.sort((a, b) => a - b);
+    const decimals = counts[Math.floor((counts.length - 1) * 0.9)];
+    return Math.min(8, Math.max(2, decimals));
+  }
+
+  // Formátovače čísel s pevným počtem desetinných míst (cache podle počtu
+  // míst – toLocaleString by Intl.NumberFormat stavěl při každém volání)
+  const numberFormats = new Map();
+
+  function formatFixed(value, digits) {
+    if (!numberFormats.has(digits)) {
+      numberFormats.set(digits, new Intl.NumberFormat('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits }));
+    }
+    return numberFormats.get(digits).format(value);
+  }
+
+  // Cena instrumentu s pevným počtem desetinných míst (legenda, měřič, Fibonacci)
+  function formatInstrumentPrice(s, value) {
     if (!isFinite(value)) return '—';
-    const abs = Math.abs(value);
-    const maxDigits = abs >= 1000 ? 2 : abs >= 1 ? 4 : abs >= 0.01 ? 5 : 8;
-    return value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: maxDigits });
+    return formatFixed(value, s.priceDecimals || 2);
   }
 
   // Objem zkráceně na K/M/B
@@ -62,26 +88,371 @@ window.TickViewChart = (function () {
     return value.toFixed(2);
   }
 
-  // Legenda: OHLC, objem a změna svíčky v procentech
-  function renderLegend(s, bar) {
-    if (!bar) {
-      s.legend.innerHTML = '';
+  // ---------- časové pásmo zobrazení (UTC / burza / místní / město) ----------
+
+  // Pojmenované volby formátování data/času (klíč cache formátovačů)
+  const DATE_OPTIONS = {
+    crosshair: {
+      weekday: 'short', day: 'numeric', month: 'short', year: '2-digit',
+      hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    },
+    year: { year: 'numeric' },
+    month: { month: 'short' },
+    day: { day: 'numeric' },
+    time: { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' },
+    seconds: { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' },
+    offset: { timeZoneName: 'shortOffset' },
+  };
+
+  // Cache formátovačů Intl podle pásma a pojmenovaných voleb (vytváření je drahé)
+  const dateFormatters = new Map();
+
+  // Formátovač data/času pro pásmo; neplatné pásmo → UTC
+  function dateFormatter(timeZone, name) {
+    const key = timeZone + '|' + name;
+    if (!dateFormatters.has(key)) {
+      let formatter;
+      try {
+        formatter = new Intl.DateTimeFormat('cs-CZ', Object.assign({ timeZone: timeZone }, DATE_OPTIONS[name]));
+      } catch (err) {
+        formatter = new Intl.DateTimeFormat('cs-CZ', Object.assign({ timeZone: 'UTC' }, DATE_OPTIONS[name]));
+      }
+      dateFormatters.set(key, formatter);
+    }
+    return dateFormatters.get(key);
+  }
+
+  // Části data v pásmu (weekday, day, month, year, hour, minute, second…)
+  function dateParts(timeZone, seconds, name) {
+    const parts = {};
+    for (const part of dateFormatter(timeZone, name).formatToParts(new Date(seconds * 1000))) {
+      parts[part.type] = part.value;
+    }
+    return parts;
+  }
+
+  // Popisek crosshairu na časové ose: „po 17. lis '26 04:15“ (denní bez času)
+  function formatCrosshairTime(timeZone, time, daily) {
+    const p = dateParts(timeZone, time, 'crosshair');
+    const date = p.weekday + ' ' + p.day + '. ' + p.month + " '" + p.year;
+    return daily ? date : date + '  ' + p.hour + ':' + p.minute;
+  }
+
+  // Popisky značek časové osy podle typu (rok, měsíc, den, čas)
+  function formatTickMark(timeZone, time, type) {
+    const TickMarkType = LightweightCharts.TickMarkType || {};
+    if (type === TickMarkType.Year) return dateParts(timeZone, time, 'year').year;
+    if (type === TickMarkType.Month) return dateParts(timeZone, time, 'month').month;
+    if (type === TickMarkType.DayOfMonth) return dateParts(timeZone, time, 'day').day + '.';
+    const withSeconds = type === TickMarkType.TimeWithSeconds;
+    const p = dateParts(timeZone, time, withSeconds ? 'seconds' : 'time');
+    return p.hour + ':' + p.minute + (withSeconds ? ':' + p.second : '');
+  }
+
+  // Posun pásma ve tvaru „UTC+1“ (jako v TradingView)
+  function utcOffsetLabel(timeZone, date) {
+    const parts = dateFormatter(timeZone, 'offset').formatToParts(date);
+    const name = (parts.find((part) => part.type === 'timeZoneName') || {}).value || 'GMT';
+    const offset = name.replace(/^GMT/, '').replace(/^UTC/, '');
+    return 'UTC' + offset;
+  }
+
+  // Nastaví formátování času grafu podle pásma; denní a týdenní svíčky
+  // (půlnoc UTC) se ukazují vždy v UTC, jinak by spadly na předchozí den
+  function applyTimezone(s) {
+    const daily = s.stepSeconds >= 86400;
+    const zone = daily ? 'UTC' : s.timezone;
+    s.chart.applyOptions({
+      localization: { timeFormatter: (time) => formatCrosshairTime(zone, time, daily) },
+      timeScale: { tickMarkFormatter: (time, type) => formatTickMark(zone, time, type) },
+    });
+    updateClock(s);
+  }
+
+  // Hodiny ve stavové liště: aktuální čas ve zvoleném pásmu + posun
+  function updateClock(s) {
+    const now = new Date();
+    const p = dateParts(s.timezone, now.getTime() / 1000, 'seconds');
+    const text = p.hour + ':' + p.minute + ':' + p.second + ' ' + utcOffsetLabel(s.timezone, now);
+    document.querySelectorAll('.tz-clock-text').forEach((node) => {
+      if (node.textContent !== text) node.textContent = text;
+    });
+  }
+
+  // Zvolí pásmo zobrazení: 'local' (prohlížeč), 'exchange' (burza
+  // instrumentu), 'UTC' nebo IANA název města
+  function setTimezone(id, setting, exchangeTimezone) {
+    const s = state.get(id);
+    if (!s) return;
+    let zone = setting || 'local';
+    if (zone === 'local') zone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    else if (zone === 'exchange') zone = exchangeTimezone || 'UTC';
+    // Neplatné pásmo nevadí – dateFormatter pro něj použije UTC
+    s.timezone = zone;
+    applyTimezone(s);
+  }
+
+  // Vytvoří DOM prvek se třídou a volitelným textem
+  function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  // Tlačítko v řádku legendy (ikona Material); klik pošle událost do Pythonu
+  function legendButton(s, icon, title, event) {
+    const button = el('span', 'material-icons legend-ind-btn', icon);
+    button.title = title;
+    button.addEventListener('click', (e) => {
+      e.stopPropagation();
+      s.finishedQueue.push(event);
+    });
+    return button;
+  }
+
+  // Pravý klik a dvojklik na řádek legendy (menu / Settings)
+  function bindLegendRow(row, onContextMenu, onDoubleClick) {
+    row.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      onContextMenu(event);
+    });
+    row.addEventListener('dblclick', (event) => {
+      event.stopPropagation();
+      onDoubleClick();
+    });
+  }
+
+  // Popisky stavu dat v nadpisu (tečka za názvem, jako v TradingView)
+  const STATUS_TITLES = {
+    live: 'Živá data',
+    delayed: 'Zpožděná data / polling',
+    none: 'Bez živých dat',
+  };
+
+  // Sestaví kostru legendy: nadpis tickeru + OHLC + změna, řádek objemu a
+  // kontejner řádků indikátorů; hodnoty se pak jen přepisují (renderLegend)
+  function buildLegend(s) {
+    const legend = s.legend;
+    legend.innerHTML = '';
+    const els = {};
+    const main = el('div', 'legend-row legend-main');
+    els.title = el('span', 'legend-title');
+    els.status = el('span', 'legend-status none');
+    els.status.title = STATUS_TITLES.none;
+    main.appendChild(els.title);
+    main.appendChild(els.status);
+    const ohlc = el('span', 'legend-ohlc');
+    for (const key of ['O', 'H', 'L', 'C']) {
+      const item = el('span', 'legend-item');
+      item.appendChild(el('span', 'legend-key', key));
+      els[key] = el('span', 'legend-val');
+      item.appendChild(els[key]);
+      ohlc.appendChild(item);
+    }
+    els.change = el('span', 'legend-val legend-change');
+    ohlc.appendChild(els.change);
+    main.appendChild(ohlc);
+    legend.appendChild(main);
+    const volume = el('div', 'legend-row legend-volume');
+    volume.appendChild(el('span', 'legend-key', 'Vol'));
+    els.volume = el('span', 'legend-val');
+    volume.appendChild(els.volume);
+    els.volumeRow = volume;
+    // Ovládání objemu jako u indikátoru: skrýt (vypnout) a Settings grafu
+    const volumeActions = el('span', 'legend-ind-actions');
+    volumeActions.appendChild(legendButton(s, 'visibility_off', 'Skrýt objem', { type: 'volume', visible: false }));
+    volumeActions.appendChild(legendButton(s, 'settings', 'Settings…', { type: 'chart_settings' }));
+    volume.appendChild(volumeActions);
+    bindLegendRow(
+      volume,
+      (event) => showContextMenu(event.clientX, event.clientY, chartMenuItems(s)),
+      () => s.finishedQueue.push({ type: 'chart_settings' })
+    );
+    legend.appendChild(volume);
+    els.indicators = el('div', 'legend-indicators');
+    legend.appendChild(els.indicators);
+    s.legendEls = els;
+    renderLegendTitle(s);
+  }
+
+  // Nadpis tickeru: „Název · timeframe · burza“ (title atribut = symbol a zdroj)
+  function renderLegendTitle(s) {
+    const info = s.symbolInfo;
+    if (!s.legendEls) return;
+    if (!info) {
+      s.legendEls.title.textContent = '';
       return;
     }
+    s.legendEls.title.textContent = [info.name || info.symbol, info.timeframe, info.exchange].filter(Boolean).join(' · ');
+    s.legendEls.title.title = info.symbol + (info.source ? ' · ' + info.source : '');
+  }
+
+  // Index svíčky s daným časem v s.candles (binární hledání); -1 když není
+  function indexOfTime(s, time) {
+    let lo = 0;
+    let hi = s.candles.length - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      const t = s.candles[mid].time;
+      if (t === time) return mid;
+      if (t < time) lo = mid + 1;
+      else hi = mid - 1;
+    }
+    return -1;
+  }
+
+  // Legenda: OHLC svíčky (barva podle směru), změna proti předchozímu závěru,
+  // objem a hodnoty indikátorů v daném čase
+  function renderLegend(s, bar) {
+    const els = s.legendEls;
+    if (!els) return;
+    const fields = [els.O, els.H, els.L, els.C, els.change, els.volume];
+    if (!bar) {
+      fields.forEach((node) => (node.textContent = ''));
+      renderIndicatorValues(s, null);
+      return;
+    }
+    const index = indexOfTime(s, bar.time);
+    const previous = index > 0 ? s.candles[index - 1] : null;
+    const base = previous ? previous.close : bar.open;
+    const change = bar.close - base;
+    const changePct = base ? (change / base) * 100 : 0;
     const dir = bar.close >= bar.open ? 'up' : 'down';
-    const changePct = bar.open ? ((bar.close - bar.open) / bar.open) * 100 : 0;
-    const items = [
-      ['O', formatPrice(bar.open)],
-      ['H', formatPrice(bar.high)],
-      ['L', formatPrice(bar.low)],
-      ['C', formatPrice(bar.close)],
-      ['V', formatVolume(bar.volume)],
+    els.O.textContent = formatInstrumentPrice(s, bar.open);
+    els.H.textContent = formatInstrumentPrice(s, bar.high);
+    els.L.textContent = formatInstrumentPrice(s, bar.low);
+    els.C.textContent = formatInstrumentPrice(s, bar.close);
+    els.change.textContent =
+      (change >= 0 ? '+' : '') + formatInstrumentPrice(s, change) + ' (' + (changePct >= 0 ? '+' : '') + changePct.toFixed(2) + '%)';
+    els.volume.textContent = formatVolume(bar.volume);
+    // Barva hodnot OHLC a objemu podle směru svíčky, změna podle znaménka
+    for (const node of [els.O, els.H, els.L, els.C, els.volume]) {
+      node.classList.toggle('up', dir === 'up');
+      node.classList.toggle('down', dir === 'down');
+    }
+    els.change.classList.toggle('up', change >= 0);
+    els.change.classList.toggle('down', change < 0);
+    renderIndicatorValues(s, bar.time);
+  }
+
+  // Nastaví nadpis tickeru (název, symbol, burza, timeframe, zdroj)
+  function setSymbolInfo(id, info) {
+    const s = state.get(id);
+    if (!s) return;
+    s.symbolInfo = info || null;
+    renderLegendTitle(s);
+  }
+
+  // Stav dat v nadpisu: 'live' (zelená), 'delayed' (oranžová), 'none' (šedá)
+  function setLegendStatus(id, status) {
+    const s = state.get(id);
+    if (!s || !s.legendEls) return;
+    const value = STATUS_TITLES[status] ? status : 'none';
+    s.legendEls.status.className = 'legend-status ' + value;
+    s.legendEls.status.title = STATUS_TITLES[value];
+  }
+
+  // ---------- legenda indikátorů (řádky s hodnotami a ovládáním) ----------
+
+  // Vytvoří řádek indikátoru: název, hodnoty sérií a tlačítka (oko,
+  // nastavení, odebrání) – kliky jdou přes frontu událostí do Pythonu
+  function buildIndicatorRow(s, group, series) {
+    const row = el('div', 'legend-ind' + (group.visible ? '' : ' legend-ind-hidden'));
+    row.dataset.group = group.id;
+    row.appendChild(el('span', 'legend-ind-title', group.title));
+    const values = [];
+    for (const spec of series) {
+      const value = el('span', 'legend-ind-val');
+      value.style.color = spec.color || '';
+      row.appendChild(value);
+      values.push(value);
+    }
+    const actions = el('span', 'legend-ind-actions');
+    const buttons = [
+      ['toggle', group.visible ? 'visibility' : 'visibility_off', group.visible ? 'Skrýt' : 'Zobrazit'],
+      ['settings', 'settings', 'Settings…'],
+      ['remove', 'close', 'Odebrat'],
     ];
-    s.legend.innerHTML =
-      items
-        .map(([key, value]) => `<span class="ohlc-item">${key} <span class="ohlc-value">${value}</span></span>`)
-        .join('') +
-      `<span class="ohlc-item ${dir}">${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)} %</span>`;
+    for (const [action, icon, title] of buttons) {
+      actions.appendChild(legendButton(s, icon, title, { type: 'indicator', action: action, id: group.id }));
+    }
+    row.appendChild(actions);
+    // Dvojklik na řádek otevře Settings, pravý klik menu indikátoru
+    bindLegendRow(
+      row,
+      (event) => showContextMenu(event.clientX, event.clientY, indicatorMenuItems(s, group.id)),
+      () => s.finishedQueue.push({ type: 'indicator', action: 'settings', id: group.id })
+    );
+    return { row, values };
+  }
+
+  // Přestaví řádky indikátorů v legendě a v titulcích panelů podle payloadu
+  function rebuildIndicatorLegend(s, payload) {
+    if (!s.legendEls) return;
+    s.legendEls.indicators.innerHTML = '';
+    s.indicatorRows = [];
+    for (const group of payload.groups || []) {
+      const overlaySeries = (payload.overlays || []).filter((overlay) => overlay.group === group.id);
+      const pane = group.pane ? (payload.panes || []).find((p) => p.paneId === group.pane) : null;
+      const valueSeries = pane ? pane.series : overlaySeries;
+      const built = buildIndicatorRow(s, group, valueSeries);
+      const existingPane = pane ? s.panesMap.get(pane.paneId) : null;
+      if (existingPane) {
+        existingPane.title.innerHTML = '';
+        existingPane.title.appendChild(built.row);
+      } else {
+        s.legendEls.indicators.appendChild(built.row);
+      }
+      s.indicatorRows.push({ group: group.id, values: built.values });
+    }
+    renderIndicatorValues(s, null);
+  }
+
+  // Hodnoty indikátorů v legendě pro daný čas (null = poslední svíčka)
+  function renderIndicatorValues(s, time) {
+    if (!s.indicatorRows) return;
+    const at = time === null || time === undefined ? (s.lastCandle ? s.lastCandle.time : null) : time;
+    for (const row of s.indicatorRows) {
+      const maps = s.indicatorValues.get(row.group) || [];
+      row.values.forEach((node, index) => {
+        const value = maps[index] && at !== null ? maps[index].get(at) : undefined;
+        node.textContent = value === undefined ? '' : formatIndicatorValue(s, value);
+      });
+    }
+  }
+
+  // Počet desetinných míst hodnoty indikátoru: od 10 výš stačí 2 (RSI 49.25),
+  // menší hodnoty s přesností instrumentu (forex MACD 0.00006, EMA 1.10030)
+  function indicatorDecimals(s, magnitude) {
+    return magnitude >= 10 ? 2 : Math.max(2, s.priceDecimals || 2);
+  }
+
+  // Hodnota indikátoru: velké hodnoty (OBV) zkráceně, ostatní s indicatorDecimals
+  function formatIndicatorValue(s, value) {
+    const magnitude = Math.abs(value);
+    if (magnitude >= 1e5) return (value < 0 ? '−' : '') + formatVolume(magnitude);
+    return formatFixed(value, indicatorDecimals(s, magnitude));
+  }
+
+  // Zapamatuje si hodnoty sérií indikátorů podle času (pro legendu);
+  // tail=true jen doplní/přepíše poslední body
+  function storeIndicatorValues(s, payload) {
+    if (!payload.tail) s.indicatorValues = new Map();
+    const store = (group, index, data) => {
+      if (!s.indicatorValues.has(group)) s.indicatorValues.set(group, []);
+      const maps = s.indicatorValues.get(group);
+      if (!maps[index]) maps[index] = new Map();
+      for (const point of data) {
+        if (point.value !== undefined) maps[index].set(point.time, point.value);
+      }
+    };
+    // Pořadí overlay série ve skupině drží overlayMeta (viz rebuildIndicators)
+    (payload.overlays || []).forEach((overlay, i) => store(overlay.group, s.overlayMeta[i].index, overlay.data));
+    for (const pane of payload.panes || []) {
+      pane.series.forEach((spec, index) => store(pane.group, index, spec.data));
+    }
   }
 
   // Vytvoří graf v kontejneru: hlavní panel se svíčkami + objem jako překryv
@@ -159,11 +530,20 @@ window.TickViewChart = (function () {
         previewPoint: null,
         drawings: [],
         color: '#2962ff',
-        magnet: false,
+        // Magnet: 'off' | 'weak' (jen v blízkosti OHLC) | 'strong' (vždy na OHLC)
+        magnet: 'off',
         hidden: false,
         selected: -1,
         drag: null,
+        // Bod pod kurzorem při aktivním nástroji (po přichycení magnetem)
+        hover: null,
       },
+      // Nadpis tickeru a prvky legendy (buildLegend)
+      symbolInfo: null,
+      legendEls: null,
+      // Řádky indikátorů v legendě a jejich hodnoty podle času
+      indicatorRows: [],
+      indicatorValues: new Map(),
       elementId: id,
       toolGroups: pendingToolGroups.get(id) || [],
       themeName,
@@ -176,6 +556,15 @@ window.TickViewChart = (function () {
       overlaySeries: [],
       panesMap: new Map(),
       syncing: false,
+      // Graf panelu, nad kterým je kurzor (posouvání rozsahu z panelu)
+      paneUnderPointer: null,
+      // Časové pásmo zobrazení (IANA); výchozí místní čas prohlížeče
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+      // Objem: zapnutý uživatelem / instrument nějaký objem má
+      volumeEnabled: !(options && options.showVolume === false),
+      hasVolume: true,
+      // Overlay série indikátorů: skupina a pořadí série (hit-test čar)
+      overlayMeta: [],
       lastIndicatorPayload: null,
       indicatorStructure: null,
       // Čas posledního bodu sérií indikátorů (živé doplňování přes update())
@@ -221,9 +610,10 @@ window.TickViewChart = (function () {
       // Kliky mimo cenovou plochu (pravá osa, spodní časová osa) ignorujeme
       if (clickX < pane.offsetX || clickX > pane.offsetX + pane.width) return;
       if (clickY < pane.offsetY || clickY > pane.offsetY + pane.height) return;
-      const point = snapPoint(s, clickX - pane.offsetX, clickY - pane.offsetY);
+      const snapped = snapPoint(s, clickX - pane.offsetX, clickY - pane.offsetY, effectiveMagnet(s, event));
       // Klik mimo rozsah dat (čas nebo cenu nelze určit) ignorujeme
-      if (!point) return;
+      if (!snapped) return;
+      const point = cleanPoint(snapped);
       if (s.overlay.mode === 'text' || s.overlay.mode === 'sticker') {
         // Text a sticker: anchor pošleme Pythonu, dialog se zeptá na text / emoji
         s.finishedQueue.push({
@@ -241,14 +631,21 @@ window.TickViewChart = (function () {
       handleDrawingClick(s, point);
     });
     overlay.addEventListener('mousemove', (event) => {
-      if (!s.overlay.pending && s.overlay.mode !== 'measure') return;
-      const pane = getPaneGeometry(s);
-      const x = event.clientX - pane.hostLeft - pane.offsetX;
-      const y = event.clientY - pane.hostTop - pane.offsetY;
+      if (!s.overlay.mode) return;
+      const { x, y } = localPoint(s, event);
       const isBrush = s.overlay.mode === 'brush';
       // Štětec kreslí volně (bez přichycení na bary), ostatní nástroje jako klik
-      const point = isBrush ? pixelToPoint(s, x, y) : snapPoint(s, x, y);
-      if (!point) return;
+      const point = isBrush ? pixelToPoint(s, x, y) : snapPoint(s, x, y, effectiveMagnet(s, event));
+      if (!point) {
+        s.overlay.hover = null;
+        clearCrosshair(s);
+        redrawOverlay(s);
+        return;
+      }
+      // Overlay zachytává myš, takže crosshair grafu vedeme ručně na
+      // (přichycený) bod – s magnetem je vidět, kam se bod přichytí
+      s.overlay.hover = point;
+      moveCrosshair(s, point);
       s.overlay.previewPoint = point;
       // Štětec: body se při tažení přidávají do rozepsané kresby
       if (isBrush && s.overlay.pending) {
@@ -256,19 +653,36 @@ window.TickViewChart = (function () {
         const lastPixel = pointToPixel(s, points[points.length - 1]);
         // Body přidáváme až po ~6 px, aby JSON kresby nebyly zbytečně velké
         if (!lastPixel || Math.hypot(x - lastPixel.x, y - lastPixel.y) > 6) {
-          points.push(point);
+          points.push(cleanPoint(point));
         }
       }
       redrawOverlay(s);
     });
-    // Escape zruší rozepsanou kresbu / měřič / označení (jen mimo vstupní pole)
+    // Kurzor opustil graf: skryjeme crosshair i značku magnetu
+    overlay.addEventListener('mouseleave', () => {
+      s.overlay.hover = null;
+      clearCrosshair(s);
+      redrawOverlay(s);
+    });
+    // Pravý klik při kreslení: zruší rozepsanou kresbu, jinak ukončí nástroj
+    overlay.addEventListener('contextmenu', (event) => {
+      if (!s.overlay.mode) return;
+      event.preventDefault();
+      if (s.overlay.pending || s.measure) {
+        s.overlay.pending = null;
+        s.measure = null;
+        redrawOverlay(s);
+      } else {
+        exitTool(s);
+      }
+    });
+    // Escape zruší rozepsanou kresbu / měřič, ukončí aktivní nástroj (návrat
+    // na kurzor jako v TradingView) a zruší označení (jen mimo vstupní pole)
     document.addEventListener('keydown', (event) => {
       const tag = (event.target.tagName || '').toUpperCase();
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
       if (event.key === 'Escape') {
-        s.overlay.pending = null;
-        s.overlay.previewPoint = null;
-        s.measure = null;
+        if (s.overlay.mode) exitTool(s);
         selectDrawing(s, -1);
         redrawOverlay(s);
       } else if ((event.key === 'Delete' || event.key === 'Backspace') && s.overlay.selected >= 0) {
@@ -284,9 +698,7 @@ window.TickViewChart = (function () {
       'mousedown',
       (event) => {
         if (event.button !== 0 || s.overlay.mode || s.locked) return;
-        const pane = getPaneGeometry(s);
-        const x = event.clientX - pane.hostLeft - pane.offsetX;
-        const y = event.clientY - pane.hostTop - pane.offsetY;
+        const { x, y } = localPoint(s, event);
         const hit = hitHandle(s, x, y);
         if (hit) {
           event.stopPropagation();
@@ -313,10 +725,8 @@ window.TickViewChart = (function () {
     window.addEventListener('mousemove', (event) => {
       const drag = s.overlay.drag;
       if (!drag) return;
-      const pane = getPaneGeometry(s);
-      const x = event.clientX - pane.hostLeft - pane.offsetX;
-      const y = event.clientY - pane.hostTop - pane.offsetY;
-      dragDrawing(s, drag, x, y);
+      const { x, y } = localPoint(s, event);
+      dragDrawing(s, drag, x, y, effectiveMagnet(s, event));
     });
     window.addEventListener('mouseup', () => {
       const drag = s.overlay.drag;
@@ -342,49 +752,48 @@ window.TickViewChart = (function () {
       s.overlay.drag = null;
     });
 
-    // Pravý klik: nad kresbou ji vybere a otevře menu se „Smazat objekt“;
-    // mimo kresbu jen zruší výběr (žádné okamžité mazání)
+    // Pravý klik v režimu kurzoru (jako v TradingView): nad kresbou ji vybere
+    // a nabídne Settings / smazání, nad čárou indikátoru jeho Settings,
+    // skrytí a odebrání, jinde Settings grafu (např. zobrazení objemu)
     mainHost.addEventListener(
       'contextmenu',
       (event) => {
-        if (s.overlay.mode || s.locked) return;
-        const pane = getPaneGeometry(s);
-        const x = event.clientX - pane.hostLeft - pane.offsetX;
-        const y = event.clientY - pane.hostTop - pane.offsetY;
-        const index = hitTest(s, x, y);
-        if (index < 0) {
-          selectDrawing(s, -1);
-          redrawOverlay(s);
-          return;
-        }
+        if (s.overlay.mode) return;
         event.preventDefault();
+        const { x, y } = localPoint(s, event);
+        const index = s.locked ? -1 : hitTest(s, x, y);
         selectDrawing(s, index);
         redrawOverlay(s);
-        showContextMenu(s, event.clientX, event.clientY);
+        if (index >= 0) {
+          showContextMenu(event.clientX, event.clientY, drawingMenuItems(s, s.overlay.drawings[index]));
+          return;
+        }
+        const group = hitIndicator(s, x, y);
+        if (group) {
+          showContextMenu(event.clientX, event.clientY, indicatorMenuItems(s, group));
+          return;
+        }
+        showContextMenu(event.clientX, event.clientY, chartMenuItems(s));
       },
       true
     );
-    // Dvojklik na textovou kresbu otevře editaci textu
+    // Dvojklik na kresbu nebo čáru indikátoru otevře jeho Settings
     mainHost.addEventListener(
       'dblclick',
       (event) => {
         if (s.overlay.mode) return;
-        const pane = getPaneGeometry(s);
-        const x = event.clientX - pane.hostLeft - pane.offsetX;
-        const y = event.clientY - pane.hostTop - pane.offsetY;
-        const drawing = s.overlay.drawings[s.overlay.selected];
-        if (drawing && drawing.kind === 'text' && drawing.id) {
-          s.finishedQueue.push({
-            type: 'text_edit',
-            id: drawing.id,
-            text: drawing.text,
-          });
-        } else {
-          const index = hitTest(s, x, y);
-          const target = s.overlay.drawings[index];
-          if (target && target.kind === 'text' && target.id) {
-            s.finishedQueue.push({ type: 'text_edit', id: target.id, text: target.text });
-          }
+        const { x, y } = localPoint(s, event);
+        const index = s.locked ? -1 : hitTest(s, x, y);
+        const drawing = s.overlay.drawings[index];
+        if (drawing) {
+          event.stopPropagation();
+          requestDrawingSettings(s, drawing);
+          return;
+        }
+        const group = hitIndicator(s, x, y);
+        if (group) {
+          event.stopPropagation();
+          s.finishedQueue.push({ type: 'indicator', action: 'settings', id: group });
         }
       },
       true
@@ -402,6 +811,11 @@ window.TickViewChart = (function () {
           return;
         }
         if (actionButton) {
+          // Magnet má nabídku režimů (slabý / silný / vypnuto) jako v TradingView
+          if (actionButton.dataset.toolAction === 'magnet') {
+            openMagnetFlyout(s, actionButton);
+            return;
+          }
           s.finishedQueue.push({ type: 'action', action: actionButton.dataset.toolAction });
         }
       });
@@ -416,30 +830,93 @@ window.TickViewChart = (function () {
       }
     });
 
+    buildLegend(s);
     renderLegend(s, null);
+    // Formátování času podle pásma a tikající hodiny ve stavové liště
+    applyTimezone(s);
+    setInterval(() => updateClock(s), 1000);
   }
 
-  // Pravoklikové menu nad kresbou: odebrání kresby a všech kreseb
-  function showContextMenu(s, clientX, clientY) {
+  // Pozice myši v souřadnicích cenové plochy hlavního grafu
+  function localPoint(s, event) {
+    const pane = getPaneGeometry(s);
+    return { x: event.clientX - pane.hostLeft - pane.offsetX, y: event.clientY - pane.hostTop - pane.offsetY };
+  }
+
+  // Kontextové menu na pozici kurzoru; položky [popisek, handler, ikona, třída]
+  function showContextMenu(clientX, clientY, items) {
     closeContextMenu();
-    const menu = document.createElement('div');
-    menu.className = 'drawing-contextmenu';
-    const items = [
-      ['Smazat objekt', () => { deleteSelected(s); redrawOverlay(s); }],
-    ];
-    for (const [label, handler] of items) {
-      const item = document.createElement('div');
-      item.className = 'drawing-contextmenu-item';
-      item.textContent = label;
-      item.addEventListener('click', () => {
-        handler();
+    const menu = el('div', 'drawing-contextmenu');
+    for (const [label, handler, icon, extraClass] of items) {
+      const item = el('div', 'drawing-contextmenu-item' + (extraClass ? ' ' + extraClass : ''));
+      item.appendChild(el('span', 'material-icons drawing-contextmenu-icon', icon || ''));
+      item.appendChild(el('span', '', label));
+      item.addEventListener('click', (event) => {
+        event.stopPropagation();
         closeContextMenu();
+        handler();
       });
       menu.appendChild(item);
     }
-    menu.style.left = clientX + 'px';
-    menu.style.top = clientY + 'px';
     document.body.appendChild(menu);
+    // Menu nesmí přetéct přes pravý/dolní okraj okna
+    const rect = menu.getBoundingClientRect();
+    menu.style.left = Math.min(clientX, window.innerWidth - rect.width - 4) + 'px';
+    menu.style.top = Math.min(clientY, window.innerHeight - rect.height - 4) + 'px';
+  }
+
+  // Požádá Python o dialog Settings kresby (jen uložené kresby mají id)
+  function requestDrawingSettings(s, drawing) {
+    if (!drawing.id) return;
+    s.finishedQueue.push({
+      type: 'drawing_settings',
+      id: drawing.id,
+      kind: drawing.kind,
+      color: drawing.color,
+      text: drawing.text || null,
+      options: drawing.options || {},
+    });
+  }
+
+  // Položky menu kresby: Settings a smazání
+  function drawingMenuItems(s, drawing) {
+    return [
+      ['Settings…', () => requestDrawingSettings(s, drawing), 'settings'],
+      ['Smazat objekt', () => { deleteSelected(s); redrawOverlay(s); }, 'delete', 'danger'],
+    ];
+  }
+
+  // Položky menu indikátoru: Settings, skrytí/zobrazení a odebrání
+  function indicatorMenuItems(s, groupId) {
+    const visible = groupVisible(s.lastIndicatorPayload || {}, groupId);
+    const push = (action) => () => s.finishedQueue.push({ type: 'indicator', action: action, id: groupId });
+    return [
+      ['Settings…', push('settings'), 'settings'],
+      [visible ? 'Skrýt' : 'Zobrazit', push('toggle'), visible ? 'visibility_off' : 'visibility'],
+      ['Odebrat indikátor', push('remove'), 'delete', 'danger'],
+    ];
+  }
+
+  // Položky menu grafu: Settings grafu (zobrazení objemu…)
+  function chartMenuItems(s) {
+    return [['Settings…', () => s.finishedQueue.push({ type: 'chart_settings' }), 'settings']];
+  }
+
+  // Najde overlay indikátor, jehož čára vede blízko kurzoru (id skupiny / null)
+  function hitIndicator(s, x, y) {
+    const logical = s.chart.timeScale().coordinateToLogical(x);
+    if (logical === null) return null;
+    const candle = s.candles[Math.round(logical)];
+    if (!candle) return null;
+    for (const meta of s.overlayMeta || []) {
+      if (!groupVisible(s.lastIndicatorPayload || {}, meta.group)) continue;
+      const maps = s.indicatorValues.get(meta.group) || [];
+      const value = maps[meta.index] ? maps[meta.index].get(candle.time) : undefined;
+      if (value === undefined) continue;
+      const py = s.candleSeries.priceToCoordinate(value);
+      if (py !== null && Math.abs(py - y) <= 6) return meta.group;
+    }
+    return null;
   }
 
   // Zavře pravoklikové menu (pokud existuje)
@@ -453,26 +930,59 @@ window.TickViewChart = (function () {
     const group = (s.toolGroups || []).find((g) => g.id === groupId);
     if (!group) return;
     if (group.tools.length === 1) {
-      // Skupina s jediným nástrojem se aktivuje rovnou přes frontu
-      s.finishedQueue.push({ type: 'tool', mode: group.tools[0].mode });
+      // Skupina s jediným nástrojem se aktivuje rovnou přes frontu; klik na
+      // už aktivní nástroj ho vypne (návrat na kurzor)
+      const mode = group.tools[0].mode;
+      const active = mode !== 'cursor' && s.overlay.mode === mode;
+      s.finishedQueue.push({ type: 'tool', mode: active ? null : mode });
       return;
     }
-    const flyout = document.createElement('div');
-    flyout.className = 'tool-flyout';
+    const flyout = el('div', 'tool-flyout');
     for (const tool of group.tools) {
-      const item = document.createElement('div');
-      item.className = 'tool-flyout-item' + (s.overlay.mode === tool.mode ? ' active' : '');
-      item.innerHTML = '<span class="material-icons tool-flyout-icon">' + tool.icon + '</span><span>' + tool.tooltip + '</span>';
-      item.addEventListener('click', () => {
-        s.finishedQueue.push({ type: 'tool', mode: tool.mode });
-        closeFlyout();
-      });
-      flyout.appendChild(item);
+      // Výběr už aktivního nástroje ho vypne (návrat na kurzor)
+      const active = s.overlay.mode === tool.mode;
+      flyout.appendChild(flyoutItem(tool.icon, tool.tooltip, active, { type: 'tool', mode: active ? null : tool.mode }, s));
     }
+    placeFlyout(flyout, anchorButton);
+  }
+
+  // Položka flyout nabídky (ikona + popisek); klik pošle událost a zavře nabídku
+  function flyoutItem(icon, label, active, event, s) {
+    const item = el('div', 'tool-flyout-item' + (active ? ' active' : ''));
+    item.appendChild(el('span', 'material-icons tool-flyout-icon', icon));
+    item.appendChild(el('span', '', label));
+    item.addEventListener('click', () => {
+      s.finishedQueue.push(event);
+      closeFlyout();
+    });
+    return item;
+  }
+
+  // Umístí flyout nabídku vpravo vedle tlačítka lišty
+  function placeFlyout(flyout, anchorButton) {
     const area = anchorButton.closest('.chart-area');
     flyout.style.left = anchorButton.offsetLeft + anchorButton.offsetWidth + 2 + 'px';
     flyout.style.top = anchorButton.offsetTop + 'px';
     area.appendChild(flyout);
+  }
+
+  // Režimy magnetu pro nabídku (id, ikona, popis)
+  const MAGNET_MODES = [
+    ['weak', 'push_pin', 'Slabý magnet – přichytí bod k O/H/L/C, když je kurzor blízko'],
+    ['strong', 'push_pin', 'Silný magnet – bod vždy na nejbližší O/H/L/C svíčky'],
+    ['off', 'block', 'Vypnout magnet'],
+  ];
+
+  // Flyout s režimy magnetu; výběr jde přes frontu do Pythonu (uloží se)
+  function openMagnetFlyout(s, anchorButton) {
+    closeFlyout();
+    const flyout = el('div', 'tool-flyout');
+    for (const [mode, icon, label] of MAGNET_MODES) {
+      flyout.appendChild(flyoutItem(icon, label, s.overlay.magnet === mode, { type: 'action', action: 'magnet', mode: mode }, s));
+    }
+    const hint = el('div', 'tool-flyout-hint', 'Podržením Ctrl/⌘ při kreslení magnet dočasně přepnete.');
+    flyout.appendChild(hint);
+    placeFlyout(flyout, anchorButton);
   }
 
   // Zavře otevřenou flyout nabídku (pokud existuje)
@@ -553,30 +1063,100 @@ window.TickViewChart = (function () {
     return time === null ? null : { time: time, price: Number(price) };
   }
 
+  // Tolerance slabého magnetu v pixelech (vzdálenost kurzoru od O/H/L/C)
+  const WEAK_MAGNET_PX = 25;
+
+  // Režim magnetu pro danou událost myši: Ctrl/⌘ ho dočasně přepne
+  // (vypnutý → silný, zapnutý → vypnutý), jako v TradingView
+  function effectiveMagnet(s, event) {
+    const mode = s.overlay.magnet;
+    if (event && (event.ctrlKey || event.metaKey)) return mode === 'off' ? 'strong' : 'off';
+    return mode;
+  }
+
   // Převod pixel → (čas, cena): čas se přichytí na nejbližší bar (i vpravo za
-  // daty); s magnetem se cena přichytí k nejbližší OHLC hodnotě svíčky
-  function snapPoint(s, x, y) {
+  // daty); s magnetem se cena přichytí k nejbližší OHLC hodnotě svíčky –
+  // silný vždy, slabý jen v toleranci WEAK_MAGNET_PX. Výsledek má příznak
+  // snapped (bod je přichycený) pro značku magnetu.
+  function snapPoint(s, x, y, magnet) {
     const logical = s.chart.timeScale().coordinateToLogical(x);
     let price = s.candleSeries.coordinateToPrice(y);
     if (logical === null || price === null || !s.candles.length) return null;
     const index = Math.round(logical);
     const candle = s.candles[index];
-    if (s.overlay.magnet && candle) {
-      // Cena k nejbližší OHLC hodnotě svíčky pod kurzorem (tolerance ~12 px)
+    let snapped = false;
+    if (magnet && magnet !== 'off' && candle) {
+      // Nejbližší OHLC hodnota svíčky pod kurzorem
       let best = null;
       for (const candidate of [candle.open, candle.high, candle.low, candle.close]) {
         const py = s.candleSeries.priceToCoordinate(candidate);
         if (py === null) continue;
         if (!best || Math.abs(py - y) < Math.abs(best.py - y)) best = { price: candidate, py: py };
       }
-      if (best && Math.abs(best.py - y) <= 12) price = best.price;
+      if (best && (magnet === 'strong' || Math.abs(best.py - y) <= WEAK_MAGNET_PX)) {
+        price = best.price;
+        snapped = true;
+      }
     }
-    return { time: logicalToTime(s, index), price: Number(price) };
+    return { time: logicalToTime(s, index), price: Number(price), snapped: snapped };
+  }
+
+  // Bod kresby bez pomocných příznaků (do kreseb a databáze jen čas + cena)
+  function cleanPoint(point) {
+    return { time: point.time, price: point.price };
+  }
+
+  // Posune crosshair grafu na bod (jen u existující svíčky – LWC jinak neumí)
+  function moveCrosshair(s, point) {
+    if (typeof s.chart.setCrosshairPosition !== 'function') return;
+    if (s.byTime.has(point.time)) s.chart.setCrosshairPosition(point.price, point.time, s.candleSeries);
+    else clearCrosshair(s);
+  }
+
+  // Skryje ručně nastavený crosshair grafu
+  function clearCrosshair(s) {
+    if (typeof s.chart.clearCrosshairPosition === 'function') s.chart.clearCrosshairPosition();
+  }
+
+  // Ukončí aktivní nástroj (Esc, pravý klik, vypnutí tužky, opakovaný klik
+  // na nástroj): zruší rozepsanou kresbu a vrátí kurzor, Python zvýrazní lištu
+  function exitTool(s) {
+    s.overlay.pending = null;
+    s.overlay.hover = null;
+    s.measure = null;
+    clearCrosshair(s);
+    setDrawingMode(s.elementId, null);
+    s.finishedQueue.push({ type: 'tool', mode: null });
+  }
+
+  // Provede změnu dat bez synchronizace rozsahu mezi grafy: panel se starými
+  // daty (jiná délka historie) by jinak hlavní graf odsunul mimo data
+  function withoutSync(s, fn) {
+    const previous = s.syncing;
+    s.syncing = true;
+    try {
+      fn();
+    } finally {
+      s.syncing = previous;
+    }
+  }
+
+  // Srovná všechny panely indikátorů na aktuální rozsah hlavního grafu
+  function alignPanesToMain(s) {
+    const range = s.chart.timeScale().getVisibleLogicalRange();
+    if (!range) return;
+    withoutSync(s, () => {
+      for (const pane of s.panesMap.values()) pane.chart.timeScale().setVisibleLogicalRange(range);
+    });
   }
 
   // Synchronizuje viditelný rozsah mezi hlavním grafem a panely indikátorů
+  // Panel smí rozsah předat dál jen při interakci uživatele (myš nad
+  // panelem); jeho asynchronní události po výměně dat by jinak hlavní graf
+  // posunuly na starý rozsah
   function syncRange(s, source, range) {
     if (s.syncing || !range) return;
+    if (source !== s.chart && s.paneUnderPointer !== source) return;
     s.syncing = true;
     try {
       if (s.chart !== source) s.chart.timeScale().setVisibleLogicalRange(range);
@@ -603,17 +1183,47 @@ window.TickViewChart = (function () {
       pane.wrap.remove();
     }
     s.panesMap.clear();
+    s.paneUnderPointer = null;
   }
 
-  // Vytvoří panel indikátoru (RSI/MACD) pod hlavním grafem se synchronizovaným časem
-  function addIndicatorPane(s, pane, theme) {
-    const wrap = document.createElement('div');
-    wrap.className = 'lwchart-pane lwchart-pane-' + pane.kind;
-    const title = document.createElement('div');
-    title.className = 'lwchart-pane-title';
-    title.textContent = pane.title;
-    const host = document.createElement('div');
-    host.className = 'lwchart-pane-host';
+  // Vytvoří sérii indikátoru (čára nebo histogram) v daném grafu; volby
+  // série z payloadu (styl čáry, tečky u SAR…) mají přednost před výchozími
+  function createIndicatorSeries(chart, spec, visible) {
+    if (spec.type === 'histogram') {
+      return chart.addHistogramSeries({
+        priceFormat: { type: 'price' },
+        lastValueVisible: false,
+        priceLineVisible: false,
+        visible: visible,
+      });
+    }
+    return chart.addLineSeries(
+      Object.assign(
+        {
+          color: spec.color,
+          lineWidth: 1,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+          visible: visible,
+        },
+        spec.options || {}
+      )
+    );
+  }
+
+  // Viditelnost skupiny indikátoru podle payloadu (skrytý = oko v legendě)
+  function groupVisible(payload, groupId) {
+    const group = (payload.groups || []).find((g) => g.id === groupId);
+    return !group || group.visible !== false;
+  }
+
+  // Vytvoří panel indikátoru (oscilátory, objem…) pod hlavním grafem se
+  // synchronizovaným časem; titulek panelu nese řádek legendy indikátoru
+  function addIndicatorPane(s, pane, theme, visible) {
+    const wrap = el('div', 'lwchart-pane lwchart-pane-' + pane.kind);
+    const title = el('div', 'lwchart-pane-title', pane.title);
+    const host = el('div', 'lwchart-pane-host');
     wrap.appendChild(title);
     wrap.appendChild(host);
     s.panes.appendChild(wrap);
@@ -627,32 +1237,28 @@ window.TickViewChart = (function () {
       timeScale: { borderColor: theme.border, visible: false },
     });
 
+    // Přesnost cenové osy panelu podle velikosti hodnot (MACD na forexu
+    // potřebuje 5 míst, RSI 2)
+    let magnitude = 0;
+    for (const spec of pane.series) {
+      for (const point of spec.data) {
+        if (point.value !== undefined) magnitude = Math.max(magnitude, Math.abs(point.value));
+      }
+    }
+    const precision = indicatorDecimals(s, magnitude);
+    const priceFormat = { type: 'price', precision: precision, minMove: Math.pow(10, -precision) };
+
     const created = [];
     let baseSeries = null;
     for (const spec of pane.series) {
-      let series;
-      if (spec.type === 'histogram') {
-        series = chart.addHistogramSeries({
-          priceFormat: { type: 'price' },
-          lastValueVisible: false,
-          priceLineVisible: false,
-        });
-        series.setData(spec.data);
-      } else {
-        series = chart.addLineSeries({
-          color: spec.color,
-          lineWidth: 1,
-          priceLineVisible: false,
-          lastValueVisible: false,
-          crosshairMarkerVisible: false,
-        });
-        series.setData(spec.data);
-      }
+      const series = createIndicatorSeries(chart, spec, visible);
+      series.applyOptions({ priceFormat: priceFormat });
+      series.setData(spec.data);
       if (!baseSeries && spec.type !== 'histogram') baseSeries = series;
       created.push(series);
     }
 
-    // Úrovně (30/70 u RSI, 0 u MACD) jako přerušované cenové linky
+    // Úrovně (30/70 u RSI, 0 u MACD…) jako přerušované cenové linky
     const levelColor = s.themeName === 'dark' ? 'rgba(209, 212, 220, 0.4)' : 'rgba(19, 23, 34, 0.4)';
     for (const level of pane.levels || []) {
       const target = baseSeries || created[0];
@@ -668,10 +1274,25 @@ window.TickViewChart = (function () {
     }
 
     chart.timeScale().subscribeVisibleLogicalRangeChange((range) => syncRange(s, chart, range));
+    // Pravý klik a dvojklik v panelu patří indikátoru panelu (Settings…)
+    wrap.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      showContextMenu(event.clientX, event.clientY, indicatorMenuItems(s, pane.group));
+    });
+    wrap.addEventListener('dblclick', () => s.finishedQueue.push({ type: 'indicator', action: 'settings', id: pane.group }));
+    // Panel pod kurzorem (jen ten smí posouvat hlavní graf – viz syncRange)
+    wrap.addEventListener('mouseenter', () => (s.paneUnderPointer = chart));
+    wrap.addEventListener('mouseleave', () => {
+      if (s.paneUnderPointer === chart) s.paneUnderPointer = null;
+    });
+    // Legenda indikátoru ukazuje hodnoty pod kurzorem i při pohybu v panelu
+    chart.subscribeCrosshairMove((param) => {
+      renderIndicatorValues(s, param.time === undefined ? null : param.time);
+    });
     // Nový panel se rovná na rozsah hlavního grafu
     const mainRange = s.chart.timeScale().getVisibleLogicalRange();
     if (mainRange) chart.timeScale().setVisibleLogicalRange(mainRange);
-    s.panesMap.set(pane.paneId, { chart, wrap, series: created });
+    s.panesMap.set(pane.paneId, { chart, wrap, title, series: created });
   }
 
   // Nahradí všechny indikátory: overlay čáry + panely pod hlavním grafem
@@ -680,31 +1301,56 @@ window.TickViewChart = (function () {
     if (!s) return;
     // Úplný payload si pamatujeme pro přestavbu panelů po změně motivu
     if (!payload.tail) s.lastIndicatorPayload = payload;
-    // Stejná sada čar a panelů (typicky živý přepočet) → jen nová data v
-    // existujících sériích; panely se nepřestavují a graf nebliká
-    // Payload s příznakem "tail" (živý přepočet) obsahuje jen poslední body,
-    // které se do sérií doplní přes update(); ten umí jen poslední nebo novější
-    // bod, proto starší body vynecháme (všechny série mají stejné časy svíček)
+    // Stejná sada čar a panelů (typicky živý přepočet nebo změna barvy či
+    // viditelnosti) → jen nová data a volby v existujících sériích; panely se
+    // nepřestavují a graf nebliká. Payload s příznakem "tail" (živý přepočet)
+    // obsahuje jen poslední body, které se do sérií doplní přes update(); ten
+    // umí jen poslední nebo novější bod, proto starší body vynecháme
     const structure = indicatorStructure(payload);
     const lastTime = s.indicatorLastTime;
+    let rebuilt = false;
+    withoutSync(s, () => {
+      rebuilt = applyIndicatorPayload(s, payload, structure, lastTime);
+    });
+    if (!rebuilt) return;
+    // Panely po nových datech srovnáme na rozsah hlavního grafu
+    alignPanesToMain(s);
+    storeIndicatorValues(s, payload);
+    // Řádky legendy se přestaví jen u úplného payloadu (názvy, viditelnost)
+    if (!payload.tail) rebuildIndicatorLegend(s, payload);
+    else if (!s.hovering) renderIndicatorValues(s, null);
+    const payloadLastTime = indicatorPayloadLastTime(payload);
+    s.indicatorLastTime = payload.tail ? Math.max(lastTime, payloadLastTime) : payloadLastTime;
+  }
+
+  // Promítne payload indikátorů do sérií (jen data / nebo celá přestavba);
+  // vrací false, když zkrácený payload k jiné sadě indikátorů nelze použít
+  function applyIndicatorPayload(s, payload, structure, lastTime) {
     if (structure === s.indicatorStructure) {
-      const apply = (series, data) => {
-        if (payload.tail) data.filter((point) => point.time >= lastTime).forEach((point) => series.update(point));
-        else series.setData(data);
+      const apply = (series, spec, visible) => {
+        if (payload.tail) {
+          spec.data.filter((point) => point.time >= lastTime).forEach((point) => series.update(point));
+          return;
+        }
+        series.setData(spec.data);
+        const options = { visible: visible };
+        if (spec.type !== 'histogram' && spec.color) options.color = spec.color;
+        series.applyOptions(options);
       };
-      (payload.overlays || []).forEach((overlay, index) => apply(s.overlaySeries[index], overlay.data));
+      (payload.overlays || []).forEach((overlay, index) =>
+        apply(s.overlaySeries[index], overlay, groupVisible(payload, overlay.group))
+      );
       for (const pane of payload.panes || []) {
         const existing = s.panesMap.get(pane.paneId);
-        pane.series.forEach((spec, index) => apply(existing.series[index], spec.data));
+        pane.series.forEach((spec, index) => apply(existing.series[index], spec, groupVisible(payload, pane.group)));
       }
     } else if (payload.tail) {
       // Zkrácený payload k jiné sadě indikátorů (mezitím změněné) nelze použít
-      return;
+      return false;
     } else {
       rebuildIndicators(s, payload);
     }
-    const payloadLastTime = indicatorPayloadLastTime(payload);
-    s.indicatorLastTime = payload.tail ? Math.max(lastTime, payloadLastTime) : payloadLastTime;
+    return true;
   }
 
   // Čas posledního bodu v payloadu indikátorů (−∞, když je prázdný)
@@ -714,10 +1360,12 @@ window.TickViewChart = (function () {
     return data.length ? data[data.length - 1].time : -Infinity;
   }
 
-  // Otisk struktury indikátorů (názvy čar, panely a počty jejich sérií)
+  // Otisk struktury indikátorů (skupiny a typy čar, panely a jejich série)
   function indicatorStructure(payload) {
-    const overlays = (payload.overlays || []).map((overlay) => overlay.name);
-    const panes = (payload.panes || []).map((pane) => pane.paneId + ':' + pane.series.length);
+    const overlays = (payload.overlays || []).map((overlay) => overlay.group + ':' + overlay.name + ':' + overlay.type);
+    const panes = (payload.panes || []).map(
+      (pane) => pane.paneId + ':' + pane.series.map((spec) => spec.name + ':' + spec.type).join(',') + ':' + (pane.levels || []).join(',')
+    );
     return JSON.stringify([overlays, panes]);
   }
 
@@ -727,21 +1375,21 @@ window.TickViewChart = (function () {
     s.indicatorStructure = indicatorStructure(payload);
     clearIndicators(id);
     const theme = THEMES[s.themeName];
-    // Overlay čáry v hlavním grafu (SMA, EMA, Bollinger)
+    // Overlay čáry v hlavním grafu (průměry, pásma, trend); overlayMeta
+    // (skupina + pořadí série ve skupině) slouží k nalezení čáry pod kurzorem
+    s.overlayMeta = [];
+    const perGroup = new Map();
     for (const overlay of payload.overlays || []) {
-      const series = s.chart.addLineSeries({
-        color: overlay.color,
-        lineWidth: 1,
-        priceLineVisible: false,
-        lastValueVisible: false,
-        crosshairMarkerVisible: false,
-      });
+      const index = perGroup.get(overlay.group) || 0;
+      perGroup.set(overlay.group, index + 1);
+      s.overlayMeta.push({ group: overlay.group, index: index });
+      const series = createIndicatorSeries(s.chart, overlay, groupVisible(payload, overlay.group));
       series.setData(overlay.data);
       s.overlaySeries.push(series);
     }
-    // Samostatné panely (RSI, MACD)
+    // Samostatné panely (oscilátory, objem…)
     for (const pane of payload.panes || []) {
-      addIndicatorPane(s, pane, theme);
+      addIndicatorPane(s, pane, theme, groupVisible(payload, pane.group));
     }
   }
 
@@ -773,18 +1421,53 @@ window.TickViewChart = (function () {
     s.candles = clean;
     s.lastCandle = clean.length ? clean[clean.length - 1] : null;
     s.stepSeconds = (opts && opts.stepSeconds) || 60;
+    // Denní/intraday timeframe mění formátování času (viz applyTimezone)
+    applyTimezone(s);
     // Nový dataset (jiný symbol/timeframe): starší historii lze znovu donačítat
     s.olderLoading = false;
     s.olderExhausted = false;
     s.olderRetryAt = 0;
-    applySeriesData(s);
-    // Zobrazit konec grafu (posledních N svíček), ne celou historii zmenšenou na minimum
+    // Přesnost cenové osy podle instrumentu (forex 1.10025 místo 1.10)
+    s.priceDecimals = detectPriceDecimals(clean);
+    s.candleSeries.applyOptions({
+      priceFormat: { type: 'price', precision: s.priceDecimals, minMove: Math.pow(10, -s.priceDecimals) },
+    });
+    // Instrument bez objemu (forex MIDPOINT, indexy) objem neukazuje
+    s.hasVolume = clean.some((candle) => candle.volume > 0);
+    applyVolumeVisibility(s);
+    // Zobrazit konec grafu (posledních N svíček), ne celou historii zmenšenou
+    // na minimum; panely se srovnají až s novými daty indikátorů
     const visible = (opts && opts.visibleBars) || 150;
-    s.chart.timeScale().setVisibleLogicalRange({
-      from: Math.max(0, clean.length - visible),
-      to: clean.length + 4,
+    withoutSync(s, () => {
+      // Overlay indikátory drží časy předchozího datasetu; časová osa je
+      // sjednocením všech sérií, takže by po přepočtu indikátorů posunuly
+      // logické indexy (graf mimo data) – vyprázdníme je do příchodu nových
+      for (const series of s.overlaySeries) series.setData([]);
+      for (const pane of s.panesMap.values()) pane.series.forEach((series) => series.setData([]));
+      s.indicatorLastTime = -Infinity;
+      applySeriesData(s);
+      s.chart.timeScale().setVisibleLogicalRange({
+        from: Math.max(0, clean.length - visible),
+        to: clean.length + 4,
+      });
     });
     renderLegend(s, s.lastCandle);
+  }
+
+  // Objem je vidět, když ho uživatel nevypnul (Settings grafu) a instrument
+  // nějaký objem má (forex MIDPOINT ani indexy ho nemají)
+  function applyVolumeVisibility(s) {
+    const visible = s.volumeEnabled && s.hasVolume;
+    s.volumeSeries.applyOptions({ visible: visible });
+    if (s.legendEls) s.legendEls.volumeRow.classList.toggle('hidden', !visible);
+  }
+
+  // Zapne/vypne zobrazení objemu (Settings grafu, uloženo v Pythonu)
+  function setVolumeVisible(id, visible) {
+    const s = state.get(id);
+    if (!s) return;
+    s.volumeEnabled = !!visible;
+    applyVolumeVisibility(s);
   }
 
   // Požádá Python o starší svíčky, když se graf posunul blízko začátku dat
@@ -812,10 +1495,12 @@ window.TickViewChart = (function () {
     const range = s.chart.timeScale().getVisibleLogicalRange();
     s.candles = older.concat(s.candles);
     for (const candle of older) s.byTime.set(candle.time, candle);
-    applySeriesData(s);
-    if (range) {
-      s.chart.timeScale().setVisibleLogicalRange({ from: range.from + older.length, to: range.to + older.length });
-    }
+    withoutSync(s, () => {
+      applySeriesData(s);
+      if (range) {
+        s.chart.timeScale().setVisibleLogicalRange({ from: range.from + older.length, to: range.to + older.length });
+      }
+    });
     redrawOverlay(s);
   }
 
@@ -864,7 +1549,10 @@ window.TickViewChart = (function () {
     // Svíčky a objemy překreslit, aby měly správné barvy po přepnutí motivu
     applySeriesData(s);
     // Panely indikátorů přegenerovat v novém motivu
-    if (s.lastIndicatorPayload) rebuildIndicators(s, s.lastIndicatorPayload);
+    if (s.lastIndicatorPayload) {
+      rebuildIndicators(s, s.lastIndicatorPayload);
+      rebuildIndicatorLegend(s, s.lastIndicatorPayload);
+    }
   }
 
   // ---------- kreslení (modelováno po TradingView) ----------
@@ -901,11 +1589,12 @@ window.TickViewChart = (function () {
     s.overlay.color = color || '#2962ff';
   }
 
-  // Zapne/vypne magnet (přichytávání k OHLC nejbližší svíčky)
-  function setMagnet(id, on) {
+  // Nastaví režim magnetu: 'off' | 'weak' | 'strong'
+  function setMagnet(id, mode) {
     const s = state.get(id);
     if (!s) return;
-    s.overlay.magnet = !!on;
+    s.overlay.magnet = mode === 'weak' || mode === 'strong' ? mode : 'off';
+    redrawOverlay(s);
   }
 
   // Skryje/zobrazí všechny kresby (ikona oka)
@@ -927,6 +1616,7 @@ window.TickViewChart = (function () {
       points: d.points,
       color: d.color || '#2962ff',
       text: d.text || null,
+      options: d.options || {},
     }));
     s.overlay.selected = -1;
     s.overlay.drag = null;
@@ -956,14 +1646,17 @@ window.TickViewChart = (function () {
     queueNewDrawing(s, { kind: 'text', points: [{ time: Number(time), price: Number(price) }], color: s.overlay.color, text: text });
   }
 
-  function updateText(id, drawingId, text) {
+  // Použije nastavení kresby z dialogu Settings (barva, text, šířka, styl,
+  // velikost písma); do databáze ho už uložil Python
+  function applyDrawingSettings(id, drawingId, settings) {
     const s = state.get(id);
     if (!s) return;
     const drawing = s.overlay.drawings.find((d) => d.id === drawingId);
     if (!drawing) return;
-    drawing.text = text;
+    drawing.color = settings.color || drawing.color;
+    if (settings.text !== undefined && settings.text !== null) drawing.text = settings.text;
+    drawing.options = settings.options || {};
     redrawOverlay(s);
-    s.finishedQueue.push({ type: 'update', id: drawingId, points: drawing.points, text: text });
   }
 
   // Smaže označenou kresbu (nebo všechny, když není nic označené); vrátí počet
@@ -1092,11 +1785,13 @@ window.TickViewChart = (function () {
     s.finishedQueue.push({ type: 'tool', mode: null });
   }
 
-  // Zapne/vypne režim tužky (nástroj zůstává vybraný i po nakreslení)
+  // Zapne/vypne režim tužky (nástroj zůstává vybraný i po nakreslení);
+  // vypnutí tužky ukončí i právě aktivní nástroj (návrat na kurzor)
   function setKeepTool(id, on) {
     const s = state.get(id);
     if (!s) return;
     s.keepTool = !!on;
+    if (!s.keepTool && s.overlay.mode) exitTool(s);
   }
 
   // Zamkne/odemkne kresby (zabrání editaci i mazání)
@@ -1185,7 +1880,9 @@ window.TickViewChart = (function () {
       } else if (drawing.kind === 'vline') {
         if (Math.abs(x - points[0].x) <= threshold) return i;
       } else if (drawing.kind === 'text') {
-        if (Math.hypot(x - points[0].x, y - points[0].y) <= 14) return i;
+        // Celý obdélník textu (text se kreslí vpravo nad kotevním bodem)
+        const box = textBounds(s, drawing, points[0]);
+        if (x >= box.x - 3 && x <= box.x + box.w + 3 && y >= box.y - 3 && y <= box.y + box.h + 3) return i;
       } else if (drawing.kind === 'rect') {
         const [a, b] = points;
         const x1 = Math.min(a.x, b.x);
@@ -1283,7 +1980,7 @@ window.TickViewChart = (function () {
   }
 
   // Tažení kresby: úchop = posun koncového bodu, body = posun celé kresby
-  function dragDrawing(s, drag, x, y) {
+  function dragDrawing(s, drag, x, y, magnet) {
     const drawing = s.overlay.drawings[drag.index];
     if (!drawing) return;
     if (drag.handle === 'body') {
@@ -1302,18 +1999,67 @@ window.TickViewChart = (function () {
       }));
     } else {
       // Posun koncového bodu (úchop) na bar a cenu pod kurzorem
-      const snapped = snapPoint(s, x, y);
+      const snapped = snapPoint(s, x, y, magnet);
       if (!snapped || !drawing.points[drag.handle]) return;
-      drawing.points[drag.handle] = snapped;
+      drawing.points[drag.handle] = cleanPoint(snapped);
     }
     drag.moved = true;
     redrawOverlay(s);
   }
 
-  // Nakreslí úchopové čtverečky koncových bodů označené kresby
+  // Výchozí velikost písma textových kreseb (px); lze změnit v Settings kresby
+  const TEXT_SIZE = 13;
+
+  // Písmo textové kresby podle její velikosti (sdílí kreslení i výběr)
+  function textFont(drawing) {
+    return textSize(drawing) + 'px sans-serif';
+  }
+
+  function textSize(drawing) {
+    return Number((drawing.options || {}).fontSize) || TEXT_SIZE;
+  }
+
+  // Obdélník textové kresby v pixelech plátna (x, y = levý horní roh);
+  // text se kreslí od kotevního bodu +4 px vpravo a 4 px nad ním
+  function textBounds(s, drawing, pixel) {
+    const ctx = s.overlay.ctx;
+    ctx.save();
+    ctx.font = textFont(drawing);
+    const width = ctx.measureText(drawing.text || 'Text').width;
+    ctx.restore();
+    const height = Math.round(textSize(drawing) * 1.25);
+    return { x: pixel.x + 2, y: pixel.y - 4 - height, w: width + 6, h: height + 2 };
+  }
+
+  // Přerušování čar podle stylu kresby (solid / dashed / dotted)
+  const LINE_DASHES = { solid: [], dashed: [6, 4], dotted: [1.5, 3] };
+
+  // Barva #rrggbb s průhledností (výplň obdélníku a kanálu v barvě kresby)
+  function withAlpha(hex, alpha) {
+    const match = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex || '');
+    if (!match) return 'rgba(41, 98, 255, ' + alpha + ')';
+    return 'rgba(' + parseInt(match[1], 16) + ', ' + parseInt(match[2], 16) + ', ' + parseInt(match[3], 16) + ', ' + alpha + ')';
+  }
+
+  // Nakreslí úchopové čtverečky koncových bodů označené kresby; označený
+  // text dostane přerušovaný rámeček (tažením za text se posouvá)
   function renderHandles(ctx, s, drawing) {
     if (s.overlay.selected !== s.overlay.drawings.indexOf(drawing)) return;
-    if (drawing.kind === 'brush' || drawing.kind === 'text') return;
+    if (drawing.kind === 'text') {
+      const pixel = pointToPixel(s, drawing.points[0]);
+      if (!pixel) return;
+      const box = textBounds(s, drawing, pixel);
+      ctx.save();
+      ctx.setLineDash([3, 3]);
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = drawing.color || '#2962ff';
+      ctx.strokeRect(box.x - 2, box.y - 2, box.w + 4, box.h + 4);
+      ctx.restore();
+      return;
+    }
+    if (drawing.kind === 'brush') return;
+    // Úchopy vždy plnou čarou (i u přerušované kresby)
+    ctx.setLineDash([]);
     for (const point of drawing.points) {
       const pixel = pointToPixel(s, point);
       if (!pixel) continue;
@@ -1358,7 +2104,7 @@ window.TickViewChart = (function () {
       // Počet barů = rozdíl logických indexů (i mimo rozsah dat)
       const bars = Math.round(Math.abs(timeToLogical(s, p2.time) - timeToLogical(s, p1.time)));
       const label =
-        (diff >= 0 ? '+' : '') + formatPrice(diff) + ' (' + (pct >= 0 ? '+' : '') + pct.toFixed(2) + ' %) · ' + bars + ' barů';
+        (diff >= 0 ? '+' : '') + formatInstrumentPrice(s, diff) + ' (' + (pct >= 0 ? '+' : '') + pct.toFixed(2) + ' %) · ' + bars + ' barů';
       ctx.font = '12px sans-serif';
       ctx.textBaseline = 'top';
       ctx.fillStyle = s.themeName === 'dark' ? '#d1d4dc' : '#131722';
@@ -1388,7 +2134,10 @@ window.TickViewChart = (function () {
     }
 
     const color = drawing.color || '#2962ff';
-    ctx.lineWidth = 1.5;
+    const options = drawing.options || {};
+    // Šířka a styl čáry z nastavení kresby (výchozí 1.5 px plná)
+    ctx.lineWidth = Number(options.width) || 1.5;
+    ctx.setLineDash(LINE_DASHES[options.lineStyle] || []);
     ctx.strokeStyle = color;
 
     const toPixel = (point) => pointToPixel(s, point);
@@ -1417,7 +2166,7 @@ window.TickViewChart = (function () {
       const p = toPixel(points[0]);
       if (!p) return;
       ctx.fillStyle = color;
-      ctx.font = '13px sans-serif';
+      ctx.font = textFont(drawing);
       ctx.textBaseline = 'bottom';
       ctx.fillText(drawing.text || 'Text', p.x + 4, p.y - 4);
       renderHandles(ctx, s, drawing);
@@ -1514,7 +2263,7 @@ window.TickViewChart = (function () {
       ctx.moveTo(p1.x + dx, p1.y + dy);
       ctx.lineTo(p2.x + dx, p2.y + dy);
       ctx.stroke();
-      ctx.fillStyle = 'rgba(41, 98, 255, 0.12)';
+      ctx.fillStyle = withAlpha(color, 0.12);
       ctx.beginPath();
       ctx.moveTo(p1.x, p1.y);
       ctx.lineTo(p2.x, p2.y);
@@ -1586,7 +2335,7 @@ window.TickViewChart = (function () {
         ctx.stroke();
         ctx.setLineDash([]);
         ctx.fillStyle = color;
-        ctx.fillText(level.toFixed(3).replace(/0+$/, '').replace(/\.$/, '') + ' (' + formatPrice(price) + ')', x1 + 2, y - 1);
+        ctx.fillText(level.toFixed(3).replace(/0+$/, '').replace(/\.$/, '') + ' (' + formatInstrumentPrice(s, price) + ')', x1 + 2, y - 1);
       }
       renderHandles(ctx, s, drawing);
       return;
@@ -1615,7 +2364,7 @@ window.TickViewChart = (function () {
       const y = Math.min(p1.y, p2.y);
       const w = Math.abs(p2.x - p1.x);
       const h = Math.abs(p2.y - p1.y);
-      ctx.fillStyle = 'rgba(41, 98, 255, 0.12)';
+      ctx.fillStyle = withAlpha(color, 0.12);
       ctx.fillRect(x, y, w, h);
       ctx.strokeRect(x, y, w, h);
       renderHandles(ctx, s, drawing);
@@ -1656,7 +2405,7 @@ window.TickViewChart = (function () {
         ctx.stroke();
         ctx.setLineDash([]);
         ctx.fillStyle = color;
-        ctx.fillText(level.toFixed(3).replace(/0+$/, '').replace(/\.$/, '') + ' (' + formatPrice(price) + ')', x1 + 2, y - 1);
+        ctx.fillText(level.toFixed(3).replace(/0+$/, '').replace(/\.$/, '') + ' (' + formatInstrumentPrice(s, price) + ')', x1 + 2, y - 1);
       }
       renderHandles(ctx, s, drawing);
       return;
@@ -1694,6 +2443,24 @@ window.TickViewChart = (function () {
       }
       renderMeasure(ctx, s, pane.width, pane.height);
     }
+    renderMagnetMarker(ctx, s);
+    ctx.restore();
+  }
+
+  // Značka přichycení magnetem: kroužek na O/H/L/C, kam se bod kresby uloží
+  function renderMagnetMarker(ctx, s) {
+    const hover = s.overlay.hover;
+    if (!s.overlay.mode || !hover || !hover.snapped) return;
+    const pixel = pointToPixel(s, hover);
+    if (!pixel) return;
+    ctx.save();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = s.overlay.color || '#2962ff';
+    ctx.fillStyle = s.themeName === 'dark' ? '#131722' : '#ffffff';
+    ctx.beginPath();
+    ctx.arc(pixel.x, pixel.y, 4.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
     ctx.restore();
   }
 
@@ -1705,13 +2472,17 @@ window.TickViewChart = (function () {
     assignDrawingId: assignDrawingId,
     setTheme: setTheme,
     setIndicators: setIndicators,
+    setVolumeVisible: setVolumeVisible,
+    setTimezone: setTimezone,
+    applyDrawingSettings: applyDrawingSettings,
+    setSymbolInfo: setSymbolInfo,
+    setLegendStatus: setLegendStatus,
     setDrawingMode: setDrawingMode,
     setDrawings: setDrawings,
     setDrawingColor: setDrawingColor,
     setMagnet: setMagnet,
     setDrawingsHidden: setDrawingsHidden,
     addText: addText,
-    updateText: updateText,
     trashDrawings: trashDrawings,
     setToolGroups: setToolGroups,
     setKeepTool: setKeepTool,

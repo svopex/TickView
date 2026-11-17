@@ -57,11 +57,13 @@ CREATE INDEX IF NOT EXISTS idx_fetched_ranges
     ON fetched_ranges (source, symbol, timeframe);
 """
 
-# Migrace pro starší databáze: sloupce color a text v tabulce drawings (přidané
-# dodatečně, CREATE TABLE IF NOT EXISTS je do existující tabulky nepřidá)
+# Migrace pro starší databáze: sloupce color, text a options (JSON se šířkou
+# a stylem čáry) v tabulce drawings – přidané dodatečně, CREATE TABLE IF NOT
+# EXISTS je do existující tabulky nepřidá
 _MIGRATIONS = """
 ALTER TABLE drawings ADD COLUMN color TEXT;
 ALTER TABLE drawings ADD COLUMN text TEXT;
+ALTER TABLE drawings ADD COLUMN options TEXT;
 """
 
 
@@ -265,6 +267,8 @@ class KlineCache:
                 "points": json.loads(row[2]),
                 "color": row[3],
                 "text": row[4],
+                # Vzhled kresby (šířka, styl čáry); starší kresby ho nemají
+                "options": json.loads(row[5]) if row[5] else {},
             }
             for row in rows
         ]
@@ -272,7 +276,7 @@ class KlineCache:
     def _load_drawings_sync(self, source: str, symbol: str, timeframe: str):
         cur = self._conn.execute(
             """
-            SELECT id, kind, points, color, text FROM drawings
+            SELECT id, kind, points, color, text, options FROM drawings
             WHERE source = ? AND symbol = ? AND timeframe = ?
             ORDER BY id
             """,
@@ -346,6 +350,41 @@ class KlineCache:
             WHERE id = ? AND source = ? AND symbol = ? AND timeframe = ?
             """,
             (json.dumps(points), text, drawing_id, source, symbol, timeframe),
+        )
+        self._conn.commit()
+
+    async def update_drawing_style(
+        self,
+        source: str,
+        symbol: str,
+        timeframe: str,
+        drawing_id: int,
+        color: Optional[str],
+        text: Optional[str],
+        options: dict,
+    ) -> None:
+        """Uloží nastavení kresby z dialogu Settings (barva, text, šířka a styl čáry)."""
+        async with self._lock:
+            await asyncio.to_thread(
+                self._update_drawing_style_sync, source, symbol, timeframe, drawing_id, color, text, options
+            )
+
+    def _update_drawing_style_sync(
+        self,
+        source: str,
+        symbol: str,
+        timeframe: str,
+        drawing_id: int,
+        color: Optional[str],
+        text: Optional[str],
+        options: dict,
+    ) -> None:
+        self._conn.execute(
+            """
+            UPDATE drawings SET color = ?, text = ?, options = ?
+            WHERE id = ? AND source = ? AND symbol = ? AND timeframe = ?
+            """,
+            (color, text, json.dumps(options), drawing_id, source, symbol, timeframe),
         )
         self._conn.commit()
 

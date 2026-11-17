@@ -23,6 +23,28 @@ from tickview.providers.base import (
 
 # Typy instrumentů z vyhledávání Yahoo, které umíme zobrazit
 SEARCH_QUOTE_TYPES = {"EQUITY", "ETF", "INDEX", "CURRENCY"}
+# Časová pásma burz podle přípony symbolu Yahoo (bez přípony = USA)
+SUFFIX_TIMEZONES = {
+    "=X": "Europe/London",
+    "-USD": "UTC",
+    "=F": "America/New_York",
+    ".L": "Europe/London",
+    ".DE": "Europe/Berlin",
+    ".F": "Europe/Berlin",
+    ".PR": "Europe/Prague",
+    ".PA": "Europe/Paris",
+    ".AS": "Europe/Amsterdam",
+    ".SW": "Europe/Zurich",
+    ".MI": "Europe/Rome",
+    ".MC": "Europe/Madrid",
+    ".VI": "Europe/Vienna",
+    ".WA": "Europe/Warsaw",
+    ".T": "Asia/Tokyo",
+    ".HK": "Asia/Hong_Kong",
+    ".TO": "America/Toronto",
+    ".AX": "Australia/Sydney",
+}
+
 # Jak často se smí obnovit cena watchlistu (throttle kvůli limitům Yahoo)
 TICKER_TTL_S = 60.0
 
@@ -39,15 +61,20 @@ class YahooProvider(DataProvider):
     data_delay_ms = 30 * 60_000
 
     def __init__(self) -> None:
-        # Yahoo nemá 4h svíčky; mapujeme jen podporované intervaly
+        # Yahoo nemá 4h ani 10m svíčky; 10m se skládá z 5m (viz self.aggregated)
         self.timeframes = {
             "1m": "1m",
+            "2m": "2m",
             "5m": "5m",
+            "10m": None,
             "15m": "15m",
             "1h": "1h",
             "1D": "1d",
             "1W": "1wk",
         }
+        self.aggregated = {"10m": "5m"}
+        # Názvy a burzy instrumentů pro nadpis grafu (symbol -> info)
+        self._describe_cache: dict[str, dict] = {}
         # Cache cen pro watchlist (symbol -> (čas, data)) s TTL kvůli limitům
         self._ticker_cache: dict[str, tuple[float, dict]] = {}
 
@@ -80,6 +107,33 @@ class YahooProvider(DataProvider):
                 # Výpadek zdroje: symbol bez aktualizace, zkusíme příště
                 pass
         return result
+
+    def exchange_timezone(self, symbol: str) -> str:
+        """Pásmo burzy podle přípony symbolu (AAPL → New York, SAP.DE → Berlín)."""
+        for suffix, tz_name in SUFFIX_TIMEZONES.items():
+            if symbol.upper().endswith(suffix.upper()):
+                return tz_name
+        return "America/New_York"
+
+    async def describe(self, symbol: str) -> dict:
+        """Název a burza z vyhledávání Yahoo (blokující volání ve vlákně, cache v paměti)."""
+        if symbol in self._describe_cache:
+            return self._describe_cache[symbol]
+
+        def do_search() -> list[dict]:
+            return yf.Search(symbol, max_results=8).quotes
+
+        quotes = await asyncio.to_thread(do_search)
+        # Bereme jen přesnou shodu symbolu (vyhledávání vrací i podobné tickery)
+        match = next((item for item in quotes if item.get("symbol") == symbol), None)
+        if not match:
+            return await super().describe(symbol)
+        info = {
+            "name": match.get("longname") or match.get("shortname") or symbol,
+            "exchange": match.get("exchDisp") or match.get("exchange") or self.name,
+        }
+        self._describe_cache[symbol] = info
+        return info
 
     async def search(self, query: str, limit: int = 30) -> list[SymbolInfo]:
         """Vyhledá symboly přes yf.Search (blokující volání ve vlákně)."""
@@ -168,12 +222,16 @@ class YahooProvider(DataProvider):
         self, symbol: str, timeframe: str, start_ms: int, end_ms: int
     ) -> list[Candle]:
         """Vrátí svíčky z Yahoo Finance v daném intervalu (UTC ms)."""
+        if timeframe in self.aggregated:
+            return await self._aggregated_history(symbol, timeframe, start_ms, end_ms)
         return await self._download(symbol, timeframe, start_ms, end_ms)
 
     def stream(self, symbol: str, timeframe: str) -> AsyncIterator[StreamItem]:
         """Živá aktualizace dotazováním: v pravidelných intervalech posílá
         poslední svíčku, ale jen když je nová nebo se změnila.
         """
+        if timeframe in self.aggregated:
+            return self._aggregated_stream(symbol, timeframe)
         # Polling stahuje jen poslední den (intraday) resp. týden (denní)
         period = "5d" if timeframe in ("1D", "1W") else "1d"
 
