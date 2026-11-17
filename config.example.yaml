@@ -19,3 +19,8 @@ ibkr:
 telegram:
   bot_token: ""
   chat_id: ""
+
+# Replay – krok zpět v čase: delete (povolit, obchody po bodu návratu se
+# smažou), confirm (povolit po potvrzení), off (zakázat)
+replay:
+  rewind: "delete"

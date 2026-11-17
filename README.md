@@ -151,8 +151,9 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   používají vlastní tenké SVG piktogramy ve stylu TradingView (Long / Short
   position: tři čáry s kotevními body a písmenem L / S v zóně cíle).
 - Pravý panel jako v TradingView: svislá lišta úplně vpravo přepíná obsah
-  panelu – Watchlist a Alerty (s počtem aktivních alertů); klik na aktivní
-  tlačítko panel skryje, volba se pamatuje. Watchlist
+  panelu – Watchlist, Alerty (s počtem aktivních alertů) a Replay (sessions);
+  klik na aktivní tlačítko panel skryje, volba se pamatuje. Šířku panelu
+  lze měnit tažením jeho levé hrany. Watchlist
   v pravém panelu (přidat/odebrat, klik kamkoli do řádku – symbol, cena,
   změna – přepne graf a řádek se zvýrazní jako aktuální, poslední cena
   a denní změna – Binance živě po 5 s, Yahoo po 60 s, IBKR po 30 s, Alpaca
@@ -267,8 +268,9 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   „Odeslat test“ pošle zkušební zprávu; platí hned. Interactive Brokers –
   host, port a client ID, „Otestovat připojení“ (s hodnotami z dialogu);
   po uložení se zdroj hned přepojí bez restartu. Alpaca – endpoint, API key
-  a secret; projeví se po restartu. Ukládají se jen změněné sekce,
-  komentáře v souboru zůstanou.
+  a secret; projeví se po restartu. Replay – chování kroku zpět (viz
+  Replay); platí hned. Ukládají se jen změněné sekce, komentáře v souboru
+  zůstanou.
 - Měřič jako v TradingView: obdélník modrý při růstu / červený při poklesu,
   šipky středem (cena svisle, čas vodorovně) a štítek s Δcenou, % a počtem
   ticků, počtem barů a délkou úseku a součtem objemu.
@@ -398,6 +400,72 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   pozic před noční seancí) ve zvoleném pásmu a dny v týdnu; zapnutí /
   vypnutí, úprava, smazání. Běží na serveru; spuštění se zapisují do logu
   alertů (bez ceny).
+- Replay – backtest ručních obchodů v historii (jako FX Replay / Bar Replay
+  v TradingView): tlačítko Replay v horní liště (i název session v liště
+  replaye) otevře záložku Replay v pravém panelu se seznamem sessions – může
+  jich být libovolně mnoho; klik na session ji otevře (přepne na ni),
+  tužka ji přejmenuje, koš smaže i s obchody a kresbami, tlačítko + založí
+  novou session pro symbol aktivního grafu. Start se zadá datem a časem, nebo „Vybrat v grafu“ (klik
+  na svíčku – ta je poslední odkrytá, budoucnost vpravo se při výběru
+  zastíní); dál měna účtu, počáteční zůstatek, jednotek v lotu (forex
+  100 000, jinak 1), krok lotu, tick, spread a skluz v tickách, komise za lot
+  a stranu, pevný kurz k měně účtu (0 = automaticky) a automatická pauza
+  (po naplnění příkazu, po uzavření obchodu, při signálu indikátoru – např.
+  Svopex TTW – na uzavřené svíčce; ve výchozím stavu vše vypnuté). Přesnost simulace = základní timeframe:
+  automaticky nejjemnější, pro který má zdroj data (Binance 1m roky
+  zpátky, Yahoo 1m jen ~30 dní, pak 5m / 15m / 1h / 1D), nebo zvolený.
+  Grafy se symbolem session přejdou do replaye (fialová tečka v nadpisu,
+  štítek „replay“, bez živého streamu, alertů a tabulky scanneru): do
+  prohlížeče jdou jen odkryté svíčky, poslední svíčka grafu se skládá ze
+  základních svíček a během přehrávání roste, indikátory se počítají jen
+  z odkrytých dat. Timeframe grafu jde během replaye měnit (jen ne jemnější
+  než přesnost replaye), kurzor zůstává; v rozložení více grafů jedou
+  všechny grafy se symbolem session na společném čase.
+  Lišta replaye pod grafy: název session (sessions), nůžky = krok zpět
+  klikem do grafu, Play / pauza (mezerník), krok vpřed (Shift+→; „1 bar
+  grafu“ dokončí další svíčku aktivního grafu, „1 bar základu“ jednu
+  základní svíčku), rychlost 1×–100× (základních svíček za sekundu), skok
+  na datum a čas (vpřed se obchody vyhodnotí svíčku po svíčce, dřív = krok
+  zpět), čas replaye, Buy / Sell, zůstatek, equity a Open P&L, panel
+  obchodů, nastavení session (změna nákladů či účtu přepočítá celou
+  session) a ukončení replaye (session zůstane uložená i s kurzorem).
+  Příkazy: Market, Limit a Stop (buy stop / sell stop), SL a TP v cenách,
+  velikost v lotech / kontraktech, nebo podle rizika v % účtu či částkou
+  (z ceny vstupu a stop lossu, zaokrouhleno dolů na krok lotu), expirace
+  (prázdné = GTC), štítek setupu a poznámka; dialog ukazuje loty, riziko
+  a R:R a kontroluje polohu limitu / stopu a SL / TP. Obchod jde zadat i
+  nástrojem Long / Short position: nakreslená pozice zůstane v grafu, tažením
+  se doladí vstup, SL a TP a obchod se zadá pravým klikem „Zadat obchod…“
+  nebo dvojklikem – dialog příkazu převezme úrovně z kresby (druh podle
+  polohy vstupu vůči ceně – long pod cenou Limit, nad cenou Stop, u ceny
+  Market; velikost 1 % rizika); po odeslání kresbu nahradí čáry příkazu. V grafu: čára vstupu otevřeného obchodu se štítkem (#, směr,
+  loty, P&L, ✕ = zavřít za trh), SL a TP čárkovaně se štítkem částky (tažením
+  se posunou, ✕ úroveň odebere), čekající příkaz čárkovaně (tažení ceny,
+  SL i TP, ✕ = zrušit), šipky vstupů a výstupů a čárkovaná spojnice vstup →
+  výstup uzavřených obchodů (zelená zisk, červená ztráta).
+  Plnění: data jsou bid, buy se plní na asku (bid + spread); limit na své
+  ceně, při gapu za otevření (lepší cenou), stop na své ceně, při gapu za
+  otevření (horší) + skluz; SL a TP stejně (SL přes víkendový gap = ztráta
+  navíc); stop i cíl v jedné základní svíčce = stop a obchod je označený
+  jako odhad (⚠), ve svíčce vstupu se cíl nebere. P&L se převádí na měnu
+  účtu kurzem v čase výstupu: stejná měna 1, forexový pár se základní
+  měnou = měna účtu přes 1 / cena, jinak denní kurzy z Yahoo Finance
+  (`QUOTEACCOUNT=X`, příp. obrácený pár), stablecoiny jako USD, londýnské
+  akcie v pencích. Panel obchodů: Pozice (P&L, R, upravit SL / TP,
+  break-even, zavřít polovinu, zavřít), Příkazy (upravit, zrušit), Historie
+  (vstup, výstup, důvod, P&L, R, štítek; klik posune graf na vstup, tužka =
+  poznámka a štítek, v dialogu i MAE / MFE), Statistiky (čistý zisk a %,
+  win rate, profit factor, průměrná výhra / ztráta, expectancy, průměrné
+  a celkové R, max. drawdown, nejdelší série ztrát, největší výhra / ztráta,
+  komise, počet odhadnutých obchodů, křivka zůstatku a výsledky podle
+  štítku setupu) a export obchodů do CSV (středník, UTF-8 s BOM pro Excel).
+  Výšku panelu obchodů i šířku pravého panelu lze měnit tažením jejich hrany
+  (velikost si pamatuje prohlížeč).
+  Kresby v replayi patří k session (oddělené od živých kreseb symbolu).
+  Krok zpět (Settings → Replay): povolený a smaže příkazy a obchody po bodu
+  návratu (výchozí), povolený po potvrzení, nebo zakázaný. Session se
+  ukládá do SQLite (`replay_sessions`): příkazy s časem zadání, ze kterých
+  se stav účtu deterministicky přepočítá (obnovení po restartu, krok zpět).
 - Pravý klik a dvojklik (jako v TradingView): na kresbě menu „Settings…“
   (barva, šířka a styl čáry, u textu obsah a vzhled písma, u všech záložka
   Visibility) a „Smazat
@@ -545,7 +613,7 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   timeframy), aktivace po zadání klíčů
 - `tickview/providers/__init__.py` – registr zdrojů (nový zdroj = jeden řádek)
 - `tickview/logic/cache.py` – SQLite cache svíček, nastavení, kreseb,
-  alertů a jejich logu, seznamů symbolů (watchlistů) a evidence stažených intervalů; skládání historie z cache a sítě
+  alertů a jejich logu, seznamů symbolů (watchlistů), session replaye a evidence stažených intervalů; skládání historie z cache a sítě
   (ze sítě stahuje jen chybějící úseky) a „aspoň N posledních svíček“ se
   zvětšováním okna (graf i scanner)
 - `tickview/indicators/api.py` – rozhraní indikátorů (jediný modul, který
@@ -586,6 +654,14 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   a alert před zavřením svíčky
 - `tickview/services/reminders.py` – ReminderService: časové připomínky na
   pozadí
+- `tickview/logic/replay.py` – engine replaye: příkazy (market / limit /
+  stop), plnění se spreadem, skluzem a gapy, SL / TP, částečné uzavření,
+  komise, MAE / MFE, převod měn, velikost pozice podle rizika,
+  deterministický přepočet session z příkazů, statistiky, skládání svíček
+  grafu ze základních svíček a export CSV
+- `tickview/services/replay.py` – ReplayController: základní svíčky session
+  (přednačítání za kurzorem, budoucnost jen na serveru), přehrávání, krok,
+  skok, krok zpět, příkazy uživatele a ukládání session
 - `tickview/logic/sessions.py` – filtr hlavní obchodní seance (RTH) a seznam
   časových pásem pro nabídku
 - `tickview/logic/layouts.py` – rozložení více grafů (Layout setup), volby
@@ -594,8 +670,9 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
 - `tickview/logic/indicator_templates.py` – šablony indikátorů (uložení,
   přepsání, oblíbené, naposledy použité, popis)
 - `tickview/ui/chart_pane.py` – jeden graf rozložení (ChartPane): symbol,
-  timeframe, načtení historie, donačítání, živý stream, indikátory, kresby
-  viditelné na timeframu a čáry alertů
+  timeframe, načtení historie, donačítání, živý stream, data replaye
+  (historie do kurzoru, skládání svíčky ze základních svíček), indikátory,
+  kresby viditelné na timeframu a čáry alertů
 - `tickview/ui/lightweight_chart.py` – vlastní komponenta NiceGUI obalující
   Lightweight Charts (init, výměna dat, inkrementální svíčka, motiv,
   indikátory, kreslení, fronta událostí z grafu)
@@ -612,6 +689,10 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   stylu výstupu (barva s průhledností, Thickness, Line style)
 - `tickview/ui/visibility_fields.py` – pole záložky Visibility (kresby
   i indikátory)
+- `tickview/ui/replay_panel.py` – UI replaye: lišta přehrávání, panel
+  obchodů (Pozice, Příkazy, Historie, Statistiky), záložka sessions v pravém
+  panelu, dialogy nové session, přejmenování, příkazu, úpravy obchodu, skoku
+  a nastavení session
 - `tickview/ui/reminders_dialog.py` – dialog Časové připomínky
 - `tickview/ui/notify_fields.py` – pole notifikací (Telegram, oznámení,
   zvuk, webhook) pro časové připomínky
@@ -628,6 +709,7 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   a značky indikátorů (overlay sleduje i změnu měřítka cenové osy), tabulka
   scanneru, kontextová
   menu, kreslicí nástroje na překryvném canvasu včetně Long / Short position,
+  replay (výběr startu, čáry a štítky obchodů a příkazů s tažením SL / TP),
   čáry alertů a zvuk alertu, plovoucí panel oblíbených
   nástrojů, styl svíček; více grafů na stránce – aktivní graf, společná
   lišta a klávesnice, synchronizace crosshairu a času)
@@ -636,6 +718,8 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   a styl čáry)
 - `tickview/ui/static/dialog_tabs.js` – stálá velikost dialogů Settings
   při přepínání záložek
+- `tickview/ui/static/resizers.js` – posuvné hrany panelů (šířka pravého
+  panelu, výška panelu obchodů replaye) s uložením velikosti v prohlížeči
 - `tickview/ui/static/style.css` – styly UI
 - `tickview/ui/static/lightweight-charts.standalone.production.js` – vendored
   knihovna TradingView Lightweight Charts 4.2.3 (licence Apache-2.0)
@@ -645,7 +729,8 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   falešný HTTP transport a pozice Long/Short; rozložení grafů, viditelnost
   kreseb, styl textu, šablony indikátorů a kresby napříč timeframy;
   rozhraní a loader indikátorů, scanner, časové připomínky a Svopex TTW
-  porovnaný s doslovným přepisem Pine v `tests/ttw_reference.py`);
+  porovnaný s doslovným přepisem Pine v `tests/ttw_reference.py`; engine
+  replaye – plnění, náklady, převod měn, krok zpět, statistiky);
   spuštění `python -m unittest`
 
 ## Licence

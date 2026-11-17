@@ -415,6 +415,14 @@ class IbkrProvider(DataProvider):
         instrument = IB_INSTRUMENTS.get(symbol)
         return instrument.kind if instrument else "stock"
 
+    def currencies(self, symbol: str) -> tuple[Optional[str], str]:
+        """Forex EUR.USD → (EUR, USD), kov / CFD podle měny kontraktu, akcie v dolarech."""
+        parts = forex_parts(symbol)
+        if parts:
+            return parts
+        instrument = IB_INSTRUMENTS.get(symbol)
+        return None, instrument.currency if instrument else "USD"
+
     def exchange_timezone(self, symbol: str) -> str:
         """Americké akcie, forex IDEALPRO a kovy se v TWS řídí newyorským časem, CFD londýnským."""
         instrument = IB_INSTRUMENTS.get(symbol)

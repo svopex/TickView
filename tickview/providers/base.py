@@ -411,6 +411,14 @@ class DataProvider(ABC):
         """Druh instrumentu (viz SYMBOL_KINDS) pro indikátory; prázdný = neznámý."""
         return ""
 
+    def currencies(self, symbol: str) -> tuple[Optional[str], str]:
+        """Měny instrumentu pro převod P&L v replayi: (základní měna forexového páru, měna ceny).
+
+        Základní měna je None u instrumentů, které nejsou forexový pár;
+        výchozí implementace bere cenu v dolarech.
+        """
+        return None, "USD"
+
     def price_tick(self, symbol: str, price: float) -> Optional[float]:
         """Nejmenší změna ceny instrumentu pro indikátory; None = odhadne se z dat.
 

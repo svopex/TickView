@@ -44,6 +44,9 @@ class LightweightChart(ui.element):
         self._on_ready = on_ready
         # Naposledy poslaná data tabulky scanneru (stejná se neposílají znovu)
         self._overview: dict | None = None
+        # Naposledy poslaná data replaye – živá a statická část (stejná se neposílají znovu)
+        self._replay: dict | None = None
+        self._replay_static: dict | None = None
         # Graf inicializujeme až po prvním vykreslení stránky v prohlížeči
         ui.timer(0.1, self._init_in_browser, once=True)
 
@@ -229,6 +232,32 @@ class LightweightChart(ui.element):
     def set_alert_lines(self, lines: list[dict]) -> None:
         """Čárkované čáry aktivních cenových alertů symbolu: [{"price", "title"}]."""
         self._call("setAlertLines", lines)
+
+    def set_replay(self, payload: dict | None, static: dict | None = None) -> None:
+        """Data replaye pro graf; None = graf není v replayi.
+
+        Parametry:
+            payload: živá část – otevřené obchody a čekající příkazy (čáry a štítky).
+            static: uzavřené obchody a šipky (mění se jen s obchody).
+        Stejná data se znovu neposílají (stav se hlásí po každém kroku přehrávání).
+        """
+        if payload is None:
+            static = None
+        if static != self._replay_static:
+            self._replay_static = static
+            if static is not None:
+                self._call("setReplayStatic", static)
+        if payload != self._replay:
+            self._replay = payload
+            self._call("setReplay", payload)
+
+    def show_time(self, time_s: int) -> None:
+        """Posune graf tak, aby svíčka s časem time_s (s UTC) byla uprostřed (klik na obchod v historii)."""
+        self._call("showTime", int(time_s))
+
+    def end_replay_drag(self) -> None:
+        """Python zpracoval taženou úroveň replaye – čára se vrátí na aktuální data."""
+        self._call("endReplayDrag")
 
     def set_alert_kinds(self, kinds: list[str]) -> None:
         """Druhy kreseb, u kterých kontextové menu nabídne „Přidat alert…“ (logic.alerts.LINE_KINDS)."""

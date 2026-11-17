@@ -102,6 +102,25 @@ CREATE TABLE IF NOT EXISTS alert_log (
     delivery   TEXT,
     seen       INTEGER NOT NULL DEFAULT 0
 );
+-- Session replaye (backtest ručních obchodů jako ve FX Replay): symbol,
+-- základní timeframe, začátek a kurzor (ms UTC), nastavení účtu (JSON),
+-- příkazy uživatele s časem zadání (JSON; stav účtu se z nich přepočítá),
+-- poznámky a štítky obchodů (JSON) a souhrn pro seznam sessions (JSON)
+CREATE TABLE IF NOT EXISTS replay_sessions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT    NOT NULL,
+    source      TEXT    NOT NULL,
+    symbol      TEXT    NOT NULL,
+    base_tf     TEXT    NOT NULL,
+    start_ms    INTEGER NOT NULL,
+    cursor_ms   INTEGER NOT NULL,
+    settings    TEXT    NOT NULL,
+    commands    TEXT    NOT NULL DEFAULT '[]',
+    annotations TEXT    NOT NULL DEFAULT '{}',
+    summary     TEXT    NOT NULL DEFAULT '{}',
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL
+);
 """
 
 # Název seznamu, který vznikne při prvním spuštění (a do kterého se převede
@@ -116,6 +135,11 @@ ALTER TABLE drawings ADD COLUMN color TEXT;
 ALTER TABLE drawings ADD COLUMN text TEXT;
 ALTER TABLE drawings ADD COLUMN options TEXT;
 """
+
+
+def replay_drawing_source(session_id: int) -> str:
+    """Zdroj (sloupec source) kreseb session replaye – kresby replaye jsou oddělené od živých."""
+    return f"replay-{session_id}"
 
 
 class KlineCache:
@@ -748,6 +772,106 @@ class KlineCache:
     async def clear_alert_log(self) -> None:
         """Vymaže log spuštěných alertů."""
         await self._run(self._execute_sync, "DELETE FROM alert_log", ())
+
+
+    # ---------- session replaye ----------
+
+    # Sloupce tabulky replay_sessions v pořadí, v jakém je čte _replay_from_row
+    _REPLAY_COLUMNS = (
+        "id, name, source, symbol, base_tf, start_ms, cursor_ms, settings, commands, annotations, summary, "
+        "created_at, updated_at"
+    )
+
+    @staticmethod
+    def _replay_from_row(row) -> dict:
+        # Řádek replay_sessions → slovník session (JSON sloupce rozbalené;
+        # poškozený JSON = prázdná hodnota, session se dá aspoň smazat)
+        def parse(raw: str, default):
+            try:
+                value = json.loads(raw)
+            except (TypeError, ValueError):
+                return default
+            return value if isinstance(value, type(default)) else default
+
+        return {
+            "id": row[0],
+            "name": row[1],
+            "source": row[2],
+            "symbol": row[3],
+            "base_tf": row[4],
+            "start_ms": row[5],
+            "cursor_ms": row[6],
+            "settings": parse(row[7], {}),
+            "commands": parse(row[8], []),
+            "annotations": parse(row[9], {}),
+            "summary": parse(row[10], {}),
+            "created_at": row[11],
+            "updated_at": row[12],
+        }
+
+    async def replay_sessions(self) -> list[dict]:
+        """Vrátí session replaye (naposledy použitá první)."""
+        rows = await self._run(
+            lambda: self._conn.execute(
+                f"SELECT {self._REPLAY_COLUMNS} FROM replay_sessions ORDER BY updated_at DESC, id DESC"
+            ).fetchall()
+        )
+        return [self._replay_from_row(row) for row in rows]
+
+    async def get_replay_session(self, session_id: int) -> Optional[dict]:
+        """Vrátí session replaye podle id, nebo None."""
+        row = await self._run(
+            lambda: self._conn.execute(
+                f"SELECT {self._REPLAY_COLUMNS} FROM replay_sessions WHERE id = ?", (session_id,)
+            ).fetchone()
+        )
+        return self._replay_from_row(row) if row else None
+
+    async def create_replay_session(
+        self, name: str, source: str, symbol: str, base_tf: str, start_ms: int, settings: dict
+    ) -> int:
+        """Založí session replaye s kurzorem na začátku; vrátí její id."""
+        now_ms = utc_now_ms()
+
+        def create_sync() -> int:
+            cur = self._conn.execute(
+                "INSERT INTO replay_sessions (name, source, symbol, base_tf, start_ms, cursor_ms, settings, "
+                "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (name, source, symbol, base_tf, start_ms, start_ms, json.dumps(settings), now_ms, now_ms),
+            )
+            self._conn.commit()
+            return int(cur.lastrowid)
+
+        return await self._run(create_sync)
+
+    async def update_replay_session(self, session_id: int, **fields) -> None:
+        """Uloží změněné části session (name, cursor_ms, settings, commands, annotations, summary).
+
+        JSON sloupce se serializují; čas poslední změny se aktualizuje vždy.
+        """
+        allowed = ("name", "cursor_ms", "settings", "commands", "annotations", "summary")
+        columns = [key for key in allowed if key in fields]
+        values = [
+            json.dumps(fields[key]) if key in ("settings", "commands", "annotations", "summary") else fields[key]
+            for key in columns
+        ]
+        # Názvy sloupců pocházejí z pevného seznamu allowed (žádný vstup uživatele v SQL)
+        assignments = ", ".join(f"{key} = ?" for key in [*columns, "updated_at"])
+        await self._run(
+            self._execute_sync,
+            f"UPDATE replay_sessions SET {assignments} WHERE id = ?",
+            (*values, utc_now_ms(), session_id),
+        )
+
+    async def delete_replay_session(self, session_id: int) -> None:
+        """Smaže session replaye i kresby, které k ní patří (zdroj kreseb "replay-<id>")."""
+
+        def delete_sync() -> None:
+            with self._conn:
+                self._conn.execute("DELETE FROM replay_sessions WHERE id = ?", (session_id,))
+                self._conn.execute("DELETE FROM drawings WHERE source = ?", (replay_drawing_source(session_id),))
+
+        await self._run(delete_sync)
 
 
 def uncovered_ranges(

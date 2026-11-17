@@ -99,6 +99,7 @@ from tickview.logic.styles import (
     normalize_text_options,
     plural,
 )
+from tickview.logic.replay import DEFAULT_REWIND_MODE, REWIND_MODES
 from tickview.logic.sessions import (
     SESSION_ETH,
     SESSION_RTH,
@@ -119,6 +120,7 @@ from tickview.ui.icons import ICONS, svg
 from tickview.ui.param_form import ParamForm
 from tickview.ui.plot_style_fields import PlotStyleFields
 from tickview.ui.reminders_dialog import RemindersDialog
+from tickview.ui.replay_panel import ReplayUI
 from tickview.ui.templates import TemplateMenu, load_default_template, settings_buttons, settings_header
 from tickview.ui.visibility_fields import VisibilityFields
 
@@ -139,6 +141,7 @@ STATIC_SCRIPTS = (
     "lightweight-charts.standalone.production.js",
     "color_picker.js",
     "dialog_tabs.js",
+    "resizers.js",
     "lightweight_chart.js",
 )
 
@@ -179,7 +182,7 @@ def provider_code(source: str) -> str:
 
 
 # Obsahy pravého panelu ("" = panel skrytý, zůstane jen pravá lišta)
-RIGHT_PANELS = ("watchlist", "alerts", "")
+RIGHT_PANELS = ("watchlist", "alerts", "replay", "")
 # Záhlaví sloupce Symbol ve watchlistu: další stav řazení po kliknutí a ikona stavu
 WATCHLIST_SORT_NEXT = {"": "asc", "asc": "desc", "desc": ""}
 WATCHLIST_SORT_ICONS = {"": "unfold_more", "asc": "arrow_upward", "desc": "arrow_downward"}
@@ -321,6 +324,8 @@ async def _build_index(
         live = pane.badge_live
         name = pane.provider.name if pane.provider else "—"
         text = "—" if live is None else f"{name} · {'živě' if live else 'zpožděno'}"
+        if pane.replay_shown:
+            text = f"{name} · replay"
         # Z background tasků (živý stream) musíme vstoupit do slotu prvku
         with source_badge:
             source_badge.text = text
@@ -328,6 +333,36 @@ async def _build_index(
 
     # Objekt stránky pro grafy rozložení (společné nastavení a hlášení stavu)
     page = SimpleNamespace(cache=cache, state=state, show_status=pane_status, badge_changed=badge_changed)
+
+    # ---------- replay (backtest ručních obchodů) ----------
+
+    def replay_rewind_mode() -> str:
+        """Chování kroku zpět v replayi (Settings → Replay, config.yaml)."""
+        mode = (load_config().get("replay") or {}).get("rewind")
+        return mode if mode in REWIND_MODES else DEFAULT_REWIND_MODE
+
+    # Lištu, panel a dialogy replaye staví ReplayUI; host zpřístupní grafy
+    # rozložení a funkce stránky (uzávěry definované níže se volají až za běhu)
+    replay_ui = ReplayUI(
+        cache,
+        SimpleNamespace(
+            active=lambda: active(),
+            panes=lambda: list(panes),
+            show_status=show_status,
+            set_drawing_mode=lambda mode: set_drawing_mode(mode),
+            refresh_timeframes=lambda: refresh_timeframes(),
+            rewind_mode=replay_rewind_mode,
+            push_alert_lines=lambda: push_alert_lines(),
+            load_symbol=lambda key: load_symbol(key),
+            show_time=lambda pane, time_ms: pane.chart.show_time(time_ms // 1000),
+            replay_changed=lambda: (push_overview(), paint_badge()),
+            delete_drawing=lambda pane, drawing_id: delete_pane_drawing(pane, drawing_id),
+            alerts_blocked=lambda: show_status("Alerty v replayi nejsou k dispozici – graf ukazuje minulost.", True),
+            right_panel=lambda: state["right_panel"],
+            show_sessions=lambda: show_right_panel("replay"),
+        ),
+    )
+    page.replay = replay_ui.controller
 
     # ---------- hledání symbolu (dialog ve stylu TradingView) ----------
 
@@ -708,8 +743,7 @@ async def _build_index(
 
     def supported_timeframes() -> list[str]:
         # Timeframy zdroje aktivního grafu v pořadí nabídky (bez zdroje všechny)
-        provider = active().provider
-        supported = set(provider.timeframes) if provider else set(TIMEFRAMES)
+        supported = set(active().timeframes()) if active().provider else set(TIMEFRAMES)
         return [timeframe for timeframe in TIMEFRAMES if timeframe in supported]
 
     def refresh_timeframes() -> None:
@@ -1121,18 +1155,27 @@ async def _build_index(
         drawing_text.value = payload.get("text") or ""
         await show_drawing_dialog(kind, DRAWING_LABELS.get(kind, kind))
 
-    async def refresh_symbol_drawings(key: str | None, skip: ChartPane | None = None) -> None:
-        """Znovu načte kresby ve všech grafech se symbolem key (kromě skip).
+    async def refresh_symbol_drawings(pane: ChartPane, skip: ChartPane | None = None) -> None:
+        """Znovu načte kresby ve všech grafech se stejným vlastníkem kreseb jako pane (kromě skip).
 
-        Kresby patří k symbolu, takže změna v jednom grafu se projeví i v dalších
-        grafech rozložení se stejným symbolem (třeba na jiném timeframu).
+        Kresby patří k symbolu (v replayi k session), takže změna v jednom grafu
+        se projeví i v dalších grafech rozložení se stejným symbolem (třeba na
+        jiném timeframu).
         """
-        targets = [pane for pane in panes if pane is not skip and key and pane.key == key]
+        owner = pane.drawing_owner
+        targets = [item for item in panes if item is not skip and item.key and item.drawing_owner == owner]
         if not targets:
             return
-        drawings = await cache.load_drawings(targets[0].provider_id, targets[0].symbol)
-        for pane in targets:
-            await pane.reload_drawings(drawings)
+        drawings = await cache.load_drawings(*owner)
+        for item in targets:
+            await item.reload_drawings(drawings)
+
+    async def delete_pane_drawing(pane: ChartPane, drawing_id: int, skip: ChartPane | None = None) -> None:
+        """Smaže kresbu grafu a obnoví kresby v ostatních grafech (skip = graf, který ji už nemá)."""
+        await cache.delete_drawing(*pane.drawing_owner, int(drawing_id))
+        # Alert na kresbu si změnu (posun / smazání) načte znovu
+        alert_engine.drawing_changed(int(drawing_id))
+        await refresh_symbol_drawings(pane, skip=skip)
 
     async def submit_drawing_settings() -> None:
         # Uloží nastavení kresby do databáze (nový text vytvoří) a promítne ho do grafů
@@ -1170,13 +1213,13 @@ async def _build_index(
             await pane.chart.add_text(anchor["time"], anchor["price"], text, color, options)
             show_status("Text přidán a uložen.")
             return
-        await cache.update_drawing_style(pane.provider_id, pane.symbol, current["id"], color, text, options)
+        await cache.update_drawing_style(*pane.drawing_owner, current["id"], color, text, options)
         if points is not None:
-            await cache.update_drawing(pane.provider_id, pane.symbol, current["id"], points, None)
+            await cache.update_drawing(*pane.drawing_owner, current["id"], points, None)
             alert_engine.drawing_changed(current["id"])
         # Grafy se symbolem kresby si ji načtou znovu (viditelnost podle
         # timeframu může kresbu v některém grafu skrýt nebo ukázat)
-        await refresh_symbol_drawings(pane.key)
+        await refresh_symbol_drawings(pane)
         show_status(f"{DRAWING_LABELS.get(kind, kind)}: nastavení uloženo.")
 
     async def set_volume_visible(visible: bool) -> None:
@@ -1313,7 +1356,7 @@ async def _build_index(
     # ten se před zpracováním stane aktivním (dialogy pak míří na něj)
     USER_EVENTS = {
         "indicator", "text_request", "sticker_request", "drawing_settings", "chart_settings",
-        "volume", "symbol_search", "alert_request", "alert_action",
+        "volume", "symbol_search", "alert_request", "alert_action", "replay_pick", "replay_position_order",
     }
 
     async def process_chart_events() -> None:
@@ -1347,6 +1390,9 @@ async def _build_index(
             return
         if event_type in USER_EVENTS:
             await activate_pane(pane)
+        # Události replaye (výběr startu, obchody v grafu) a alerty v grafu replaye vyřídí ReplayUI
+        if await replay_ui.handle_chart_event(pane, event_type, payload, drawing_points(payload)):
+            return
         if event_type == "load_older":
             # Graf se posunul k začátku dat – donačteme starší svíčky
             pane.start_load_older(payload.get("before"))
@@ -1382,17 +1428,14 @@ async def _build_index(
         elif event_type == "delete":
             drawing_id = payload.get("id")
             if drawing_id:
-                await cache.delete_drawing(provider_id, symbol, int(drawing_id))
-                # Alert na kresbu si změnu (posun / smazání) načte znovu
-                alert_engine.drawing_changed(int(drawing_id))
-                await refresh_symbol_drawings(pane.key, skip=pane)
+                await delete_pane_drawing(pane, int(drawing_id), skip=pane)
                 show_status("Kresba smazána.")
         elif event_type == "update":
             drawing_id = payload.get("id")
             if drawing_id:
-                await cache.update_drawing(provider_id, symbol, int(drawing_id), drawing_points(payload), payload.get("text"))
+                await cache.update_drawing(*pane.drawing_owner, int(drawing_id), drawing_points(payload), payload.get("text"))
                 alert_engine.drawing_changed(int(drawing_id))
-                await refresh_symbol_drawings(pane.key, skip=pane)
+                await refresh_symbol_drawings(pane, skip=pane)
         elif event_type == "text_request":
             await open_text_dialog(pane, payload.get("time"), payload.get("price"))
         elif event_type == "drawing_settings" and payload.get("id"):
@@ -1417,8 +1460,7 @@ async def _build_index(
             # Styl nové kresby (výchozí šablona typu nebo dialog Text) zkontrolujeme
             style = normalize_drawing_style(payload, payload["kind"])
             drawing_id = await cache.add_drawing(
-                provider_id,
-                symbol,
+                *pane.drawing_owner,
                 timeframe,
                 payload["kind"],
                 drawing_points(payload),
@@ -1429,8 +1471,10 @@ async def _build_index(
             # Graf si kresbu spáruje podle lokálního id (další úpravy už jdou s id)
             if payload.get("localId") is not None:
                 await pane.chart.assign_drawing_id(payload["localId"], drawing_id)
-            await refresh_symbol_drawings(pane.key, skip=pane)
-            show_status(f"Kresba uložena ({DRAWING_LABELS[payload['kind']]}) k {symbol}")
+            await refresh_symbol_drawings(pane, skip=pane)
+            # Kresba v replayi může mít vlastní nápovědu (pozice = zadání obchodu z menu)
+            show_status(replay_ui.drawing_hint(pane, payload["kind"])
+                        or f"Kresba uložena ({DRAWING_LABELS[payload['kind']]}) k {symbol}")
 
     # ---------- watchlist ----------
 
@@ -1722,6 +1766,9 @@ async def _build_index(
         if alpaca != saved_alpaca:
             update_config_section("alpaca", alpaca)
             messages.append("Alpaca uložena – změna se projeví po restartu aplikace")
+        if settings_replay_rewind.value != replay_rewind_mode():
+            update_config_section("replay", {"rewind": settings_replay_rewind.value})
+            messages.append("Replay uložen")
         if messages:
             # Zdroje si změněnou konfiguraci načtou samy (IBKR se přepojí bez restartu)
             for provider in PROVIDERS:
@@ -1741,6 +1788,7 @@ async def _build_index(
         settings_key.value = alpaca_config.get("api_key", "")
         settings_secret.value = alpaca_config.get("secret", "")
         settings_telegram_token.value, settings_telegram_chat.value = telegram_settings(config)
+        settings_replay_rewind.value = replay_rewind_mode()
         settings_dialog.open()
 
     async def detect_telegram_chat() -> None:
@@ -1784,7 +1832,8 @@ async def _build_index(
         Tabulku grafu určuje scanner podle uloženého rozložení (pořadí grafů).
         """
         for pane in targets if targets is not None else panes:
-            pane.chart.set_overview(scanner.table(panes.index(pane)))
+            # Graf v replayi ukazuje minulost – živá tabulka scanneru do něj nepatří
+            pane.chart.set_overview(None if pane.replay_shown else scanner.table(panes.index(pane)))
 
     async def indicators_changed() -> None:
         # Po každé změně sady indikátorů aktivního grafu: uložit (konfigurace
@@ -2577,12 +2626,21 @@ async def _build_index(
         alerts_confirm_dialog.close()
         await run_bulk_alerts(state.get("alerts_bulk", ""))
 
+    async def show_right_panel(panel: str) -> None:
+        """Zobrazí obsah pravého panelu ("" = skrýt), uloží volbu a vykreslí obsah, který se načítá."""
+        if state["right_panel"] == panel:
+            return
+        state["right_panel"] = panel
+        await cache.set_setting("right_panel", panel)
+        paint_right_panel()
+        # Obsahy, které se vykreslují až při zobrazení (seznamy z databáze)
+        render = {"alerts": render_alerts_panel, "replay": replay_ui.render_sessions}.get(panel)
+        if render:
+            await render()
+
     async def toggle_right_panel(panel: str) -> None:
         """Tlačítko pravé lišty: zobrazí panel, opětovný klik na aktivní ho skryje."""
-        state["right_panel"] = "" if state["right_panel"] == panel else panel
-        await cache.set_setting("right_panel", state["right_panel"])
-        paint_right_panel()
-        await render_alerts_panel()
+        await show_right_panel("" if state["right_panel"] == panel else panel)
 
     def paint_right_panel() -> None:
         # Viditelnost panelu a jeho sekcí, zvýraznění tlačítek pravé lišty
@@ -2590,6 +2648,7 @@ async def _build_index(
         right_panel.set_visibility(bool(current))
         watchlist_section.set_visibility(current == "watchlist")
         alerts_section.set_visibility(current == "alerts")
+        replay_section.set_visibility(current == "replay")
         mark_active(right_buttons, current, "active")
         paint_alerts_tab()
 
@@ -2924,6 +2983,8 @@ async def _build_index(
             ui.button("Alert", icon="alarm_add", color=None, on_click=open_alert_for_chart).props(
                 "flat dense no-caps"
             ).classes("topbar-btn").tooltip("Vytvořit alert pro aktuální symbol")
+            # Replay: sessions a nová session (backtest ručních obchodů)
+            replay_ui.build_topbar_button()
             source_badge = ui.badge("—").classes("source-badge")
             # Layout setup jako v TradingView: počet a uspořádání grafů, synchronizace
             layout_items: dict = {}
@@ -2995,6 +3056,9 @@ async def _build_index(
                             action_buttons[action] = action_button
                     # Mřížka grafů rozložení (CSS třída layout-<id> určuje uspořádání)
                     chart_grid = ui.element("div").classes(f"chart-grid layout-{state['layout']}")
+                # Lišta přehrávání a panel obchodů replaye (jen s otevřenou session)
+                replay_ui.build_bar()
+                replay_ui.build_panel()
                 # Stavová lišta: zprávy vlevo, vpravo seance (RTH/ETH) a hodiny
                 # s volbou časového pásma (jako v TradingView)
                 with ui.row().classes("statusbar-row w-full"):
@@ -3023,6 +3087,10 @@ async def _build_index(
             # Pravý panel jako v TradingView: obsah podle tlačítka pravé lišty
             # (Watchlist / Alerty); opětovný klik na aktivní tlačítko panel skryje
             with ui.column().classes("right-panel") as right_panel:
+                # Posuvná levá hrana pravého panelu (šířka, static/resizers.js)
+                ui.element("div").classes("pane-resizer pane-resizer-left").props(
+                    "data-resize=right-panel data-resize-min=220 data-resize-max=0.6"
+                )
                 with ui.column().classes("watchlist-panel w-full") as watchlist_section:
                     with ui.row().classes("watchlist-header w-full"):
                         # Název aktivního seznamu s nabídkou seznamů (jako v TradingView)
@@ -3110,12 +3178,15 @@ async def _build_index(
                     alert_search.set_visibility(False)
                     alerts_list = ui.column().classes("alerts-list w-full")
                     alert_log_list = ui.column().classes("alerts-list w-full")
+                # Sessions replaye (výběr, nová, přejmenování, smazání)
+                replay_section = replay_ui.build_sessions_panel()
             # Svislá lišta úplně vpravo: přepínání obsahu pravého panelu
             with ui.column().classes("right-bar"):
                 right_buttons = {}
                 for panel, icon, tooltip in (
                     ("watchlist", "format_list_bulleted", "Watchlist"),
                     ("alerts", "alarm", "Alerty"),
+                    ("replay", "history", "Replay – sessions"),
                 ):
                     with ui.button(color=None, on_click=lambda panel=panel: toggle_right_panel(panel)).props(
                         "flat dense"
@@ -3369,6 +3440,7 @@ async def _build_index(
             tab_telegram = ui.tab("Telegram")
             tab_ibkr = ui.tab("Interactive Brokers")
             tab_alpaca = ui.tab("Alpaca")
+            tab_replay = ui.tab("Replay")
         with ui.tab_panels(settings_tabs, value=tab_telegram).classes("tv-tab-panels w-full"):
             with ui.tab_panel(tab_telegram).classes("tv-tab-panel"):
                 ui.label(
@@ -3401,9 +3473,20 @@ async def _build_index(
                 settings_alpaca_endpoint = ui.input("Endpoint (Trading API)").props("outlined dense").classes("w-full")
                 settings_key = ui.input("API key").props("outlined dense type=password").classes("w-full")
                 settings_secret = ui.input("Secret").props("outlined dense type=password").classes("w-full")
+            with ui.tab_panel(tab_replay).classes("tv-tab-panel"):
+                ui.label(
+                    "Krok zpět v replayi (nůžky v liště replaye nebo skok na dřívější čas). Příkazy a obchody "
+                    "zadané po bodu návratu se smažou a stav účtu se přepočítá. Platí hned."
+                ).classes("settings-note")
+                settings_replay_rewind = ui.select(REWIND_MODES, label="Krok zpět").props("outlined dense").classes(
+                    "w-full"
+                )
         with ui.row().classes("tv-settings-actions w-full"):
             ui.space()
             settings_buttons(settings_dialog, save_settings)
+
+    # Dialogy replaye (sessions, příkaz, úprava obchodu, skok, nastavení session)
+    replay_ui.build_dialogs()
 
     # Hledání symbolu ve stylu TradingView: pole, kategorie, zdroj a výsledky
     with ui.dialog().props("position=top") as symbol_search_dialog, ui.card().classes("sym-dialog"):
@@ -3499,6 +3582,9 @@ async def _build_index(
     # Průběžné vyzvedávání událostí všech grafů (viz process_chart_events)
     ui.timer(0.5, process_chart_events)
 
+    # Replay: obnova lišty, čar v grafech a panelu obchodů, klávesové zkratky
+    replay_ui.start()
+
     # Aktualizace cen watchlistu (Binance 5 s, Yahoo throttlováno na zdroji)
     ui.timer(5.0, refresh_watchlist_prices)
 
@@ -3518,6 +3604,8 @@ async def _build_index(
 
     def on_disconnect() -> None:
         # Při odpojení klienta ukončíme živé streamy jeho grafů a odhlásíme ho od alertů a scanneru
+        # Otevřená session replaye se uloží (kurzor, příkazy)
+        replay_ui.shutdown()
         for pane in panes:
             pane.close()
         alert_engine.remove_listener(on_alert_event)

@@ -440,6 +440,7 @@ window.TickViewChart = (function () {
     live: 'Živá data',
     delayed: 'Zpožděná data / polling',
     none: 'Bez živých dat',
+    replay: 'Replay (minulost)',
   };
 
   // Sestaví kostru legendy: nadpis tickeru + OHLC + změna, řádek objemu a
@@ -861,6 +862,12 @@ window.TickViewChart = (function () {
       stepSeconds: 60,
       // Lokální id nových kreseb, dokud jim Python nepřiřadí id z databáze
       nextLocalId: 1,
+      // Replay: příkazy a obchody session (čáry, štítky, šipky), oblasti
+      // štítků a čar pro kliknutí / tažení a právě tažená úroveň
+      replay: null,
+      replayStatic: null,
+      replayHits: [],
+      replayDrag: null,
     };
     state.set(id, s);
     if (!activeId) activeId = id;
@@ -923,6 +930,12 @@ window.TickViewChart = (function () {
         handleMeasureClick(s, point);
         return;
       }
+      if (s.overlay.mode === REPLAY_PICK_MODE) {
+        // Výběr startu replaye: čas svíčky pod kurzorem pošleme Pythonu
+        s.finishedQueue.push({ type: 'replay_pick', time: point.time });
+        exitTool(s);
+        return;
+      }
       handleDrawingClick(s, point);
     });
     overlay.addEventListener('mousemove', (event) => {
@@ -977,8 +990,14 @@ window.TickViewChart = (function () {
     mainHost.addEventListener(
       'mousedown',
       (event) => {
-        if (event.button !== 0 || s.overlay.mode || s.locked) return;
+        if (event.button !== 0 || s.overlay.mode) return;
         const { x, y } = localPoint(s, event);
+        if (startReplayInteraction(s, x, y)) {
+          event.stopPropagation();
+          event.preventDefault();
+          return;
+        }
+        if (s.locked) return;
         const hit = hitHandle(s, x, y);
         if (hit) {
           event.stopPropagation();
@@ -1011,6 +1030,9 @@ window.TickViewChart = (function () {
       if (s.overlay.mode || s.overlay.drag) return;
       throttleHover(s, () => {
         const { x, y } = localPoint(s, event);
+        const replayHit = hitReplay(s, x, y);
+        mainHost.classList.toggle('replay-line-hover', !!(replayHit && replayHit.field));
+        mainHost.classList.toggle('replay-button-hover', !!(replayHit && !replayHit.field));
         const index = s.locked ? -1 : hitTest(s, x, y);
         const drawing = index >= 0 ? s.overlay.drawings[index] : null;
         setHover(s, drawing, drawing ? null : hitIndicator(s, x, y));
@@ -1060,7 +1082,9 @@ window.TickViewChart = (function () {
         const drawing = s.overlay.drawings[index];
         if (drawing) {
           event.stopPropagation();
-          requestDrawingSettings(s, drawing);
+          // V replayi dvojklik na pozici zadá obchod, jinak otevře Settings kresby
+          if (s.replay && isPosition(drawing) && drawing.id) requestPositionOrder(s, drawing);
+          else requestDrawingSettings(s, drawing);
           return;
         }
         const group = hitIndicator(s, x, y);
@@ -1156,6 +1180,7 @@ window.TickViewChart = (function () {
     // okna jsou společné, aby odebraný graf nezůstal v jejich uzávěrách
     window.addEventListener('mousemove', (event) => {
       for (const s of state.values()) {
+        if (s.replayDrag) dragReplayLevel(s, event);
         const drag = s.overlay.drag;
         if (!drag) continue;
         const { x, y } = localPoint(s, event);
@@ -1163,7 +1188,10 @@ window.TickViewChart = (function () {
       }
     });
     window.addEventListener('mouseup', () => {
-      for (const s of state.values()) finishDrag(s);
+      for (const s of state.values()) {
+        finishReplayDrag(s);
+        finishDrag(s);
+      }
     });
     // Po změně velikosti okna i mřížky grafů zůstane panel oblíbených celý viditelný
     window.addEventListener('resize', () => positionFavorites());
@@ -1246,7 +1274,7 @@ window.TickViewChart = (function () {
     forEachOther(s, (other) => {
       if (typeof other.chart.setCrosshairPosition !== 'function') return;
       // Svíčka obsahující čas = poslední svíčka s časem ≤ čas (časy jsou celé sekundy)
-      const index = param.time === undefined ? -1 : firstCandleIndex(other, param.time + 1) - 1;
+      const index = param.time === undefined ? -1 : candleIndexAt(other, param.time);
       if (index < 0) {
         clearCrosshair(other);
         return;
@@ -1353,9 +1381,19 @@ window.TickViewChart = (function () {
   }
 
 
+  // Požádá Python o dialog příkazu replaye z úrovní kresby pozice (vstup, cíl, stop)
+  function requestPositionOrder(s, drawing) {
+    s.finishedQueue.push({ type: 'replay_position_order', id: drawing.id, kind: drawing.kind, points: drawing.points });
+  }
+
   // Položky menu kresby: Settings, alert (u čar) a smazání
   function drawingMenuItems(s, drawing) {
-    const items = [['Settings…', () => requestDrawingSettings(s, drawing), 'settings']];
+    const items = [];
+    // Long / Short position v replayi: zadání obchodu z úrovní kresby
+    if (s.replay && isPosition(drawing) && drawing.id) {
+      items.push(['Zadat obchod…', () => requestPositionOrder(s, drawing), 'shopping_cart']);
+    }
+    items.push(['Settings…', () => requestDrawingSettings(s, drawing), 'settings']);
     if (alertLineKinds.includes(drawing.kind) && drawing.id) {
       items.push(['Přidat alert…', () => s.finishedQueue.push({ type: 'alert_request', drawingId: drawing.id, kind: drawing.kind }), 'alarm_add']);
     }
@@ -2187,6 +2225,7 @@ window.TickViewChart = (function () {
         color: marker.color,
         text: marker.text || '',
       }))
+      .concat(replayMarkers(s))
       .sort((a, b) => a.time - b.time);
     s.candleSeries.setMarkers(markers);
   }
@@ -3827,6 +3866,277 @@ window.TickViewChart = (function () {
     ctx.restore();
   }
 
+  // ---------- replay (obchody a příkazy session, výběr startu) ----------
+
+  // Režim overlaye pro výběr startu replaye (klik do grafu = čas startu)
+  const REPLAY_PICK_MODE = 'replay_pick';
+  // Barvy jako u měřiče (buy modrá, sell červená) a pozice (zisk / ztráta)
+  const REPLAY_BUY = MEASURE_UP;
+  const REPLAY_SELL = MEASURE_DOWN;
+  const REPLAY_LABEL = { font: '11px ' + LABEL_FONT, height: 18, padX: 6 };
+
+  // Živá data replaye z Pythonu: {currency, orders, trades} (mění se s cenou);
+  // null = graf není v replayi (zruší i statická data a taženou úroveň)
+  function setReplay(id, payload) {
+    const s = state.get(id);
+    if (!s) return;
+    s.replay = payload || null;
+    if (!s.replay) {
+      s.replayStatic = null;
+      s.replayDrag = null;
+      applyIndicatorMarkers(s);
+    }
+    redrawOverlay(s);
+  }
+
+  // Statická data replaye: {closed, markers} – uzavřené obchody a šipky (mění se jen s obchody)
+  function setReplayStatic(id, payload) {
+    const s = state.get(id);
+    if (!s) return;
+    s.replayStatic = payload || null;
+    applyIndicatorMarkers(s);
+    redrawOverlay(s);
+  }
+
+  // Python zpracoval taženou úroveň (přijal nebo odmítl) – čára se vrátí na data
+  function endReplayDrag(id) {
+    const s = state.get(id);
+    if (!s) return;
+    s.replayDrag = null;
+    redrawOverlay(s);
+  }
+
+  // Index svíčky, která obsahuje čas (s) – poslední svíčka s časem ≤ čas; -1 = žádná
+  function candleIndexAt(s, time) {
+    return firstCandleIndex(s, time + 1) - 1;
+  }
+
+  // Šipky vstupů a výstupů replaye na svíčkách grafu (čas = svíčka, která ho obsahuje)
+  function replayMarkers(s) {
+    if (!s.replayStatic || !s.candles.length) return [];
+    const result = [];
+    for (const marker of s.replayStatic.markers || []) {
+      const index = candleIndexAt(s, marker.time);
+      if (index < 0) continue;
+      const buy = marker.side === 'buy';
+      result.push({
+        time: s.candles[index].time,
+        position: buy ? 'belowBar' : 'aboveBar',
+        shape: buy ? 'arrowUp' : 'arrowDown',
+        color: marker.entry ? (buy ? REPLAY_BUY : REPLAY_SELL) : POSITION_NEUTRAL,
+        text: marker.text || '',
+      });
+    }
+    return result;
+  }
+
+  // Částka v měně účtu se znaménkem (štítky čar replaye)
+  function formatMoney(value, currency) {
+    if (value === null || value === undefined || !isFinite(value)) return '';
+    const sign = value > 0 ? '+' : value < 0 ? '−' : '';
+    return sign + formatAmount(Math.abs(value)) + ' ' + (currency || '');
+  }
+
+  // Úroveň (cena) s ohledem na právě taženou úroveň
+  function replayLevel(s, id, field, price) {
+    const drag = s.replayDrag;
+    return drag && drag.id === id && drag.field === field ? drag.price : price;
+  }
+
+  // Štítek čáry replaye končící u pravého okraje (nebo u right): text v rámečku
+  // barvy čáry a tlačítko ✕ (akce pro Python); oblast ✕ zapíše do s.replayHits
+  // a vrátí levý okraj štítku (štítky blízkých čar se řadí vedle sebe)
+  function drawReplayLabel(ctx, s, text, y, color, paneWidth, closeAction, right) {
+    ctx.font = REPLAY_LABEL.font;
+    const height = REPLAY_LABEL.height;
+    const width = ctx.measureText(text).width + 2 * REPLAY_LABEL.padX + height;
+    const x = Math.max(2, (right === undefined ? paneWidth - 8 : right) - width);
+    const top = y - height / 2;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.roundRect(x, top, width, height, 2);
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, x + REPLAY_LABEL.padX, y);
+    const closeX = x + width - height;
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.moveTo(closeX, top + 3);
+    ctx.lineTo(closeX, top + height - 3);
+    ctx.stroke();
+    ctx.fillText('✕', closeX + 5, y);
+    ctx.textBaseline = 'alphabetic';
+    s.replayHits.push({ x1: closeX, x2: closeX + height, y1: top, y2: top + height, action: closeAction });
+    return x;
+  }
+
+  // Vodorovná čára úrovně replaye od x1 po pravý okraj (čárkovaná / plná)
+  function drawReplayLine(ctx, x1, x2, y, color, dashed) {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1;
+    ctx.setLineDash(dashed ? LINE_DASHES.dashed : []);
+    ctx.beginPath();
+    ctx.moveTo(x1, y);
+    ctx.lineTo(x2, y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // SL / TP úroveň obchodu nebo příkazu (tažení, ✕ = odebrat); štítek blízko
+  // štítku vstupu se odsune vlevo od něj, aby se nepřekrývaly
+  function drawReplayStopTarget(ctx, s, item, field, entry, direction, x1, paneWidth, entryLabel) {
+    const price = replayLevel(s, item.id, field, item[field]);
+    if (price === null || price === undefined) return;
+    const y = s.candleSeries.priceToCoordinate(price);
+    if (y === null) return;
+    const color = field === 'tp' ? POSITION_PROFIT : POSITION_LOSS;
+    drawReplayLine(ctx, x1, paneWidth, y, color, true);
+    const amount = (price - entry) * direction * (item.value_per_point || 0);
+    const label = (field === 'tp' ? 'TP ' : 'SL ') + formatInstrumentPrice(s, price) + '  ' +
+      formatMoney(amount, s.replay.currency);
+    const overlaps = Math.abs(entryLabel.y - y) < REPLAY_LABEL.height + 2;
+    drawReplayLabel(ctx, s, label, y, color, paneWidth, { type: 'replay_modify', id: item.id, field: field, price: null },
+      overlaps ? entryLabel.left - 6 : undefined);
+    s.replayHits.push({ id: item.id, field: field, y: y, x1: x1, x2: paneWidth });
+  }
+
+  // Čára vstupu otevřeného obchodu nebo ceny čekajícího příkazu se štítkem
+  // a ✕, pod ní SL a TP; dragField = úroveň, kterou jde táhnout (cena příkazu)
+  function drawReplayEntry(ctx, s, item, price, x1, label, labelColor, closeAction, dashed, dragField, paneWidth) {
+    const y = s.candleSeries.priceToCoordinate(price);
+    if (y === null) return;
+    const long = item.side === 'buy';
+    drawReplayLine(ctx, x1, paneWidth, y, long ? REPLAY_BUY : REPLAY_SELL, dashed);
+    const entryLabel = { y: y, left: drawReplayLabel(ctx, s, label, y, labelColor, paneWidth, closeAction) };
+    if (dragField) s.replayHits.push({ id: item.id, field: dragField, y: y, x1: x1, x2: paneWidth });
+    for (const field of ['sl', 'tp']) {
+      drawReplayStopTarget(ctx, s, item, field, price, long ? 1 : -1, x1, paneWidth, entryLabel);
+    }
+  }
+
+  // Obchody a příkazy session: spojnice uzavřených obchodů, čáry otevřených
+  // obchodů (vstup, SL, TP) a čekajících příkazů se štítky a tlačítky ✕
+  function drawReplay(ctx, s, paneWidth) {
+    s.replayHits = [];
+    const replay = s.replay;
+    if (!replay || !s.candles.length) return;
+    ctx.save();
+    // Uzavřené obchody: čárkovaná spojnice vstup → výstup (zelená zisk, červená ztráta)
+    for (const trade of (s.replayStatic && s.replayStatic.closed) || []) {
+      const from = pointToPixel(s, { time: trade.entry_time, price: trade.entry });
+      const to = pointToPixel(s, { time: trade.exit_time, price: trade.exit });
+      if (!from || !to) continue;
+      ctx.strokeStyle = trade.pnl >= 0 ? POSITION_PROFIT : POSITION_LOSS;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.moveTo(from.x, from.y);
+      ctx.lineTo(to.x, to.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    // Otevřené obchody: plná čára vstupu od času vstupu, štítek s P&L (✕ = zavřít)
+    for (const trade of replay.trades || []) {
+      const label = '#' + trade.id + ' ' + (trade.side === 'buy' ? 'LONG ' : 'SHORT ') + trade.qty + '  ' +
+        formatMoney(trade.pnl, replay.currency);
+      drawReplayEntry(ctx, s, trade, trade.entry, Math.max(0, timeToX(s, trade.entry_time) || 0), label,
+        trade.pnl >= 0 ? POSITION_PROFIT : POSITION_LOSS, { type: 'replay_close', id: trade.id }, false, null, paneWidth);
+    }
+    // Čekající příkazy: čárkovaná čára ceny (táhnout lze cenu, SL i TP; ✕ = zrušit)
+    for (const order of replay.orders || []) {
+      const price = replayLevel(s, order.id, 'price', order.price);
+      const label = '#' + order.id + ' ' + (order.side === 'buy' ? 'BUY ' : 'SELL ') + order.type.toUpperCase() + ' ' +
+        order.qty + ' @ ' + formatInstrumentPrice(s, price);
+      drawReplayEntry(ctx, s, order, price, 0, label, order.side === 'buy' ? REPLAY_BUY : REPLAY_SELL,
+        { type: 'replay_cancel', id: order.id }, true, 'price', paneWidth);
+    }
+    ctx.restore();
+  }
+
+  // Výběr startu replaye: svislá čára na svíčce pod kurzorem a zastínění
+  // budoucnosti vpravo od ní (to se po startu skryje)
+  function drawReplayPick(ctx, s, paneWidth, paneHeight) {
+    const hover = s.overlay.hover;
+    if (s.overlay.mode !== REPLAY_PICK_MODE || !hover) return;
+    const x = timeToX(s, hover.time);
+    if (x === null) return;
+    ctx.save();
+    ctx.fillStyle = withAlpha(REPLAY_BUY, 0.12);
+    ctx.fillRect(x, 0, Math.max(0, paneWidth - x), paneHeight);
+    ctx.strokeStyle = REPLAY_BUY;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, paneHeight);
+    ctx.stroke();
+    drawLabelBox(ctx, ['Start replaye'], x, 24, false, REPLAY_BUY, POSITION_LABEL, paneWidth, paneHeight);
+    ctx.restore();
+  }
+
+  // Posune graf tak, aby svíčka obsahující čas (s) byla uprostřed při stejném přiblížení
+  function showTime(id, time) {
+    const s = state.get(id);
+    if (!s || !s.candles.length) return;
+    const index = Math.max(0, candleIndexAt(s, time));
+    const timeScale = s.chart.timeScale();
+    const range = timeScale.getVisibleLogicalRange();
+    const width = range ? range.to - range.from : 100;
+    timeScale.setVisibleLogicalRange({ from: index - width / 2, to: index + width / 2 });
+  }
+
+  // Tlačítko (✕) nebo čára replaye pod kurzorem; tlačítka mají přednost
+  function hitReplay(s, x, y) {
+    if (!s.replay) return null;
+    const button = s.replayHits.find((hit) => hit.action && x >= hit.x1 && x <= hit.x2 && y >= hit.y1 && y <= hit.y2);
+    if (button) return button;
+    return s.replayHits.find((hit) => hit.field && x >= hit.x1 && x <= hit.x2 && Math.abs(hit.y - y) <= HIT_TOLERANCE_PX) || null;
+  }
+
+  // Klik na tlačítko replaye (zavřít / zrušit / odebrat SL nebo TP), nebo
+  // začátek tažení úrovně; vrací true, když událost patřila replayi
+  function startReplayInteraction(s, x, y) {
+    const hit = hitReplay(s, x, y);
+    if (!hit) return false;
+    if (hit.action) {
+      s.finishedQueue.push(Object.assign({}, hit.action));
+      return true;
+    }
+    const price = s.candleSeries.coordinateToPrice(y);
+    if (price === null) return false;
+    s.replayDrag = { id: hit.id, field: hit.field, price: roundPrice(s, Number(price)), moved: false };
+    redrawOverlay(s);
+    return true;
+  }
+
+  // Tažení úrovně replaye: cena na celé ticky podle polohy myši
+  function dragReplayLevel(s, event) {
+    if (s.replayDrag.sent) return;
+    const { y } = localPoint(s, event);
+    const price = s.candleSeries.coordinateToPrice(y);
+    if (price === null) return;
+    s.replayDrag.price = roundPrice(s, Number(price));
+    s.replayDrag.moved = true;
+    scheduleOverlayRedraw(s);
+  }
+
+  // Konec tažení: novou úroveň pošle Pythonu; čára drží taženou cenu, dokud
+  // Python změnu nezpracuje (endReplayDrag)
+  function finishReplayDrag(s) {
+    const drag = s.replayDrag;
+    if (!drag || drag.sent) return;
+    if (drag.moved) {
+      drag.sent = true;
+      s.finishedQueue.push({ type: 'replay_modify', id: drag.id, field: drag.field, price: drag.price });
+    } else {
+      s.replayDrag = null;
+      redrawOverlay(s);
+    }
+  }
+
   // ---------- alerty (čáry na grafu, zvuk) ----------
 
   // Barva čar alertů (jako hodiny alertu v TradingView)
@@ -3913,6 +4223,8 @@ window.TickViewChart = (function () {
     ctx.clip();
     ctx.translate(pane.offsetX, pane.offsetY);
     drawIndicatorSegments(ctx, s);
+    drawReplay(ctx, s, pane.width);
+    drawReplayPick(ctx, s, pane.width, pane.height);
     if (highlightedGroups(s).length) drawSelectionMarkers(ctx, s, s.chart, pane.width, overlayMarkerEntries(s));
     if (!s.overlay.hidden) {
       const all = [...s.overlay.drawings];
@@ -3975,6 +4287,10 @@ window.TickViewChart = (function () {
     setLocked: setLocked,
     addSticker: addSticker,
     setAlertLines: setAlertLines,
+    setReplay: setReplay,
+    setReplayStatic: setReplayStatic,
+    endReplayDrag: endReplayDrag,
+    showTime: showTime,
     setAlertKinds: setAlertKinds,
     playSound: playSound,
     scrollIntoView: scrollIntoView,

@@ -463,8 +463,10 @@
 
 /* Pravý panel (Watchlist / Alerty) jako v TradingView */
 .right-panel {
-  width: 300px;
-  min-width: 300px;
+  position: relative;
+  /* Šířku mění posuvná levá hrana (resizers.js, proměnná --right-panel-size) */
+  width: var(--right-panel-size, 300px);
+  min-width: var(--right-panel-size, 300px);
   min-height: 0;
   gap: 0 !important;
   flex-wrap: nowrap;
@@ -2471,4 +2473,388 @@
 /* Settings aplikace (Telegram, Interactive Brokers, Alpaca v záložkách) */
 .app-settings {
   width: 520px;
+}
+
+/* ---------- Replay (backtest ručních obchodů) ---------- */
+
+/* Stav dat „replay“ v nadpisu grafu (fialová tečka) */
+.legend-status.replay {
+  background: #9c27b0;
+  box-shadow: 0 0 0 3px rgba(156, 39, 176, 0.25);
+}
+
+/* Kurzor nad čarou replaye (tažení SL / TP / ceny příkazu) a nad tlačítkem ✕ */
+.lwchart-host.replay-line-hover,
+.lwchart-host.replay-line-hover canvas {
+  cursor: ns-resize !important;
+}
+
+.lwchart-host.replay-button-hover,
+.lwchart-host.replay-button-hover canvas {
+  cursor: pointer !important;
+}
+
+/* Tlačítko Replay v horní liště: s otevřenou session zvýrazněné */
+.replay-topbar-btn.replay-on {
+  color: #9c27b0;
+}
+
+/* Lišta přehrávání pod grafy */
+/* Při úzkém grafu (širší pravý panel) se lišta zalomí do dalšího řádku */
+.replay-bar {
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px !important;
+  padding: 2px 8px;
+  border-top: 1px solid rgba(128, 128, 128, 0.25);
+  font-size: 12px;
+}
+
+.replay-bar-icon {
+  color: #9c27b0;
+  font-size: 18px;
+}
+
+.replay-name {
+  flex-shrink: 0;
+  font-weight: 600;
+  color: inherit;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.replay-btn {
+  color: inherit;
+}
+
+.replay-play {
+  color: #2962ff;
+}
+
+.replay-select {
+  flex-shrink: 0;
+  min-width: 64px;
+  font-size: 12px;
+}
+
+/* Prvky lišty replaye se nezmenšují (lišta se při nedostatku místa zalomí) */
+.replay-bar > * {
+  flex-shrink: 0;
+}
+
+.replay-time {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  padding: 0 6px;
+}
+
+.replay-sep {
+  height: 22px;
+  margin: 0 4px;
+}
+
+.replay-account {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  padding: 0 4px;
+}
+
+/* Tlačítka Buy / Sell (i odeslání příkazu) v barvách TradingView */
+.replay-buy {
+  background: #2962ff !important;
+  color: #ffffff !important;
+  min-width: 56px;
+}
+
+.replay-sell {
+  background: #f23645 !important;
+  color: #ffffff !important;
+  min-width: 56px;
+}
+
+/* Barvy výsledků a stran obchodu */
+.replay-profit {
+  color: #089981;
+}
+
+.replay-loss {
+  color: #f23645;
+}
+
+.replay-side-buy {
+  color: #2962ff;
+}
+
+.replay-side-sell {
+  color: #f23645;
+}
+
+/* Spodní panel obchodů (Pozice / Příkazy / Historie / Statistiky) */
+.replay-panel {
+  position: relative;
+  /* Výšku mění posuvná horní hrana (resizers.js, proměnná --replay-panel-size) */
+  height: var(--replay-panel-size, 250px);
+  min-height: var(--replay-panel-size, 250px);
+  gap: 0 !important;
+  flex-wrap: nowrap;
+  border-top: 1px solid rgba(128, 128, 128, 0.25);
+}
+
+.replay-panel-head {
+  align-items: center;
+  flex-wrap: nowrap;
+  padding: 0 8px;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.18);
+}
+
+.replay-panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  background: transparent !important;
+}
+
+.replay-tab-panel {
+  height: 100%;
+  overflow: auto;
+  padding: 4px 8px !important;
+}
+
+/* Tabulky panelu: řádky jako mřížka se sloupci podle druhu tabulky */
+.replay-table {
+  gap: 0 !important;
+  font-size: 12px;
+}
+
+.replay-row {
+  display: grid;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 4px;
+  border-radius: 3px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.replay-row > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.replay-head {
+  color: #808080;
+  font-size: 11px;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.18);
+}
+
+.replay-row:not(.replay-head):hover {
+  background: rgba(128, 128, 128, 0.1);
+}
+
+.replay-row-click {
+  cursor: pointer;
+}
+
+.replay-row-actions {
+  gap: 0 !important;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+}
+
+.replay-row-btn {
+  color: inherit;
+}
+
+.replay-cols-positions {
+  grid-template-columns: 40px 56px 56px 1fr 1fr 1fr 1.2fr 70px 130px;
+}
+
+.replay-cols-orders {
+  grid-template-columns: 40px 90px 56px 1fr 1fr 1fr 1.3fr 1.3fr 70px;
+}
+
+.replay-cols-history {
+  grid-template-columns: 40px 50px 50px 1.3fr 1fr 1.3fr 1fr 70px 1.1fr 70px 1fr 36px;
+}
+
+.replay-cols-tags {
+  grid-template-columns: 1.5fr 70px 70px 1fr 90px;
+}
+
+.replay-empty {
+  color: #808080;
+  font-size: 12px;
+  padding: 12px 4px;
+}
+
+/* Statistiky: dlaždice vlevo, křivka zůstatku a štítky vpravo */
+.replay-stats-layout {
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  gap: 12px !important;
+}
+
+.replay-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(150px, 1fr));
+  gap: 6px;
+  flex: 1 1 55%;
+}
+
+.replay-stat {
+  gap: 0 !important;
+  padding: 4px 8px;
+  border: 1px solid rgba(128, 128, 128, 0.2);
+  border-radius: 4px;
+}
+
+.replay-stat-title {
+  font-size: 11px;
+  color: #808080;
+}
+
+.replay-stat-value {
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.replay-stats-side {
+  flex: 1 1 45%;
+  min-width: 260px;
+  gap: 6px !important;
+}
+
+.replay-equity {
+  width: 100%;
+  height: 160px;
+}
+
+/* Dialogy replaye */
+.replay-dialog {
+  width: 620px;
+  max-width: 95vw;
+}
+
+.replay-order-dialog {
+  width: 460px;
+  max-width: 95vw;
+}
+
+.replay-form {
+  gap: 8px !important;
+}
+
+.replay-start-row,
+.replay-qty-row {
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px !important;
+}
+
+.replay-start-input,
+.replay-qty-row > .q-field {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.replay-side-toggle,
+.replay-type-toggle {
+  width: 100%;
+}
+
+.replay-order-summary {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.replay-sessions {
+  gap: 2px !important;
+}
+
+.replay-session-row {
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 8px !important;
+  padding: 4px;
+  border-radius: 4px;
+}
+
+.replay-session-row:hover {
+  background: rgba(128, 128, 128, 0.1);
+}
+
+.replay-session-current {
+  border-left: 3px solid #9c27b0;
+}
+
+.replay-session-info {
+  cursor: pointer;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 0 !important;
+}
+
+.replay-session-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Posuvné hrany panelů (resizers.js): úzký pruh na hraně, při najetí zvýrazněný */
+.pane-resizer {
+  position: absolute;
+  z-index: 20;
+  background: transparent;
+  transition: background 0.1s;
+}
+
+.pane-resizer:hover,
+.pane-resizing-x .pane-resizer-left,
+.pane-resizing-y .pane-resizer-top {
+  background: rgba(41, 98, 255, 0.5);
+}
+
+.pane-resizer-left {
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+.pane-resizer-top {
+  left: 0;
+  right: 0;
+  top: -3px;
+  height: 6px;
+  cursor: ns-resize;
+}
+
+/* Během tažení hrany kurzor nad celou stránkou a bez označování textu */
+.pane-resizing-x,
+.pane-resizing-x * {
+  cursor: ew-resize !important;
+  user-select: none !important;
+}
+
+.pane-resizing-y,
+.pane-resizing-y * {
+  cursor: ns-resize !important;
+  user-select: none !important;
+}
+
+/* Záložka Replay v pravém panelu: titulek a výsledek session v seznamu */
+.replay-sessions-title {
+  font-weight: 600;
+}
+
+.replay-session-result {
+  gap: 0 !important;
+  align-items: flex-end;
+  font-size: 12px;
+  white-space: nowrap;
 }

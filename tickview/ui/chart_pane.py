@@ -10,7 +10,8 @@ stránky předaný v konstruktoru.
 import asyncio
 import time
 
-from tickview.logic.cache import KlineCache, fetch_history, fetch_recent
+from tickview.logic.cache import KlineCache, fetch_history, fetch_recent, replay_drawing_source
+from tickview.logic.replay import bucket_start, is_finer, merge_into
 from tickview.indicators.compute import compute_indicators, context_for, tail_payload
 from tickview.indicators.registry import get_indicator
 from tickview.logic.sessions import SESSION_RTH, filter_session, in_session
@@ -29,6 +30,9 @@ VISIBLE_BARS = 150
 OLDER_LOAD_ATTEMPTS = 4
 # Jak často nejvýš se z živých svíček přepočítají indikátory (sekundy)
 LIVE_INDICATOR_REFRESH_S = 2.0
+# Jak často nejvýš se přepočítají indikátory při přehrávání replaye (sekundy);
+# nová svíčka grafu je přepočítá hned
+REPLAY_INDICATOR_REFRESH_S = 0.3
 
 
 class ChartPane:
@@ -37,7 +41,8 @@ class ChartPane:
     Parametry:
         page: objekt stránky – atributy cache (KlineCache), state (společné
             nastavení: session, timezone, show_volume, chart_style, dark) a metody
-            show_status(pane, zpráva, error) a badge_changed(pane).
+            show_status(pane, zpráva, error), badge_changed(pane) a replay
+            (ReplayController otevřené session replaye).
         config: stav grafu {"symbol": "zdroj:symbol", "timeframe", "chart_type", "indicators"}.
         on_ready: async callback(pane) po inicializaci grafu v prohlížeči.
     """
@@ -65,6 +70,14 @@ class ChartPane:
         self.stream_task: asyncio.Task | None = None
         # Monotonic čas posledního přepočtu indikátorů ze živých svíček
         self.indicators_refreshed_at = 0.0
+        # Graf zobrazuje data replaye (ne živá); kotva svíček grafu pro skládání
+        # ze základních svíček replaye (None = graf má základní timeframe)
+        self.replay_shown = False
+        self.replay_anchor: int | None = None
+        # Přepočet indikátorů při přehrávání běží na pozadí (přehrávání na něj
+        # nečeká); další požadavky během výpočtu se sloučí do jednoho
+        self._replay_indicator_task: asyncio.Task | None = None
+        self._replay_indicators_due = False
         self.closed = False
         self._on_ready = on_ready
         settings = page.state
@@ -89,6 +102,18 @@ class ChartPane:
             return None
         return f"{self.provider_id}:{self.symbol}"
 
+    def replay_covers(self) -> bool:
+        """True, když graf patří do otevřené session replaye (stejný symbol)."""
+        replay = getattr(self.page, "replay", None)
+        return bool(replay and replay.active and self.key and self.key == replay.key)
+
+    @property
+    def drawing_owner(self) -> tuple[str, str]:
+        """(source, symbol) kreseb v databázi – kresby replaye patří k session, ne k živému symbolu."""
+        if self.replay_covers():
+            return replay_drawing_source(self.page.replay.session_id), self.symbol
+        return self.provider_id, self.symbol
+
     def config(self) -> dict:
         """Stav grafu k uložení do konfigurace rozložení."""
         return {
@@ -111,9 +136,17 @@ class ChartPane:
 
     # ---------- symbol a nadpis ----------
 
+    def timeframes(self) -> list[str]:
+        """Timeframy, které graf může zobrazit: timeframy zdroje, v replayi ne jemnější než přesnost replaye."""
+        available = list(self.provider.timeframes) if self.provider else []
+        if self.replay_covers():
+            base = self.page.replay.base_tf
+            available = [timeframe for timeframe in available if not is_finer(timeframe, base)]
+        return available
+
     def set_timeframe(self, value: str) -> bool:
-        """Nastaví timeframe (bez načtení dat); False = beze změny nebo ho zdroj nepodporuje."""
-        if value == self.timeframe or (self.provider and value not in self.provider.timeframes):
+        """Nastaví timeframe (bez načtení dat); False = beze změny nebo ho graf zobrazit neumí."""
+        if value == self.timeframe or (self.provider and value not in self.timeframes()):
             return False
         self.timeframe = value
         self.push_symbol_info()
@@ -227,6 +260,13 @@ class ChartPane:
             return None
         return self.provider.regular_session(self.symbol)
 
+    def session_filter(self):
+        """Továrna filtru seance pro základní svíčky replaye: funkce(timeframe) → filtr; None bez RTH."""
+        session = self.active_session()
+        if session is None:
+            return None
+        return lambda timeframe: (lambda chunk: filter_session(chunk, timeframe, session))
+
     def show_loaded_status(self) -> None:
         # Souhrn načteného grafu ve stavové liště
         count = len(self.candles or [])
@@ -240,6 +280,10 @@ class ChartPane:
         self.load_seq += 1
         seq = self.load_seq
         self.cancel_stream()
+        if self.replay_covers():
+            await self.reload_replay_chart(seq)
+            return
+        self.replay_shown = False
         self.set_badge(False)
         self.status(f"Načítám {symbol} ({timeframe})…")
         try:
@@ -276,6 +320,105 @@ class ChartPane:
                 return
             self.status(f"Načtení dat selhalo: {exc}", error=True)
             await self.clear_chart(timeframe)
+
+    async def reload_replay_chart(self, seq: int) -> None:
+        """Načte graf v replayi: historie do kurzoru, poslední svíčka složená ze základních svíček.
+
+        Svíčka grafu, do které kurzor padá, se nebere ze zdroje (obsahovala by
+        budoucnost), ale skládá se z odkrytých základních svíček; živý stream
+        neběží. Svíčky grafu se zarovnávají podle poslední svíčky ze zdroje.
+        """
+        replay = self.page.replay
+        provider, symbol = self.provider, self.symbol
+        cursor = replay.cursor
+        if is_finer(self.timeframe, replay.base_tf):
+            # Jemnější timeframe než přesnost replaye zobrazit nejde – přepneme na základní
+            self.timeframe = replay.base_tf
+            self.push_symbol_info()
+        timeframe = self.timeframe
+        step_ms = TIMEFRAME_MS[timeframe]
+        self.replay_shown = True
+        self.set_badge(None)
+        self.chart.set_legend_status("replay")
+        self.chart.set_alert_lines([])
+        self.status(f"Replay: načítám {symbol} ({timeframe})…")
+        try:
+            history = await self.fetch_session_history(
+                provider, symbol, timeframe, cursor, min_count=self.required_bars(), seq=seq
+            )
+            history = [candle for candle in history if candle.open_time <= cursor]
+            if seq != self.load_seq:
+                return
+            if timeframe == replay.base_tf:
+                candles = history
+                self.replay_anchor = None
+            else:
+                # Kotva = otevření poslední svíčky zdroje; rozpracovaná svíčka grafu
+                # se složí ze základních svíček od jejího začátku po kurzor
+                anchor = history[-1].open_time if history else cursor
+                bucket = bucket_start(cursor, anchor, step_ms)
+                forming = None
+                for part in await replay.base_candles(bucket, cursor):
+                    forming = merge_into(forming, part, bucket)
+                candles = [candle for candle in history if candle.open_time < bucket] + ([forming] if forming else [])
+                self.replay_anchor = anchor
+            if seq != self.load_seq:
+                return
+            async with self.load_lock:
+                if seq != self.load_seq:
+                    return
+                await self.chart.set_candles(candles, step_ms, visible_bars=VISIBLE_BARS)
+                self.candles = candles
+                await self.push_indicators()
+            await self.reload_drawings()
+            self.status(f"Replay {symbol} · {timeframe} · {len(candles)} svíček")
+        except Exception as exc:
+            if seq == self.load_seq:
+                self.status(f"Načtení dat replaye selhalo: {exc}", error=True)
+
+    async def apply_replay_bars(self, bars: list[Candle]) -> int:
+        """Promítne nově odkryté základní svíčky do grafu; vrací počet nově začatých svíček grafu.
+
+        Svíčky se skládají podle kotvy grafu (replay_anchor); graf dostane jen
+        změněné svíčky (series.update), indikátory se přepočítají při nové
+        svíčce grafu, jinak nejvýš jednou za REPLAY_INDICATOR_REFRESH_S.
+        """
+        if not self.candles or self.closed:
+            return 0
+        step_ms = TIMEFRAME_MS[self.timeframe]
+        changed: dict[int, Candle] = {}
+        started = 0
+        for part in bars:
+            last = self.candles[-1]
+            if self.replay_anchor is None:
+                candle = Candle(part.open_time, part.open, part.high, part.low, part.close, part.volume)
+            else:
+                candle = merge_into(last, part, bucket_start(part.open_time, self.replay_anchor, step_ms))
+            if candle.open_time > last.open_time:
+                started += 1
+            merge_candle(self.candles, candle)
+            changed[candle.open_time] = candle
+        if changed:
+            await self.chart.update_candles(list(changed.values()))
+        if self.indicators:
+            self._schedule_replay_indicators()
+        return started
+
+    def _schedule_replay_indicators(self) -> None:
+        """Přepočet indikátorů při přehrávání: na pozadí, nejvýš jednou za REPLAY_INDICATOR_REFRESH_S."""
+        self._replay_indicators_due = True
+        if self._replay_indicator_task and not self._replay_indicator_task.done():
+            return
+
+        async def run() -> None:
+            # Dokud během výpočtu přibývají svíčky, počítá se znovu (požadavky se slučují)
+            while self._replay_indicators_due and not self.closed and self.replay_shown:
+                self._replay_indicators_due = False
+                await asyncio.sleep(max(0.0, self.indicators_refreshed_at + REPLAY_INDICATOR_REFRESH_S
+                                        - time.monotonic()))
+                await self.push_indicators(tail=True)
+
+        self._replay_indicator_task = asyncio.create_task(run())
 
     async def clear_chart(self, timeframe: str) -> None:
         """Vyprázdní graf (data se nepodařilo načíst).
@@ -487,7 +630,7 @@ class ChartPane:
         if not self.provider_id or not self.symbol or self.closed:
             return
         if drawings is None:
-            drawings = await self.cache.load_drawings(self.provider_id, self.symbol)
+            drawings = await self.cache.load_drawings(*self.drawing_owner)
         visible = [drawing for drawing in drawings if drawing_visible(drawing["options"], self.timeframe)]
         await self.chart.set_drawings(visible)
 
@@ -501,4 +644,5 @@ class ChartPane:
             and alert["symbol"] == self.symbol
             and alert["target"]["type"] == "value"
         ]
-        self.chart.set_alert_lines(lines)
+        # Graf v replayi ukazuje minulost – čáry živých alertů do něj nepatří
+        self.chart.set_alert_lines([] if self.replay_shown else lines)

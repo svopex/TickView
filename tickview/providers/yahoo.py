@@ -56,6 +56,25 @@ SUFFIX_TIMEZONES = {
     ".AX": "Australia/Sydney",
 }
 
+# Měna ceny akcií podle přípony burzy (londýnské akcie jsou v pencích – GBp)
+SUFFIX_CURRENCIES = {
+    ".L": "GBp",
+    ".DE": "EUR",
+    ".F": "EUR",
+    ".PA": "EUR",
+    ".AS": "EUR",
+    ".MI": "EUR",
+    ".MC": "EUR",
+    ".VI": "EUR",
+    ".PR": "CZK",
+    ".SW": "CHF",
+    ".WA": "PLN",
+    ".T": "JPY",
+    ".HK": "HKD",
+    ".TO": "CAD",
+    ".AX": "AUD",
+}
+
 # Jak často se smí obnovit cena watchlistu (throttle kvůli limitům Yahoo)
 TICKER_TTL_S = 60.0
 
@@ -141,6 +160,23 @@ class YahooProvider(DataProvider):
         if self.symbol_kind(symbol) != "forex":
             return None
         return 0.001 if price >= 20 else 0.00001
+
+    def currencies(self, symbol: str) -> tuple[Optional[str], str]:
+        """Měny podle tvaru symbolu: EURUSD=X (EUR, USD), JPY=X (USD, JPY), BTC-EUR (–, EUR), SAP.DE (–, EUR)."""
+        upper = symbol.upper()
+        if upper.endswith("=X"):
+            pair = upper[:-2]
+            if len(pair) == 6:
+                return pair[:3], pair[3:]
+            if len(pair) == 3:
+                # Zkrácený zápis Yahoo: JPY=X je USDJPY
+                return "USD", pair
+        if "-" in upper and self.symbol_kind(symbol) == "crypto":
+            return None, upper.rsplit("-", 1)[1]
+        for suffix, currency in SUFFIX_CURRENCIES.items():
+            if upper.endswith(suffix):
+                return None, currency
+        return None, "USD"
 
     def exchange_timezone(self, symbol: str) -> str:
         """Pásmo burzy podle přípony symbolu (AAPL → New York, SAP.DE → Berlín)."""

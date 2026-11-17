@@ -30,6 +30,10 @@ MAX_KLINES_PAGES = 100
 WS_MAX_BACKOFF_S = 30.0
 
 
+# Kotované měny Binance pro odhad měny páru, než se načte seznam párů
+# (delší přípony první – FDUSD před USD)
+QUOTE_SUFFIXES = ("FDUSD", "USDT", "USDC", "BUSD", "TUSD", "EUR", "TRY", "BRL", "BTC", "ETH", "BNB", "USD")
+
 class BinanceProvider(DataProvider):
     """Kryptoburza Binance – historie přes veřejné REST, živá data přes websocket."""
 
@@ -122,6 +126,17 @@ class BinanceProvider(DataProvider):
     def symbol_kind(self, symbol: str) -> str:
         """Binance obchoduje jen kryptoměny."""
         return "crypto"
+
+    def currencies(self, symbol: str) -> tuple[Optional[str], str]:
+        """Kotovaná měna páru (BTCUSDT → USDT); krypto pár se jako forex nepřevádí (základ None)."""
+        pair = self._pairs.get(symbol)
+        if pair and pair[1]:
+            return None, pair[1]
+        # Páry ještě nejsou načtené – kotovanou měnu odhadneme podle známých přípon
+        for quote in QUOTE_SUFFIXES:
+            if symbol.endswith(quote) and len(symbol) > len(quote):
+                return None, quote
+        return None, "USDT"
 
     async def describe(self, symbol: str) -> dict:
         """Nadpis grafu: pár jako "BTC / USDT" na burze Binance."""
