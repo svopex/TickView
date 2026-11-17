@@ -243,6 +243,25 @@ class AlertEngineTest(unittest.IsolatedAsyncioTestCase):
         log = await self.cache.alert_log()
         self.assertEqual(log[0]["delivery"], [{"channel": "webhook", "ok": True, "error": ""}])
 
+    async def test_alert_log_seen(self) -> None:
+        # Nový záznam logu je nepřečtený, klik na řádek ho označí jako přečtený
+        entry = {
+            "alert_id": 0,
+            "fired_at": utc_now_ms(),
+            "source": "binance",
+            "symbol": "X",
+            "timeframe": "1h",
+            "price": 0.0,
+            "message": "test",
+        }
+        await self.cache.add_alert_log(entry)
+        await self.cache.add_alert_log(entry)
+        log = await self.cache.alert_log()
+        self.assertEqual([item["seen"] for item in log], [False, False])
+        await self.cache.mark_alert_log_seen(log[1]["id"])
+        log = await self.cache.alert_log()
+        self.assertEqual([item["seen"] for item in log], [False, True])
+
     async def test_bulk_alerts(self) -> None:
         # Hromadné akce panelu Alerty: pozastavit, spustit neaktivní, smazat neaktivní / vše
         ids = [await self.cache.save_alert(alert_spec()) for _ in range(3)]

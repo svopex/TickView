@@ -2466,18 +2466,32 @@ async def _build_index(
                     with ui.context_menu().classes("alerts-menu"):
                         alert_menu_items(alert)
 
+    def make_log_entry_seen(entry_id: int):
+        # Handler kliku na nepřečtený řádek logu: označí ho jako přečtený;
+        # engine pak pošle log_changed a log s odznakem se překreslí
+        async def _handler() -> None:
+            await alert_engine.mark_log_seen(entry_id)
+
+        return _handler
+
     async def render_alert_log() -> None:
-        # Log spuštěných alertů s výsledkem odeslání notifikací; počet záznamů
-        # ukazuje odznak u přepínače Log
+        # Log spuštěných alertů s výsledkem odeslání notifikací; počet
+        # nepřečtených záznamů ukazuje odznak u přepínače Log, klik na řádek
+        # záznam označí jako přečtený
         entries = await cache.alert_log()
-        log_badge.text = str(len(entries))
-        log_badge.set_visibility(bool(entries))
+        unseen_count = sum(1 for entry in entries if not entry["seen"])
+        log_badge.text = str(unseen_count)
+        log_badge.set_visibility(unseen_count > 0)
         alert_log_list.clear()
         with alert_log_list:
             if not entries:
                 ui.label("Zatím se žádný alert nespustil.").classes("alert-empty")
             for entry in entries:
-                with ui.row().classes("alert-row w-full"):
+                unread_class = "" if entry["seen"] else " alert-row-unread"
+                with ui.row().classes(f"alert-row w-full{unread_class}") as log_row:
+                    # Klik má smysl jen u nepřečteného záznamu
+                    if not entry["seen"]:
+                        log_row.on("click", make_log_entry_seen(entry["id"]))
                     with ui.column().classes("alert-text"):
                         ui.label(entry["message"]).classes("alert-title")
                         with ui.row().classes("alert-meta"):

@@ -1758,7 +1758,7 @@
   background: rgba(128, 128, 128, 0.3);
 }
 
-/* Počet záznamů logu u přepínače */
+/* Počet nepřečtených záznamů logu u přepínače */
 .alerts-count-badge {
   min-width: 18px;
   padding: 0 5px;
@@ -1800,6 +1800,11 @@
 
 .alert-row:hover {
   background: rgba(128, 128, 128, 0.14);
+}
+
+/* Nepřečtený záznam logu: proužek vlevo (zmizí po kliknutí na řádek) */
+.alert-row-unread {
+  box-shadow: inset 3px 0 0 #2962ff;
 }
 
 .alert-text {

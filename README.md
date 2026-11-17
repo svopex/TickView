@@ -249,7 +249,7 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   application/json, jinak text/plain – jako v TradingView). Alerty
   vyhodnocuje server na pozadí i bez otevřené stránky (jeden živý stream na
   symbol a timeframe, po výpadku znovupřipojení). Panel Alerty v pravém
-  panelu má přepínač Alerty / Log (s počtem záznamů logu). Seznam alertů:
+  panelu má přepínač Alerty / Log (s počtem nepřečtených záznamů logu). Seznam alertů:
   tlačítko + (nový alert), hledání, řazení (nejnovější, nejstarší, podle
   symbolu, podle stavu – pamatuje se) a nabídka ⋯ s hromadnými akcemi
   (spustit všechny neaktivní, pozastavit všechny, smazat neaktivní / všechny
@@ -258,7 +258,8 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   pozastavit, upravit, smazat a ⋯, pravý klik otevře stejnou nabídku
   (Upravit…, Klonovat…, Pozastavit / Spustit znovu, Zobrazit v grafu,
   Smazat). Log spuštění ukazuje výsledek odeslání (✓ / ✗ Telegram, webhook;
-  chyba v tooltipu). Aktivní cenové alerty
+  chyba v tooltipu); nepřečtený záznam má modrý proužek vlevo a klik na řádek
+  ho označí jako přečtený (sníží počet u přepínače Log). Aktivní cenové alerty
   zobrazeného symbolu jsou v grafu oranžové čárkované čáry s popiskem na ose.
 - Settings aplikace (ozubené kolečko v horní liště): všechny sekce
   `config.yaml` v záložkách. Telegram – bot token (od @BotFather, příkaz

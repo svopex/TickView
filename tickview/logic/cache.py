@@ -92,7 +92,8 @@ CREATE TABLE IF NOT EXISTS alert_log (
     timeframe  TEXT    NOT NULL,
     price      REAL    NOT NULL,
     message    TEXT    NOT NULL,
-    delivery   TEXT
+    delivery   TEXT,
+    seen       INTEGER NOT NULL DEFAULT 0
 );
 """
 
@@ -146,6 +147,15 @@ class KlineCache:
             except sqlite3.OperationalError:
                 # Sloupce už existují – migrace se přeskočí
                 pass
+        # Příznak přečtení záznamů logu: při přidání sloupce do starší databáze
+        # označíme dosavadní záznamy jako přečtené (odznak Log jinak naskočí
+        # na počet celé historie); nové záznamy začínají nepřečtené
+        try:
+            self._conn.execute("ALTER TABLE alert_log ADD COLUMN seen INTEGER NOT NULL DEFAULT 0")
+            self._conn.execute("UPDATE alert_log SET seen = 1")
+        except sqlite3.OperationalError:
+            # Sloupec už existuje
+            pass
         # Bez seznamů (první spuštění nebo databáze s jediným watchlistem):
         # vytvoříme výchozí seznam a převedeme do něj symboly původní tabulky
         if self._conn.execute("SELECT COUNT(*) FROM watchlists").fetchone()[0] == 0:
@@ -682,10 +692,14 @@ class KlineCache:
         )
 
     async def alert_log(self, limit: int = 200) -> list[dict]:
-        """Vrátí posledních limit spuštění alertů (nejnovější první)."""
+        """Vrátí posledních limit spuštění alertů (nejnovější první).
+
+        Záznam nese id (pro označení přečtení) a seen (uživatel ho v logu
+        rozklikl).
+        """
         rows = await self._run(
             lambda: self._conn.execute(
-                "SELECT alert_id, fired_at, source, symbol, timeframe, price, message, delivery "
+                "SELECT alert_id, fired_at, source, symbol, timeframe, price, message, delivery, id, seen "
                 "FROM alert_log ORDER BY id DESC LIMIT ?",
                 (limit,),
             ).fetchall()
@@ -700,9 +714,19 @@ class KlineCache:
                 "price": row[5],
                 "message": row[6],
                 "delivery": json.loads(row[7] or "[]"),
+                "id": row[8],
+                "seen": bool(row[9]),
             }
             for row in rows
         ]
+
+    async def mark_alert_log_seen(self, entry_id: int) -> None:
+        """Označí záznam logu jako přečtený (klik na řádek v logu).
+
+        Parametry:
+            entry_id: id záznamu z alert_log().
+        """
+        await self._run(self._execute_sync, "UPDATE alert_log SET seen = 1 WHERE id = ?", (entry_id,))
 
     async def clear_alert_log(self) -> None:
         """Vymaže log spuštěných alertů."""

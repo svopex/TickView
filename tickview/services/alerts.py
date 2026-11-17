@@ -401,6 +401,16 @@ class AlertEngine(Listeners):
         await self._cache.add_alert_log({**event, "price": price, "delivery": delivery})
         self._emit({"type": "log_changed"})
 
+    async def mark_log_seen(self, entry_id: int) -> None:
+        """Označí záznam logu jako přečtený a dá vědět všem otevřeným stránkám.
+
+        Parametry:
+            entry_id: id záznamu z cache.alert_log().
+        """
+        await self._cache.mark_alert_log_seen(entry_id)
+        # Překreslí log a odznak nepřečtených ve všech otevřených záložkách
+        self._emit({"type": "log_changed"})
+
     async def notify_external(self, notify: dict, *, source: str, symbol: str, timeframe: str, message: str) -> None:
         """Notifikace mimo uložené alerty (časová připomínka).
 
