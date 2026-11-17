@@ -587,6 +587,14 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   Bez předplatného futures dat posílá TWS zpožděná data (štítek „zpožděno“).
   Nová replay session u futures předvyplní velikost kontraktu násobitelem
   (ES 50, GC 100…) a krok velikosti pozice 1 (celé kontrakty).
+- Chybné knoty u dat MIDPOINT (forex, kovy, CFD): při otevření trhu po
+  víkendu nebo bez likvidity jedna strana kotace na okamžik ulétne (např. ask
+  stříbra 59,51 místo 48,6) a střed bid/ask udělá knot, za kterým není žádný
+  obchod. Knot delší než 10× medián rozsahu okolních svíček (až 10 na každou
+  stranu) a zároveň než 0,5 % ceny se zastřihne na tělo svíčky – v historii
+  i v živé svíčce; skutečné zprávové pohyby (výplatnice v USA) zůstanou.
+  Filtr běží při čtení historie (cache drží surová data, okolí se bere
+  z cache i za okraji načteného úseku), takže platí i pro už uložené svíčky.
 - Kvalifikované kontrakty (conId) se cachují – opakované dotazy scanneru
   a watchlistu nevolají qualifyContracts v TWS znovu.
 - Historie, vyhledávání (matching symbols) i ceny watchlistu jdou přes TWS.
@@ -615,7 +623,7 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
 - `tickview/providers/base.py` – rozhraní DataProvider (search/history/stream/
   tickers/describe/close, pásmo burzy, druh instrumentu, tick ceny, velikost kontraktu, hlavní seance), Candle, StreamStatus
   (výpadek/obnovení streamu, případně živá/zpožděná data), SymbolInfo, kanonické timeframy, skládání
-  2m/10m z kratších svíček (historie i živě), omezovač dotazů a společná
+  2m/10m z kratších svíček (historie i živě), filtr chybných knotů, omezovač dotazů a společná
   smyčka pollingu živých dat
 - `tickview/providers/binance.py` – zdroj Binance: vyhledání symbolů + historie
   přes veřejný REST, živý websocket stream, omezovač dotazů, exponenciální
@@ -634,7 +642,7 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   timeframy), aktivace po zadání klíčů
 - `tickview/providers/__init__.py` – registr zdrojů (nový zdroj = jeden řádek)
 - `tickview/logic/cache.py` – SQLite cache svíček, nastavení, kreseb,
-  alertů a jejich logu, seznamů symbolů (watchlistů), session replaye a evidence stažených intervalů; skládání historie z cache a sítě
+  alertů a jejich logu, seznamů symbolů (watchlistů), session replaye a evidence stažených intervalů; skládání historie z cache a sítě (se zastřižením chybných knotů z kotací)
   (ze sítě stahuje jen chybějící úseky) a „aspoň N posledních svíček“ se
   zvětšováním okna (graf i scanner)
 - `tickview/indicators/api.py` – rozhraní indikátorů (jediný modul, který

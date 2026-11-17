@@ -9,10 +9,12 @@ import sqlite3
 from typing import Callable, Optional
 
 from tickview.providers.base import (
+    SPIKE_NEIGHBORS,
     TIMEFRAME_MS,
     Candle,
     DataProvider,
     clean_float32_price,
+    clip_spikes,
     is_closed,
     utc_now_ms,
 )
@@ -247,6 +249,35 @@ class KlineCache:
             (source, symbol, timeframe, start_ms, start_ms, end_ms, end_ms),
         )
         return cur.fetchall()
+
+    async def neighbors(
+        self, source: str, symbol: str, timeframe: str, start_ms: int, end_ms: int, count: int
+    ) -> tuple[list[Candle], list[Candle]]:
+        """Až count svíček z cache těsně před start_ms a těsně po end_ms (obojí vzestupně).
+
+        Počítá se podle počtu svíček, ne času – přes víkend nebo noc tak
+        okolí nechybí (filtr chybných knotů na okraji načteného úseku).
+        """
+        async with self._lock:
+            before, after = await asyncio.to_thread(
+                self._neighbors_sync, source, symbol, timeframe, start_ms, end_ms, count
+            )
+        return [Candle(*row) for row in reversed(before)], [Candle(*row) for row in after]
+
+    def _neighbors_sync(
+        self, source: str, symbol: str, timeframe: str, start_ms: int, end_ms: int, count: int
+    ) -> tuple[list[tuple], list[tuple]]:
+        # Dva dotazy přes primární klíč: nejbližší starší (sestupně) a novější svíčky
+        query = """
+            SELECT open_time, open, high, low, close, volume
+            FROM klines
+            WHERE source = ? AND symbol = ? AND timeframe = ? AND open_time {op} ?
+            ORDER BY open_time {order} LIMIT ?
+        """
+        key = (source, symbol, timeframe)
+        before = self._conn.execute(query.format(op="<", order="DESC"), (*key, start_ms, count)).fetchall()
+        after = self._conn.execute(query.format(op=">", order="ASC"), (*key, end_ms, count)).fetchall()
+        return before, after
 
     async def store(self, source: str, symbol: str, timeframe: str, candles: list[Candle]) -> None:
         """Uloží svíčky do cache (přepíše duplikáty se stejným open_time)."""
@@ -965,6 +996,14 @@ async def fetch_history(
             if start_ms <= open_time <= end_ms
         )
         result = [merged[open_time] for open_time in sorted(merged)]
+    # Chybné knoty z kotací (střed bid/ask) se zastřihují až při čtení – cache
+    # drží surová data; okolí z cache i za okraji úseku, aby filtr měl s čím
+    # srovnávat i u krátkých úseků a na začátku týdne
+    if provider.has_quote_spikes(symbol) and result:
+        before, after = await cache.neighbors(
+            provider.id, symbol, timeframe, result[0].open_time, result[-1].open_time, SPIKE_NEIGHBORS
+        )
+        clip_spikes(before + result + after)
     return result
 
 

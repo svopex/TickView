@@ -28,6 +28,7 @@ from tickview.providers.base import (
     StreamItem,
     StreamStatus,
     SymbolInfo,
+    clip_spikes,
     poll_seconds_for,
     utc_now_ms,
 )
@@ -64,8 +65,9 @@ MARKET_DATA_PROBE_S = 4.0
 # (354 nepředplaceno, 10089 vyžaduje předplatné, 10167 zobrazuje se
 # zpožděně, 10168 nepředplaceno a zpožděná data nejsou povolena)
 NOT_SUBSCRIBED_CODES = frozenset({354, 10089, 10167, 10168})
-# Kolik posledních svíček se stáhne při přihlášení k průběžným barům
-STREAM_SEED_BARS = 5
+# Kolik posledních svíček průběžných barů se stáhne a sleduje (s okolím pro
+# filtr chybných knotů; do grafu jde jen poslední, resp. nové a změněné)
+STREAM_BARS = 15
 # Pauza před novým přihlášením k průběžným barům po chybě odběru (sekundy)
 STREAM_RETRY_S = 5.0
 # Kódy TWS, které odběr průběžných barů neukončí: 165 informační zpráva
@@ -197,6 +199,12 @@ IB_INSTRUMENTS: dict[str, IbInstrument] = {
     "IBHK50": IbInstrument("CFD", "HKD", "Hong Kong 50 (Hang Seng)", "index", ("HANGSENG", "HSI", "HK50")),
     "IBAU200": IbInstrument("CFD", "AUD", "Australia 200 (ASX 200)", "index", ("ASX", "AU200")),
 }
+
+
+def is_midpoint(symbol: str) -> bool:
+    """Forex, kovy a CFD: bez obchodů (data MIDPOINT, chybné knoty se filtrují)
+    a téměř nonstop (bez filtru hlavní seance)."""
+    return bool(forex_parts(symbol)) or symbol in IB_INSTRUMENTS
 
 
 def instrument_suggestions(query: str) -> list[str]:
@@ -449,11 +457,6 @@ class IbkrProvider(DataProvider):
         return getattr(spec, spec_field) or (getattr(leg, leg_field) if leg else 0) or None
 
     @staticmethod
-    def _midpoint(symbol: str) -> bool:
-        """Forex, kovy a CFD: bez obchodů (data MIDPOINT) a téměř nonstop (bez filtru hlavní seance)."""
-        return bool(forex_parts(symbol)) or symbol in IB_INSTRUMENTS
-
-    @staticmethod
     def _forex_label(pair: str) -> str:
         # Popisek návrhu forexového páru: "EUR.USD – Euro / Americký dolar (Forex)"
         return f"{pair} – {forex_name(*pair.split('.'))} (Forex)"
@@ -519,7 +522,11 @@ class IbkrProvider(DataProvider):
     def regular_session(self, symbol: str) -> Optional[tuple[str, str, str]]:
         """Akcie: historie se stahuje i mimo hlavní hodiny (useRTH=False), RTH
         je 9:30–16:00 New York; forex, kovy, CFD a futures obchodují téměř nepřetržitě."""
-        return None if self._midpoint(symbol) or future_spec(symbol) else US_EQUITY_SESSION
+        return None if is_midpoint(symbol) or future_spec(symbol) else US_EQUITY_SESSION
+
+    def has_quote_spikes(self, symbol: str) -> bool:
+        """Data MIDPOINT (forex, kovy, CFD) mají při otevření trhu chybné knoty ze středu bid/ask."""
+        return is_midpoint(symbol)
 
     def price_tick(self, symbol: str, price: float) -> Optional[float]:
         """Futures: tick z tabulky, u obecného symbolu z detailů kontraktu; jinak se odhadne z dat."""
@@ -529,10 +536,10 @@ class IbkrProvider(DataProvider):
         """Futures: násobitel kontraktu (hodnota bodu) z tabulky nebo z detailů kontraktu."""
         return self._future_value(symbol, "multiplier", "multiplier")
 
-    @classmethod
-    def _what_to_show(cls, symbol: str) -> str:
+    @staticmethod
+    def _what_to_show(symbol: str) -> str:
         # Forex, kovy a CFD nemají obchody (TRADES) – TWS nabízí jen MIDPOINT/BID/ASK
-        return "MIDPOINT" if cls._midpoint(symbol) else "TRADES"
+        return "MIDPOINT" if is_midpoint(symbol) else "TRADES"
 
     @staticmethod
     def _duration(delta_seconds: int) -> str:
@@ -771,7 +778,7 @@ class IbkrProvider(DataProvider):
                     self._probe_live_data(ib, contract),
                     self._request_bars(
                         ib, contract, symbol, timeframe, "",
-                        self._duration(STREAM_SEED_BARS * step_s), keep_up_to_date=True,
+                        self._duration(STREAM_BARS * step_s), keep_up_to_date=True,
                     ),
                 )
             except asyncio.CancelledError:
@@ -799,7 +806,7 @@ class IbkrProvider(DataProvider):
                     yield item
                 return
 
-            async for item in self._follow_bars(ib, bars, live, latch, roll_ms):
+            async for item in self._follow_bars(ib, bars, live, latch, roll_ms, self.has_quote_spikes(symbol)):
                 yield item
             # Roll futures: hned nové přihlášení (už k následujícímu kontraktu)
             if roll_ms is not None and utc_now_ms() >= roll_ms:
@@ -809,7 +816,7 @@ class IbkrProvider(DataProvider):
 
     @staticmethod
     async def _follow_bars(
-        ib: IB, bars, live: bool, latch: FailureLatch, until_ms: Optional[int] = None
+        ib: IB, bars, live: bool, latch: FailureLatch, until_ms: Optional[int] = None, clip: bool = False,
     ) -> AsyncIterator[StreamItem]:
         """Posílá změny průběžných barů jednoho keepUpToDate odběru.
 
@@ -824,6 +831,7 @@ class IbkrProvider(DataProvider):
             live: zda jde o živá (předplacená) data – pro štítek v UI.
             latch: stav výpadků streamu (výpadek se hlásí jen jednou).
             until_ms: kdy odběr skončit (UTC ms, roll futures); None = bez limitu.
+            clip: zastřihnout chybné knoty (data MIDPOINT) podle okolních svíček.
         """
         # Callbacky ib_async jen nastaví příznak změny, případně důvod konce
         # odběru; více aktualizací mezi průchody smyčky se tak sloučí
@@ -857,8 +865,11 @@ class IbkrProvider(DataProvider):
             )
             fresh_candles = FreshCandles()
             while True:
-                recent = [IbkrProvider._bar_to_candle(bar) for bar in bars[-STREAM_SEED_BARS:]]
-                for candle in fresh_candles.take([c for c in recent if c]):
+                # Poslední svíčky i s okolím pro filtr chybných knotů
+                recent = [c for bar in bars[-STREAM_BARS:] if (c := IbkrProvider._bar_to_candle(bar))]
+                if clip:
+                    clip_spikes(recent)
+                for candle in fresh_candles.take(recent):
                     yield candle
                 if end_reason is not None:
                     break

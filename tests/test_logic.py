@@ -42,7 +42,7 @@ from tickview.logic.styles import (
     normalize_panel_position,
     save_template,
 )
-from tickview.providers.base import clean_float32_price, split_symbol
+from tickview.providers.base import clean_float32_price, clip_spikes, split_symbol
 from tickview.providers.base import (
     TIMEFRAME_MS,
     Candle,
@@ -84,6 +84,9 @@ class FakeProvider:
     def __init__(self) -> None:
         self.calls: list[tuple[int, int]] = []
 
+    def has_quote_spikes(self, symbol: str) -> bool:
+        return False
+
     async def history(self, symbol: str, timeframe: str, start_ms: int, end_ms: int) -> list[Candle]:
         self.calls.append((start_ms, end_ms))
         step = TIMEFRAME_MS[timeframe]
@@ -106,6 +109,20 @@ class FetchHistoryTest(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         await self.cache.close()
         self.tmp.cleanup()
+
+    async def test_quote_spikes_clipped_on_read(self) -> None:
+        # Zdroj s chybnými knoty z kotací: cache drží surová data, výsledek je zastřižený
+        step = TIMEFRAME_MS["1h"]
+        quiet = [Candle(i * step, 1.1, 1.1002, 1.0998, 1.1, 0) for i in range(9)]
+        await self.cache.store("fake", "EUR.USD", "1h", quiet + [Candle(9 * step, 1.1, 1.2, 1.0998, 1.1, 0)])
+        await self.cache.add_fetched_range("fake", "EUR.USD", "1h", 0, 9 * step)
+        provider = FakeProvider()
+        self.assertEqual((await fetch_history(provider, self.cache, "EUR.USD", "1h", 0, 9 * step))[-1].high, 1.2)
+        provider.has_quote_spikes = lambda symbol: True
+        self.assertEqual((await fetch_history(provider, self.cache, "EUR.USD", "1h", 0, 9 * step))[-1].high, 1.1)
+        self.assertEqual(provider.calls, [])
+        # Úsek začínající až svíčkou se špičkou: okolí se doplní z cache
+        self.assertEqual((await fetch_history(provider, self.cache, "EUR.USD", "1h", 9 * step, 9 * step))[0].high, 1.1)
 
     async def test_open_candle_is_not_cached_and_is_refetched(self) -> None:
         provider = FakeProvider()
@@ -489,6 +506,24 @@ class IbkrFuturesTest(unittest.TestCase):
 class ProvidersBaseTest(unittest.IsolatedAsyncioTestCase):
     """Omezovač dotazů a smyčka pollingu."""
 
+    def test_clip_spikes(self) -> None:
+        # Klidné svíčky stříbra (rozsah 0,10) a jedna se chybným knotem ze středu bid/ask
+        candles = [Candle(i, 48.5, 48.55, 48.45, 48.5, 0) for i in range(12)]
+        candles[6] = Candle(6, 48.46, 53.93, 48.41, 49.02, 0)
+        # Zprávový pohyb: knot 8× rozsah okolí zůstane, stejně jako svíčka bez dost sousedů
+        candles[9] = Candle(9, 48.5, 49.3, 48.45, 48.5, 0)
+        clip_spikes(candles)
+        self.assertEqual((candles[6].high, candles[6].low), (49.02, 48.41))
+        self.assertEqual(candles[9].high, 49.3)
+        short = [Candle(0, 48.5, 48.55, 48.45, 48.5, 0), Candle(1, 48.5, 60.0, 48.4, 48.5, 0)]
+        clip_spikes(short)
+        self.assertEqual(short[1].high, 60.0)
+        # Knot dolů se zastřihne na spodek těla
+        dip = [Candle(i, 1.10, 1.1002, 1.0998, 1.10, 0) for i in range(9)]
+        dip[4] = Candle(4, 1.1000, 1.1001, 1.0500, 1.0999, 0)
+        clip_spikes(dip)
+        self.assertEqual(dip[4].low, 1.0999)
+
     def test_clean_float32_price(self) -> None:
         # Šum převodu z float32 (Yahoo) zmizí, přesné float64 ceny se nemění
         self.assertEqual(clean_float32_price(23.110000610351562), 23.11)
@@ -591,6 +626,17 @@ class IbkrStreamTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(StopAsyncIteration):
             await stream.__anext__()
         self.assertEqual(ib.cancelled, [bars])
+
+    async def test_follow_bars_clips_spikes(self) -> None:
+        # Data MIDPOINT: chybný knot poslední svíčky se zastřihne podle okolních svíček
+        ib = FakeIB()
+        bars = BarDataList([make_bar(minute, 100.0) for minute in range(1, 8)])
+        bars[-1] = BarData(date=bars[-1].date, open=100.0, high=150.0, low=99.0, close=100.0, volume=0)
+        bars.reqId = 9
+        stream = IbkrProvider._follow_bars(ib, bars, True, FailureLatch(), clip=True)
+        await stream.__anext__()
+        self.assertEqual((await stream.__anext__()).high, 100.0)
+        await stream.aclose()
 
     async def test_follow_bars_ends_at_roll(self) -> None:
         # Po čase rollu futures odběr skončí bez hlášení výpadku a zruší se

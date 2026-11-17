@@ -1,6 +1,7 @@
 """Společné rozhraní datových zdrojů (poskytovatelů tržních dat)."""
 
 import asyncio
+import statistics
 import time as time_module
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
@@ -126,6 +127,47 @@ def aggregate_candles(candles: list["Candle"], step_ms: int) -> list["Candle"]:
                 Candle(bucket, candle.open, candle.high, candle.low, candle.close, candle.volume)
             )
     return merged
+
+
+# Filtr chybných knotů (clip_spikes): knot je chybný, když je delší než
+# SPIKE_WICK_FACTOR × medián rozsahu okolních svíček a zároveň než SPIKE_MIN_PCT
+# procent ceny; okolí = až SPIKE_NEIGHBORS svíček na každou stranu, nejméně
+# SPIKE_MIN_NEIGHBORS (jinak se svíčka nehodnotí)
+SPIKE_WICK_FACTOR = 10.0
+SPIKE_MIN_PCT = 0.5
+SPIKE_NEIGHBORS = 10
+SPIKE_MIN_NEIGHBORS = 4
+
+
+def clip_spikes(candles: list["Candle"]) -> None:
+    """Zastřihne chybné knoty na tělo svíčky (upravuje svíčky na místě).
+
+    Určeno pro data ze středu bid/ask (MIDPOINT): při otevření trhu po
+    víkendu nebo bez likvidity jedna strana kotace na okamžik ulétne
+    (např. ask stříbra 59,51 místo 48,6) a střed udělá knot, za kterým není
+    žádný obchod. Prahy jsou volené tak, aby skutečné zprávové pohyby
+    (např. výplatnice v USA, 10× nebo 0,5 %) zůstaly.
+
+    Parametry:
+        candles: svíčky jednoho timeframu vzestupně podle času.
+    """
+    ranges = [candle.high - candle.low for candle in candles]
+    for index, candle in enumerate(candles):
+        top, bottom = max(candle.open, candle.close), min(candle.open, candle.close)
+        # Knoty do minimálního podílu ceny jsou vždy v pořádku – medián okolí
+        # se tak počítá jen u podezřelých svíček
+        wick = max(candle.high - top, bottom - candle.low)
+        if wick <= top * SPIKE_MIN_PCT / 100:
+            continue
+        nearby = ranges[max(0, index - SPIKE_NEIGHBORS):index] + ranges[index + 1:index + 1 + SPIKE_NEIGHBORS]
+        if len(nearby) < SPIKE_MIN_NEIGHBORS:
+            continue
+        # Práh: násobek typického rozsahu okolí, ale nejméně daný podíl ceny
+        limit = max(SPIKE_WICK_FACTOR * statistics.median(nearby), top * SPIKE_MIN_PCT / 100)
+        if candle.high - top > limit:
+            candle.high = top
+        if bottom - candle.low > limit:
+            candle.low = bottom
 
 
 def poll_seconds_for(timeframe: str) -> float:
@@ -427,6 +469,11 @@ class DataProvider(ABC):
             price: poslední cena (u forexu odliší JPY páry).
         """
         return None
+
+    def has_quote_spikes(self, symbol: str) -> bool:
+        """Zda data instrumentu mohou mít chybné knoty z kotací (střed bid/ask);
+        True = fetch_history je zastřihne (clip_spikes)."""
+        return False
 
     def contract_size(self, symbol: str) -> Optional[float]:
         """Velikost kontraktu (hodnota bodu u futures) pro replay; None = výchozí podle druhu instrumentu."""
