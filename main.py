@@ -18,7 +18,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="TickView – burzovní a krypto grafy ve stylu TradingView"
     )
-    parser.add_argument("--port", type=int, default=8080, help="Port webového serveru (výchozí 8080)")
+    parser.add_argument("--port", type=int, default=8095, help="Port webového serveru (výchozí 8095)")
     parser.add_argument("--native", action="store_true", help="Spustit v nativním okně (vyžaduje pywebview)")
     parser.add_argument("--open", action="store_true", help="Otevřít prohlížeč automaticky")
     return parser.parse_args()
