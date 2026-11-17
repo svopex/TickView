@@ -321,7 +321,7 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   se signálem, velikost textu, skrytí prefixu zdroje; alert před zavřením
   svíčky (ve výchozím stavu zapnutý) – dva nezávislé prahy v minutách (výchozí 10 a 5), každý nejvýš
   jednou za svíčku, jedna souhrnná zpráva se seznamem trhů se signálem na
-  běžící svíčce, notifikace Telegram / oznámení / zvuk; a 40 polí symbolů
+  běžící svíčce; a 40 polí symbolů
   ve tvaru „zdroj:SYMBOL“ (bez prefixu = zdroj grafu). Výchozí symboly jsou
   symboly z Pine skriptu, vše z Interactive Brokers kromě bitcoinu
   (Binance): forexové páry (EUR.USD…), zlato a stříbro (XAUUSD, XAGUSD),
@@ -337,6 +337,13 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   obnoví; skrytý indikátor nebo tabulka „nezobrazovat“ se počítá jen se
   zapnutým alertem. Data bere přes cache – první stažení historie (hlavně
   z IB) může trvat několik minut, další průchody stahují jen novou svíčku.
+  Zpráva scanneru odejde jako v TradingView jen přes alert na indikátor
+  s podmínkou „Any alert() function call (scanner)“ (Alert → Condition:
+  Svopex TTW); notifikace (Telegram, toast, zvuk, webhook) se nastavují
+  v tomto alertu, ne ve vstupech indikátoru. Alert zůstává aktivní (každá
+  zpráva ho spustí), zpráva alertu má zástupný text `{{message}}` (výchozí
+  zpráva = jen text scanneru). Alert patří ke druhu indikátoru – posílá
+  zprávy všech instancí Svopex TTW v rozložení se zapnutým alertem.
 - Alert na signál indikátoru (jako v TradingView): v dialogu alertu je první
   pole zdroj podmínky – cena, nebo indikátor se signály v grafu (Svopex TTW
   s parametry instance; alert si je uloží). Podmínka Signál Long / Short /

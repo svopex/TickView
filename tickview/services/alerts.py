@@ -4,7 +4,8 @@ AlertEngine drží aktivní alerty z databáze, pro každou trojici (zdroj,
 symbol, timeframe) odebírá jeden živý stream zdroje a každou svíčku předá
 trackerům alertů (tickview.logic.alerts.AlertTracker). Spuštěný alert
 zapíše do databáze a logu, pošle notifikace (Telegram, webhook) a ohlásí
-se otevřeným stránkám (toast, zvuk).
+se otevřeným stránkám (toast, zvuk). Alerty scanneru (podmínka alert_call)
+stream nemají – spouští je scanner přes fire_message.
 """
 
 import asyncio
@@ -19,6 +20,7 @@ from tickview.indicators.registry import get_indicator
 from tickview.logic.alerts import (
     AlertTracker,
     SignalAlertTracker,
+    is_alert_call,
     is_expired,
     line_price,
     message_context,
@@ -61,7 +63,10 @@ class AlertEngine(Listeners):
         self._cache = cache
         self._provider_lookup = provider_lookup
         self._client = client
+        # Aktivní alerty vyhodnocované nad streamem a alerty scanneru (alert_call,
+        # bez streamu – spouští je scanner přes fire_message)
         self._alerts: dict[int, dict] = {}
+        self._call_alerts: dict[int, dict] = {}
         # Stav vyhodnocení alertů: id -> (otisk definice, tracker); změněný
         # alert (jiný otisk) dostane nový tracker
         self._trackers: dict[int, tuple[str, AlertTracker | SignalAlertTracker]] = {}
@@ -108,7 +113,8 @@ class AlertEngine(Listeners):
         """
         async with self._lock:
             alerts = await self._cache.alerts(active_only=True)
-            self._alerts = {alert["id"]: alert for alert in alerts}
+            self._alerts = {alert["id"]: alert for alert in alerts if not is_alert_call(alert)}
+            self._call_alerts = {alert["id"]: alert for alert in alerts if is_alert_call(alert)}
             for alert_id, alert in self._alerts.items():
                 fingerprint = json.dumps(
                     [alert["source"], alert["symbol"], alert["timeframe"], alert["condition"], alert["trigger"], alert["target"]],
@@ -126,6 +132,14 @@ class AlertEngine(Listeners):
             self._candle_limits = {key: limit for key, limit in self._candle_limits.items() if key in needed}
             self._sync_watchers()
         self._emit({"type": "alerts_changed"})
+
+    def alert_call_alerts(self, kind: str) -> list[dict]:
+        """Aktivní alerty scanneru (podmínka alert_call) na indikátor; přes ně scanner posílá zprávy.
+
+        Parametry:
+            kind: id indikátoru úlohy scanneru.
+        """
+        return [alert for alert in self._call_alerts.values() if alert["target"]["kind"] == kind]
 
     def _sync_watchers(self) -> None:
         # Jeden stream na trojici (zdroj, symbol, timeframe) aktivních alertů
@@ -277,7 +291,7 @@ class AlertEngine(Listeners):
         while True:
             await asyncio.sleep(EXPIRY_CHECK_S)
             now_ms = utc_now_ms()
-            for alert in list(self._alerts.values()):
+            for alert in [*self._alerts.values(), *self._call_alerts.values()]:
                 if is_expired(alert, now_ms):
                     await self._deactivate(alert, "expired")
 
@@ -296,6 +310,7 @@ class AlertEngine(Listeners):
             fired_at: čas spuštění (jednorázový alert se vypíná spuštěním).
         """
         self._alerts.pop(alert["id"], None)
+        self._call_alerts.pop(alert["id"], None)
         self._trackers.pop(alert["id"], None)
         await self._cache.set_alert_state(alert["id"], False, status, fired_at=fired_at)
         # Stream bez dalších alertů ukončíme (nevoláme z vlastní úlohy streamu)
@@ -313,11 +328,47 @@ class AlertEngine(Listeners):
             alert, price, now_ms: spuštěný alert, cena a čas spuštění.
             signal: popis signálu indikátoru („LONG ENG“) pro zástupný text {{signal}}.
         """
+        context = message_context(alert, price, self._exchange_name(alert), now_ms, signal)
+        message = render_message(alert["message"], context)
+        await self._fire_rendered(alert, message, now_ms, price)
+
+    async def fire_message(self, alert: dict, message: str, *, symbol: str, timeframe: str) -> None:
+        """Spustí alert scanneru se zprávou scanneru (zástupný text {{message}}).
+
+        Alert zůstává aktivní (jako alert() s alert.freq_all v TradingView),
+        dokud nevyprší nebo ho uživatel nevypne.
+
+        Parametry:
+            alert: aktivní alert s podmínkou alert_call.
+            message: souhrnná zpráva scanneru.
+            symbol, timeframe: popis do logu a Telegramu („Scanner Svopex TTW“, timeframe scanu).
+        """
+        now_ms = utc_now_ms()
+        if is_expired(alert, now_ms):
+            await self._deactivate(alert, "expired")
+            return
+        context = message_context(alert, None, self._exchange_name(alert), now_ms, message=message)
+        await self._fire_rendered(alert, render_message(alert["message"], context), now_ms, None,
+                                  symbol=symbol, timeframe=timeframe)
+
+    def _exchange_name(self, alert: dict) -> str:
+        """Název zdroje alertu pro zástupný text {{exchange}} (neznámý zdroj = jeho id)."""
         try:
-            exchange = self._provider_lookup(alert["source"]).name
+            return self._provider_lookup(alert["source"]).name
         except KeyError:
-            exchange = alert["source"]
-        message = render_message(alert["message"], message_context(alert, price, exchange, now_ms, signal))
+            return alert["source"]
+
+    async def _fire_rendered(self, alert: dict, message: str, now_ms: int, price: Optional[float],
+                             symbol: Optional[str] = None, timeframe: Optional[str] = None) -> None:
+        """Společná část spuštění: stav v databázi, událost pro stránky a notifikace na pozadí.
+
+        Parametry:
+            alert: spuštěný alert.
+            message: hotová zpráva (zástupné texty doplněné).
+            now_ms: čas spuštění.
+            price: cena spuštění (None = bez ceny, alert scanneru).
+            symbol, timeframe: popis události místo symbolu a timeframu alertu (alert scanneru).
+        """
         once = alert["trigger"] == "once"
         if once:
             # Jednorázový alert se po spuštění vypne
@@ -328,8 +379,8 @@ class AlertEngine(Listeners):
             "type": "fired",
             "alert_id": alert["id"],
             "source": alert["source"],
-            "symbol": alert["symbol"],
-            "timeframe": alert["timeframe"],
+            "symbol": symbol or alert["symbol"],
+            "timeframe": timeframe or alert["timeframe"],
             "price": price,
             "message": message,
             "fired_at": now_ms,
@@ -345,13 +396,13 @@ class AlertEngine(Listeners):
     async def _deliver(self, alert: dict, event: dict) -> None:
         """Odešle notifikace spuštěného alertu a zapíše spuštění do logu s výsledkem."""
         delivery = await self.send_notifications(alert["notify"], event)
-        # Notifikace bez ceny (scanner, připomínka) má v logu cenu 0 (sloupec je povinný)
+        # Notifikace bez ceny (alert scanneru, připomínka) má v logu cenu 0 (sloupec je povinný)
         price = event["price"] if event.get("price") is not None else 0.0
         await self._cache.add_alert_log({**event, "price": price, "delivery": delivery})
         self._emit({"type": "log_changed"})
 
     async def notify_external(self, notify: dict, *, source: str, symbol: str, timeframe: str, message: str) -> None:
-        """Notifikace mimo uložené alerty (scanner, časová připomínka).
+        """Notifikace mimo uložené alerty (časová připomínka).
 
         Stránkám se ohlásí událostí "notification" (toast, zvuk – seznam alertů
         se nemění), Telegram a webhook se pošlou podle notify a záznam přibude
@@ -359,7 +410,7 @@ class AlertEngine(Listeners):
 
         Parametry:
             notify: nastavení notifikací ({"telegram", "webhook", "toast", "sound"}).
-            source: původ do logu ("scanner", "reminder").
+            source: původ do logu ("reminder").
             symbol, timeframe: popis do logu a zprávy Telegramu.
             message: text notifikace.
         """

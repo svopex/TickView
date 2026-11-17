@@ -268,13 +268,21 @@ class RemindersTest(unittest.TestCase):
 
 
 class FakeAlertEngine:
-    """Zachytí notifikace scanneru místo odeslání."""
+    """Zachytí zprávy scanneru místo spuštění alertu.
 
-    def __init__(self) -> None:
+    Parametry:
+        alerts: aktivní alerty scanneru (podmínka alert_call) podle id indikátoru.
+    """
+
+    def __init__(self, alerts: dict[str, list[dict]] | None = None) -> None:
+        self.alerts = alerts or {}
         self.sent: list[dict] = []
 
-    async def notify_external(self, notify: dict, **event) -> None:
-        self.sent.append(event)
+    def alert_call_alerts(self, kind: str) -> list[dict]:
+        return self.alerts.get(kind, [])
+
+    async def fire_message(self, alert: dict, message: str, **event) -> None:
+        self.sent.append({"alert_id": alert["id"], "message": message, **event})
 
 
 class ScannerServiceTest(unittest.IsolatedAsyncioTestCase):
@@ -324,12 +332,16 @@ class ScannerServiceTest(unittest.IsolatedAsyncioTestCase):
         # Tabulka pro graf s indikátorem
         overview = self.scanner.table(0)
         self.assertEqual(overview["rows"][0]["symbol"], "HIT")
-        # Práh 60 min je vždy splněný – alert odejde jednou za svíčku
+        # Bez alertu scanneru na indikátor se nic neposílá
+        await self.scanner._check_alert(job)
+        self.assertEqual(self.engine.sent, [])
+        # Práh 60 min je vždy splněný – alert odejde jednou za svíčku přes alert scanneru
+        self.engine.alerts = {FakeSignals.id: [{"id": 7}]}
         await self.scanner._check_alert(job)
         await self.scanner._check_alert(job)
         self.assertEqual(len(self.engine.sent), 1)
         self.assertIn("HIT LONG", self.engine.sent[0]["message"])
-        self.assertEqual(self.engine.sent[0]["source"], "scanner")
+        self.assertEqual((self.engine.sent[0]["alert_id"], self.engine.sent[0]["symbol"]), (7, "Scanner Signals"))
 
 
 class NotifyExternalTest(unittest.IsolatedAsyncioTestCase):
@@ -417,6 +429,21 @@ class SignalAlertTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 normalize_alert({**data, **bad})
 
+    def test_alert_call(self) -> None:
+        from tickview.logic.alerts import describe_alert, normalize_alert
+
+        data = {"source": "fake", "symbol": "HIT", "timeframe": "1h", "condition": "alert_call",
+                "trigger": "alert_call", "target": {"type": "indicator", "kind": FakeSignals.id}}
+        spec = normalize_alert(data)
+        self.assertEqual(spec["message"], "{{message}}")
+        self.assertEqual(describe_alert(spec), "Signals: Any alert() function call (scanner) · "
+                                               "Podle vstupů indikátoru (před zavřením svíčky)")
+        # Spouštění signálu u alertu scanneru nedává smysl; indikátor bez scanneru alert() nemá
+        with self.assertRaises(ValueError):
+            normalize_alert({**data, "trigger": "before_close"})
+        with self.assertRaises(ValueError):
+            normalize_alert({**data, "target": {"type": "indicator", "kind": "macd"}})
+
     def test_tracker(self) -> None:
         from tickview.logic.alerts import SignalAlertTracker
 
@@ -499,6 +526,22 @@ class IndicatorAlertEngineTest(unittest.IsolatedAsyncioTestCase):
                 fired = [event for event in events if event["type"] == "fired"]
                 self.assertEqual(len(fired), 1)
                 self.assertEqual(fired[0]["message"], "HIT, 1h Signals LONG ONE")
+                # Alert scanneru nemá stream ani tracker; spouští ho scanner zprávou
+                call = normalize_alert({
+                    "source": "fake", "symbol": "HIT", "timeframe": "1h", "condition": "alert_call",
+                    "trigger": "alert_call", "target": {"type": "indicator", "kind": FakeSignals.id},
+                    "message": "TTW: {{message}}", "notify": {"telegram": False, "toast": True},
+                })
+                call_id = await cache.save_alert(call)
+                await engine.reload()
+                self.assertNotIn(call_id, engine._trackers)
+                self.assertNotIn(call_id, engine._alerts)
+                [call_alert] = engine.alert_call_alerts(FakeSignals.id)
+                await engine.fire_message(call_alert, "2 trhy", symbol="Scanner Signals", timeframe="1h")
+                fired = [event for event in events if event["type"] == "fired"]
+                self.assertEqual((fired[-1]["message"], fired[-1]["symbol"], fired[-1]["price"]),
+                                 ("TTW: 2 trhy", "Scanner Signals", None))
+                self.assertEqual(engine.alert_call_alerts(FakeSignals.id)[0]["id"], call_id)
             finally:
                 registry._registry.pop(FakeSignals.id, None)
                 await asyncio.sleep(0)

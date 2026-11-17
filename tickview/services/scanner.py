@@ -7,7 +7,9 @@ vstupů stáhne historii timeframu scanu (přes cache, ze sítě jen chybějíc�
 úsek a rozpracovanou svíčku), spočítá indikátor a výsledek ohlásí otevřeným
 stránkám (tabulka v grafu). Každých CHECK_INTERVAL_S kontroluje alert před
 zavřením svíčky; před odesláním si výsledky obnoví, aby zpráva odpovídala
-aktuálním datům. Běží i bez otevřené stránky.
+aktuálním datům. Zpráva odejde přes aktivní alerty na indikátor úlohy
+s podmínkou alert_call (jako „Any alert() function call“ v TradingView),
+které určují i notifikace. Běží i bez otevřené stránky.
 """
 
 import asyncio
@@ -72,7 +74,7 @@ class ScannerService(Listeners):
 
     Parametry:
         cache: úložiště svíček a nastavení (rozložení grafů).
-        alert_engine: engine alertů (odesílání notifikací a log).
+        alert_engine: engine alertů (alerty scanneru, odesílání notifikací a log).
         provider_lookup: funkce id zdroje -> zdroj (testy dosadí vlastní).
     """
 
@@ -235,7 +237,9 @@ class ScannerService(Listeners):
         config = job["config"]
         alert = config["alert"]
         state = self._states.get(job["key"])
-        if not alert["enabled"] or state is None or state.results is None:
+        # Bez aktivního alertu scanneru na indikátor úlohy není kam zprávu poslat
+        channels = self._alert_engine.alert_call_alerts(job["kind"])
+        if not alert["enabled"] or state is None or state.results is None or not channels:
             return
         results = state.results
         step_ms = TIMEFRAME_MS[config["timeframe"]]
@@ -263,7 +267,8 @@ class ScannerService(Listeners):
         due = state.window.check(bar_close, minutes_left, len(hits), alert["minutes1"], alert["minutes2"])
         if due is None:
             return
-        await self._alert_engine.notify_external(
-            alert["notify"], source="scanner", symbol=f"Scanner {job['title']}", timeframe=config["timeframe"],
-            message=alert_message(job["title"], config["timeframe"], due, hits),
-        )
+        # Souhrnná zpráva přes každý aktivní alert scanneru (každý má vlastní notifikace)
+        message = alert_message(job["title"], config["timeframe"], due, hits)
+        for alert_spec in channels:
+            await self._alert_engine.fire_message(alert_spec, message, symbol=f"Scanner {job['title']}",
+                                                  timeframe=config["timeframe"])

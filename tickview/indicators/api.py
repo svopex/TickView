@@ -218,14 +218,13 @@ def scanner_params(default_symbols: Sequence[str] = (), timeframe: str = "1h", a
         Param.select("scan_text_size", "normal", "Velikost textu", options=TABLE_SIZES, group=G_SCANNER),
         Param.bool("scan_strip_prefix", True, "Skrýt prefix zdroje", group=G_SCANNER),
         Param.bool("scan_alert", alert, "Posílat alert před zavřením svíčky", group=G_SCANNER_ALERT,
-                   tooltip="Jedna souhrnná zpráva se seznamem trhů se signálem na běžící svíčce timeframu scanu."),
+                   tooltip="Jedna souhrnná zpráva se seznamem trhů se signálem na běžící svíčce timeframu scanu. "
+                           "Odejde přes alert na tento indikátor s podmínkou „Any alert() function call“ "
+                           "(Alert → Condition), kde se nastavují i notifikace (Telegram, toast, zvuk, webhook)."),
         Param.int("scan_alert_minutes1", 10, "1. upozornění (min před zavřením)", min=0, max=1440,
                   group=G_SCANNER_ALERT, tooltip="0 = vypnuto; každý práh nejvýš jednou za svíčku."),
         Param.int("scan_alert_minutes2", 5, "2. upozornění (min před zavřením)", min=0, max=1440,
                   group=G_SCANNER_ALERT, tooltip="0 = vypnuto; každý práh nejvýš jednou za svíčku."),
-        Param.bool("scan_alert_telegram", True, "Telegram", group=G_SCANNER_ALERT),
-        Param.bool("scan_alert_toast", True, "Oznámení v aplikaci", group=G_SCANNER_ALERT),
-        Param.bool("scan_alert_sound", False, "Zvuk", group=G_SCANNER_ALERT),
     ]
     symbols = list(default_symbols)[:SCANNER_SYMBOLS]
     symbols += [""] * (SCANNER_SYMBOLS - len(symbols))

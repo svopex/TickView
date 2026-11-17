@@ -11,7 +11,10 @@ Alert je slovník:
 kde target je {"type": "value", "price": cena},
 {"type": "drawing", "id": id kresby, "kind": druh kresby} nebo
 {"type": "indicator", "kind": id indikátoru, "params": parametry, "minutes": předstih}
-(alert na signál indikátoru, např. Svopex TTW).
+(alert na signál indikátoru, např. Svopex TTW). Podmínka "alert_call" na
+indikátoru se scannerem je kanál pro alert scanneru před zavřením svíčky
+(jako „Any alert() function call“ v TradingView): alert sám nic nevyhodnocuje,
+scanner (tickview/services/scanner.py) přes něj posílá své zprávy.
 """
 
 import json
@@ -76,6 +79,15 @@ INDICATOR_TRIGGERS: dict[str, str] = {
     "per_bar": "Once Per Bar",
     "once": "Only Once",
 }
+# Podmínka a spouštění alertu, přes který posílá zprávy scanner indikátoru
+# (jako alert „Any alert() function call“ v TradingView; kdy se posílá,
+# určují vstupy indikátoru ve skupině Scanner – alert před zavřením svíčky)
+ALERT_CALL = "alert_call"
+ALERT_CALL_CONDITIONS: dict[str, str] = {ALERT_CALL: "Any alert() function call (scanner)"}
+ALERT_CALL_TRIGGERS: dict[str, str] = {ALERT_CALL: "Podle vstupů indikátoru (před zavřením svíčky)"}
+# Výchozí zpráva alertu scanneru: {{message}} = text souhrnné zprávy scanneru
+ALERT_CALL_MESSAGE = "{{message}}"
+
 # Výchozí a nejvyšší předstih alertu před zavřením svíčky (minuty)
 DEFAULT_ALERT_MINUTES = 10
 MAX_ALERT_MINUTES = 1440
@@ -303,6 +315,31 @@ class SignalAlertTracker:
         return None
 
 
+def indicator_conditions(kind: str) -> dict[str, str]:
+    """Podmínky alertu na indikátor: signály a u indikátoru se scannerem i alert() scanneru.
+
+    Parametry:
+        kind: id indikátoru.
+    """
+    indicator = get_indicator(kind)
+    if indicator is not None and indicator.has_scanner:
+        return {**INDICATOR_CONDITIONS, **ALERT_CALL_CONDITIONS}
+    return INDICATOR_CONDITIONS
+
+
+def indicator_triggers(condition: str) -> dict[str, str]:
+    """Spouštění alertu na indikátor podle podmínky (alert() scanneru má jediné)."""
+    return ALERT_CALL_TRIGGERS if condition == ALERT_CALL else INDICATOR_TRIGGERS
+
+
+def is_alert_call(alert: dict) -> bool:
+    """Je alert kanálem alertu scanneru (nevyhodnocuje se nad živým streamem)?
+
+    Podmínku alert_call pustí normalize_alert jen u cíle indikátoru.
+    """
+    return alert.get("condition") == ALERT_CALL
+
+
 def is_expired(alert: dict, now_ms: int) -> bool:
     """Vypršela platnost alertu? (bez expirace = nikdy)"""
     expires_at = alert.get("expires_at")
@@ -332,7 +369,10 @@ def default_message(symbol: str, timeframe: str, condition: str, target: dict) -
 
     U alertu na signál indikátoru obsahuje zástupný text {{signal}} (směr
     a typ formace se doplní při spuštění): „EURUSD, 1h Svopex TTW {{signal}}“.
+    Alert scanneru má jen zástupný text zprávy scanneru {{message}}.
     """
+    if condition == ALERT_CALL:
+        return ALERT_CALL_MESSAGE
     if target.get("type") == "indicator":
         return f"{symbol}, {timeframe} {target_label(target)} {{{{signal}}}}"
     label = target_label(target)
@@ -357,14 +397,22 @@ def render_message(template: str, context: dict) -> str:
     return _PLACEHOLDER.sub(replace, template)
 
 
-def message_context(alert: dict, price: float, exchange: str, fired_at_ms: int, signal: str = "") -> dict:
-    """Hodnoty zástupných textů zprávy pro spuštěný alert (signal = popis signálu indikátoru)."""
+def message_context(alert: dict, price: Optional[float], exchange: str, fired_at_ms: int, signal: str = "",
+                    message: str = "") -> dict:
+    """Hodnoty zástupných textů zprávy pro spuštěný alert.
+
+    Parametry:
+        price: cena spuštění (None = bez ceny, alert scanneru).
+        signal: popis signálu indikátoru ({{signal}}).
+        message: zpráva scanneru ({{message}}).
+    """
     return {
         "signal": signal,
+        "message": message,
         "ticker": alert["symbol"],
         "exchange": exchange,
         "interval": alert["timeframe"],
-        "close": format_price(price),
+        "close": format_price(price) if price is not None else "",
         "time": datetime.fromtimestamp(fired_at_ms / 1000, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
 
@@ -453,13 +501,14 @@ def normalize_alert(data: dict) -> dict:
     if timeframe not in TIMEFRAME_MS:
         raise ValueError("Neplatný timeframe alertu.")
     target = normalize_target(data.get("target"))
-    # Alert na signál indikátoru má vlastní podmínky a spouštění
+    # Alert na indikátor má vlastní podmínky a spouštění (alert() scanneru
+    # jen u indikátoru se scannerem)
     on_indicator = target["type"] == "indicator"
     condition = data.get("condition")
-    if condition not in (INDICATOR_CONDITIONS if on_indicator else CONDITIONS):
+    if condition not in (indicator_conditions(target["kind"]) if on_indicator else CONDITIONS):
         raise ValueError("Neplatná podmínka alertu.")
     trigger = data.get("trigger")
-    if trigger not in (INDICATOR_TRIGGERS if on_indicator else TRIGGERS):
+    if trigger not in (indicator_triggers(condition) if on_indicator else TRIGGERS):
         raise ValueError("Neplatný způsob spouštění alertu.")
     expires_at = data.get("expires_at")
     if expires_at is not None:
@@ -489,8 +538,8 @@ def describe_alert(alert: dict) -> str:
     """Krátký popis alertu do seznamu: „Crossing 1.22547 · Once Per Bar“ nebo „Svopex TTW: Signál Long · 10 min před zavřením“."""
     target = alert.get("target") or {}
     if target.get("type") == "indicator":
-        condition = INDICATOR_CONDITIONS.get(alert.get("condition"), "?")
-        trigger = INDICATOR_TRIGGERS.get(alert.get("trigger"), "?")
+        condition = indicator_conditions(target.get("kind", "")).get(alert.get("condition"), "?")
+        trigger = indicator_triggers(alert.get("condition")).get(alert.get("trigger"), "?")
         if alert.get("trigger") == "before_close":
             trigger = f"{target.get('minutes')} min před zavřením svíčky"
         return f"{target_label(target)}: {condition} · {trigger}"

@@ -18,13 +18,13 @@ from tickview.logic.alerts import (
     DEFAULT_ALERT_MINUTES,
     DEFAULT_NOTIFY,
     MAX_ALERT_MINUTES,
-    INDICATOR_CONDITIONS,
-    INDICATOR_TRIGGERS,
     LINE_KINDS,
     STATUSES,
     TRIGGERS,
     default_message,
     describe_alert,
+    indicator_conditions,
+    indicator_triggers,
     target_label,
     filter_alerts,
     format_price,
@@ -2087,14 +2087,25 @@ async def _build_index(
     def alert_on_indicator() -> bool:
         return (alert_source.value or "price") != "price"
 
+    def set_select_options(field, options: dict) -> None:
+        # Nové nabídky výběru; hodnota zůstane, pokud v nich je, jinak první nabídka
+        field.set_options(options, value=field.value if field.value in options else next(iter(options)))
+
     def apply_alert_source() -> None:
-        # Zdroj podmínky: cena / kresba, nebo signál indikátoru – jiné podmínky,
-        # spouštění a pole (u indikátoru předstih v minutách místo ceny a cíle)
+        # Zdroj podmínky: cena / kresba, nebo indikátor – jiné podmínky (indikátor
+        # se scannerem nabízí i alert() scanneru) a pole (u indikátoru bez ceny a cíle)
         on_indicator = alert_on_indicator()
-        for field, options in ((alert_condition, INDICATOR_CONDITIONS if on_indicator else CONDITIONS),
-                               (alert_trigger, INDICATOR_TRIGGERS if on_indicator else TRIGGERS)):
-            field.set_options(options, value=field.value if field.value in options else next(iter(options)))
+        if on_indicator:
+            kind = alert_form["indicator_targets"][alert_source.value]["kind"]
+            set_select_options(alert_condition, indicator_conditions(kind))
+        else:
+            set_select_options(alert_condition, CONDITIONS)
         alert_target.set_visibility(not on_indicator)
+        apply_alert_condition()
+
+    def apply_alert_condition() -> None:
+        # Spouštění podle podmínky: alert() scanneru má jediné (určují ho vstupy indikátoru)
+        set_select_options(alert_trigger, indicator_triggers(alert_condition.value) if alert_on_indicator() else TRIGGERS)
         apply_alert_trigger()
 
     def apply_alert_trigger() -> None:
@@ -2220,6 +2231,7 @@ async def _build_index(
             apply_alert_source()
             alert_minutes.value = saved_target["minutes"] if saved_target else DEFAULT_ALERT_MINUTES
             alert_condition.value = spec["condition"]
+            apply_alert_condition()
             target = spec["target"]
             if target["type"] == "drawing" and f"drawing:{target['id']}" in options:
                 alert_target.value = f"drawing:{target['id']}"
@@ -3406,7 +3418,10 @@ async def _build_index(
             ui.label("Message").classes("alert-label")
             with ui.column().classes("alert-field"):
                 alert_message = ui.textarea().props("outlined dense autogrow").classes("w-full")
-                ui.label("Zástupné texty: {{ticker}} {{exchange}} {{interval}} {{close}} {{time}}").classes("settings-note")
+                ui.label(
+                    "Zástupné texty: {{ticker}} {{exchange}} {{interval}} {{close}} {{time}}, u indikátoru {{signal}}, "
+                    "u alertu scanneru {{message}}"
+                ).classes("settings-note")
             ui.label("Notifications").classes("alert-label")
             with ui.column().classes("alert-field"):
                 alert_notify_telegram = ui.checkbox("Telegram")
@@ -3423,6 +3438,7 @@ async def _build_index(
             alert_submit = ui.button("Create", on_click=submit_alert, color=None).props("unelevated no-caps").classes("tv-btn-ok")
     # Zdroj podmínky mění nabídky podmínek a spouštění, spouštění viditelnost minut
     alert_source.on_value_change(lambda _event: (apply_alert_source(), refresh_alert_message()))
+    alert_condition.on_value_change(lambda _event: apply_alert_condition())
     alert_trigger.on_value_change(lambda _event: apply_alert_trigger())
     for alert_field in (alert_condition, alert_target, alert_price):
         alert_field.on_value_change(lambda _event: refresh_alert_message())

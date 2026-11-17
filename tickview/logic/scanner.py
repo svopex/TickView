@@ -38,7 +38,8 @@ def scan_config(params: dict, default_source: str) -> dict:
 
     Vrací {"timeframe", "bars", "position", "size", "only_hits",
     "strip_prefix", "symbols": [(zdroj, symbol)], "alert": {"enabled",
-    "minutes1", "minutes2", "notify"}}; opakovaný symbol se počítá jednou.
+    "minutes1", "minutes2"}}; opakovaný symbol se počítá jednou. Notifikace
+    alertu se nastavují v alertu s podmínkou alert_call (logic.alerts).
     """
     symbols: list[tuple[str, str]] = []
     for index in range(1, SCANNER_SYMBOLS + 1):
@@ -57,8 +58,6 @@ def scan_config(params: dict, default_source: str) -> dict:
             "enabled": params["scan_alert"],
             "minutes1": params["scan_alert_minutes1"],
             "minutes2": params["scan_alert_minutes2"],
-            "notify": {"telegram": params["scan_alert_telegram"], "toast": params["scan_alert_toast"],
-                       "sound": params["scan_alert_sound"], "webhook": ""},
         },
     }
 
