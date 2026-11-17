@@ -47,6 +47,7 @@ from tickview.indicators.api import CATEGORIES, Param, split_symbol
 from tickview.indicators.compute import (
     indicator_color,
     indicator_title,
+    instance_options,
     load_saved_indicators,
     new_indicator,
     normalize_params,
@@ -80,7 +81,6 @@ from tickview.logic.styles import (
     TEXT_FONT_SIZES,
     TIMEFRAME_SECTIONS,
     TIMEFRAMES,
-    VISIBILITY_UNITS,
     clean_name,
     default_template_key,
     load_chart_style,
@@ -93,8 +93,8 @@ from tickview.logic.styles import (
     normalize_favorites,
     normalize_panel_position,
     normalize_position_points,
+    normalize_indicator_style,
     normalize_text_options,
-    normalize_visibility,
     plural,
 )
 from tickview.logic.sessions import (
@@ -117,6 +117,7 @@ from tickview.ui.icons import ICONS, svg
 from tickview.ui.param_form import ParamForm
 from tickview.ui.reminders_dialog import RemindersDialog
 from tickview.ui.templates import TemplateMenu, load_default_template, settings_buttons, settings_header
+from tickview.ui.visibility_fields import VisibilityFields
 
 # Hledání symbolu: kolik výsledků jednoho zdroje a kolik celkem se zobrazí
 SEARCH_PER_PROVIDER = 15
@@ -609,6 +610,8 @@ async def _build_index(
         # Neoblíbený timeframe zvolený z nabídky je v liště jen dočasně
         refresh_timeframes()
         await save_layout()
+        # Tabulka scanneru závisí i na viditelnosti indikátoru na timeframu grafu
+        push_overview(changed)
         await asyncio.gather(*(pane.reload_chart() for pane in changed if pane.key))
 
     async def set_chart_type(chart_type: str) -> None:
@@ -969,8 +972,6 @@ async def _build_index(
     NO_LINE_KINDS = {"text", "sticker"}
     # Stav přepínačů tučného písma a kurzívy v dialogu Text
     text_flags: dict = {"bold": False, "italic": False}
-    # Potlačení vazeb polí viditelnosti při hromadném vyplňování
-    visibility_state: dict = {"filling": False}
 
     def paint_text_flags() -> None:
         # Tlačítka B / I v dialogu Text: zvýrazněné = zapnuté
@@ -981,48 +982,6 @@ async def _build_index(
     def toggle_text_flag(key: str) -> None:
         text_flags[key] = not text_flags[key]
         paint_text_flags()
-
-    def fill_visibility(visibility: dict) -> None:
-        # Záložka Visibility: zaškrtnutí, meze a posuvník každé jednotky timeframu
-        values = normalize_visibility(visibility)
-        visibility_state["filling"] = True
-        try:
-            for unit, fields in visibility_fields.items():
-                fields["enabled"].value = values[unit]["enabled"]
-                fields["from"].value = values[unit]["from"]
-                fields["to"].value = values[unit]["to"]
-                fields["range"].value = {"min": values[unit]["from"], "max": values[unit]["to"]}
-        finally:
-            visibility_state["filling"] = False
-
-    def collect_visibility() -> dict:
-        # Viditelnost z polí záložky Visibility (normalizace srovná neplatné meze)
-        return normalize_visibility(
-            {
-                unit: {"enabled": fields["enabled"].value, "from": fields["from"].value, "to": fields["to"].value}
-                for unit, fields in visibility_fields.items()
-            }
-        )
-
-    def make_visibility_sync(unit: str, source: str):
-        # Vazba mezí a posuvníku jednotky: změna čísla posune posuvník a naopak
-        def _handler(_event=None) -> None:
-            if visibility_state["filling"]:
-                return
-            fields = visibility_fields[unit]
-            visibility_state["filling"] = True
-            try:
-                if source == "range":
-                    fields["from"].value = fields["range"].value["min"]
-                    fields["to"].value = fields["range"].value["max"]
-                else:
-                    # Ořez do rozsahu jednotky a srovnání mezí jako při uložení
-                    rule = normalize_visibility({unit: {"from": fields["from"].value, "to": fields["to"].value}})[unit]
-                    fields["range"].value = {"min": rule["from"], "max": rule["to"]}
-            finally:
-                visibility_state["filling"] = False
-
-        return _handler
 
     def apply_drawing_template(values: dict) -> None:
         # Promítne hodnoty šablony (barva, šířka a styl čáry, písmo, pozadí
@@ -1047,7 +1006,7 @@ async def _build_index(
         text_border.value = text_options["border"]
         text_border_color.value = text_options["borderColor"]
         text_wrap.value = text_options["wrap"]
-        fill_visibility(options["visibility"])
+        drawing_visibility.fill(options["visibility"])
         if kind in POSITION_KINDS:
             position_account.value = options["accountSize"]
             position_risk.value = options["risk"]
@@ -1071,7 +1030,7 @@ async def _build_index(
                     "width": drawing_width.value,
                     "lineStyle": drawing_style.value,
                     "fontSize": text_size.value,
-                    "visibility": collect_visibility(),
+                    "visibility": drawing_visibility.values(),
                     # Vzhled textu (u ostatních kreseb ho normalizace zahodí)
                     "bold": text_flags["bold"],
                     "italic": text_flags["italic"],
@@ -1984,12 +1943,33 @@ async def _build_index(
     # Upravovaná instance indikátoru (pole parametrů drží settings_form)
     settings_state: dict = {"id": None}
 
-    def fill_indicator_settings(kind: str, params: dict) -> None:
-        # Pole parametrů podle schématu indikátoru (hodnoty z instance / výchozí);
-        # řádek Barva jen u indikátorů s hlavní barvou instance
+    def fill_indicator_settings(kind: str, params: dict, options: dict | None = None) -> None:
+        """Vyplní záložky Inputs / Style / Visibility dialogu nastavení indikátoru.
+
+        Záložky Style a Visibility má každý indikátor (jako v TradingView).
+        Style ukazuje Barvu (hlavní barva instance) a grafické objekty Lines
+        (úsečky) / Tables (tabulka scanneru) jen u indikátorů, které je mají;
+        Inputs in status line (hodnoty vstupů v legendě) vždy.
+
+        Parametry:
+            kind: id indikátoru.
+            params: hodnoty parametrů (chybějící = výchozí).
+            options: instance nebo šablona s klíči "style"? (přepínače Style,
+                chybějící = vše zapnuto) a "visibility"? (chybějící = všude).
+        """
         indicator = get_indicator(kind)
         settings_form.fill(indicator, params)
-        settings_style.set_visibility(bool(indicator and indicator.uses_color))
+        options = options or {}
+        for key, value in normalize_indicator_style(options.get("style")).items():
+            settings_style_checks[key].value = value
+        settings_visibility.fill(options.get("visibility"))
+        uses_color = bool(indicator and indicator.uses_color)
+        has_lines = bool(indicator and indicator.has_lines)
+        has_tables = bool(indicator and indicator.has_scanner)
+        settings_color_row.set_visibility(uses_color)
+        settings_style_checks["lines"].set_visibility(has_lines)
+        settings_style_checks["tables"].set_visibility(has_tables)
+        settings_objects.set_visibility(has_lines or has_tables)
 
     def indicator_scope() -> str:
         # Rozsah šablon upravovaného indikátoru: šablony platí pro typ indikátoru
@@ -2008,20 +1988,20 @@ async def _build_index(
         # Titulek jako v TradingView: název, zkratka jen když se liší
         settings_title.text = indicator.name if indicator.title == indicator.name else f"{indicator.name} ({indicator.title})"
         settings_ind_tabs.value = inputs_tab
-        fill_indicator_settings(spec["kind"], spec["params"])
+        fill_indicator_settings(spec["kind"], spec["params"], spec)
         index = active().indicators.index(spec)
         settings_color.value = indicator_color(spec, index)
         await indicator_templates.refresh()
         indicator_settings_dialog.open()
 
     def apply_indicator_template(values: dict) -> None:
-        # Promítne šablonu (parametry + barva) do dialogu; chybějící parametry
-        # doplní výchozími, bez barvy se použije barva z palety
+        # Promítne šablonu (parametry, barva, styl, viditelnost) do dialogu; chybějící
+        # parametry doplní výchozími, bez barvy se použije barva z palety
         spec = find_indicator(settings_state["id"])
         if not spec:
             return
         params = values.get("params") if isinstance(values.get("params"), dict) else {}
-        fill_indicator_settings(spec["kind"], params)
+        fill_indicator_settings(spec["kind"], params, values)
         palette_color = indicator_color({}, active().indicators.index(spec))
         settings_color.value = normalize_color(values.get("color")) or palette_color
 
@@ -2039,7 +2019,9 @@ async def _build_index(
         except ValueError as exc:
             ui.notify(str(exc), type="warning")
             return None
-        values: dict = {"params": params}
+        # Styl a viditelnost jen se změnou proti výchozímu stavu (jako v instanci)
+        style = {key: check.value for key, check in settings_style_checks.items()}
+        values: dict = {"params": params, **instance_options({"style": style, "visibility": settings_visibility.values()})}
         if color := normalize_color(settings_color.value):
             values["color"] = color
         return values
@@ -2054,6 +2036,11 @@ async def _build_index(
         if values is None:
             return
         spec["params"] = values["params"]
+        # Styl a viditelnost: v hodnotách jsou jen změněné, výchozí se z instance odeberou
+        for key in ("style", "visibility"):
+            spec.pop(key, None)
+            if key in values:
+                spec[key] = values[key]
         # Vlastní barva jen v platném tvaru, jinak zůstane barva z palety
         if "color" in values:
             spec["color"] = values["color"]
@@ -3148,19 +3135,39 @@ async def _build_index(
             indicator_list = ui.column().classes("ind-list")
 
     # Dialog nastavení jedné instance indikátoru (ozubené kolečko v legendě)
-    # se záložkami Inputs / Style jako v TradingView
+    # se záložkami Inputs / Style / Visibility jako v TradingView
     with ui.dialog() as indicator_settings_dialog, ui.card().classes("tv-settings indicator-settings"):
         settings_title = settings_header(indicator_settings_dialog)
         with ui.tabs().props("dense no-caps align=left indicator-color=primary").classes("tv-tabs w-full") as settings_ind_tabs:
             inputs_tab = ui.tab("inputs", label="Inputs")
             settings_style = ui.tab("style", label="Style")
+            settings_visibility_tab = ui.tab("visibility", label="Visibility")
         with ui.tab_panels(settings_ind_tabs, value=inputs_tab).props("animated=false").classes("tv-tab-panels w-full"):
             with ui.tab_panel(inputs_tab).classes("tv-tab-panel"):
                 settings_form = ParamForm(ui.column().classes("indicator-dialog-params w-full"), pick_symbol)
             with ui.tab_panel(settings_style).classes("tv-tab-panel"):
-                with ui.row().classes("param-row w-full"):
+                with ui.row().classes("param-row w-full") as settings_color_row:
                     ui.label("Barva").classes("param-label")
                     settings_color = ColorButton(indicator_color({}, 0), title="Barva indikátoru")
+                # Grafické objekty indikátoru (úsečky, tabulka scanneru) a hodnoty vstupů v legendě
+                # Přepínače podle klíčů INDICATOR_STYLE_DEFAULTS
+                settings_style_checks: dict = {}
+                with ui.column().classes("indicator-style-group w-full") as settings_objects:
+                    ui.label("Graphic objects").classes("tv-settings-section param-group")
+                    settings_style_checks["lines"] = ui.checkbox("Lines").classes("param-check tv-check")
+                    settings_style_checks["tables"] = ui.checkbox("Tables").classes("param-check tv-check")
+                with ui.column().classes("indicator-style-group w-full"):
+                    ui.label("Input values").classes("tv-settings-section param-group")
+                    settings_style_checks["inputs_in_status"] = ui.checkbox("Inputs in status line").classes(
+                        "param-check tv-check"
+                    )
+            with ui.tab_panel(settings_visibility_tab).classes("tv-tab-panel"):
+                # Viditelnost podle timeframu jako u kreseb
+                settings_visibility = VisibilityFields()
+                ui.label(
+                    "Indikátor se počítá a kreslí (včetně tabulky scanneru) jen na timeframech, které odpovídají "
+                    "zaškrtnutým jednotkám a rozsahům; v legendě zůstává."
+                ).classes("settings-note")
         with ui.row().classes("tv-settings-actions w-full"):
             indicator_templates = TemplateMenu(
                 cache,
@@ -3230,25 +3237,7 @@ async def _build_index(
                     position_stop = ui.number("Stop level (cena)", format="%.2f").props("outlined dense")
             with ui.tab_panel(visibility_tab).classes("tv-tab-panel"):
                 # Viditelnost podle timeframu: jednotka, od, posuvník rozsahu, do
-                visibility_fields: dict = {}
-                with ui.element("div").classes("visibility-grid w-full"):
-                    for unit, (unit_label, unit_low, unit_high) in VISIBILITY_UNITS.items():
-                        fields = {
-                            "enabled": ui.checkbox(unit_label, value=True).classes("visibility-check"),
-                            "from": ui.number(value=unit_low, min=unit_low, max=unit_high, step=1, format="%d").props(
-                                "outlined dense"
-                            ).classes("visibility-num"),
-                            "range": ui.range(min=unit_low, max=unit_high, step=1, value={"min": unit_low, "max": unit_high}).classes(
-                                "visibility-range"
-                            ),
-                            "to": ui.number(value=unit_high, min=unit_low, max=unit_high, step=1, format="%d").props(
-                                "outlined dense"
-                            ).classes("visibility-num"),
-                        }
-                        fields["from"].on_value_change(make_visibility_sync(unit, "from"))
-                        fields["to"].on_value_change(make_visibility_sync(unit, "to"))
-                        fields["range"].on_value_change(make_visibility_sync(unit, "range"))
-                        visibility_fields[unit] = fields
+                drawing_visibility = VisibilityFields()
                 ui.label(
                     "Kresba patří k symbolu a je vidět na timeframech, které odpovídají zaškrtnutým jednotkám a rozsahům."
                 ).classes("settings-note")

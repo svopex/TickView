@@ -226,6 +226,11 @@ class ScannerLogicTest(unittest.TestCase):
         self.assertIsNone(make_job({**spec, "params": {**params, "scan_table_position": "off"}}, "binance")[0])
         alert_only = make_job({**spec, "visible": False, "params": {**params, "scan_alert": True}}, "binance")
         self.assertEqual((alert_only[0] is not None, alert_only[1]), (True, False))
+        # Vypnuté Tables nebo indikátor skrytý na timeframu grafu = bez tabulky
+        self.assertIsNone(make_job({**spec, "style": {"tables": False}}, "binance")[0])
+        hidden_hours = {**spec, "visibility": {"hours": {"enabled": False}}}
+        self.assertFalse(make_job(hidden_hours, "binance", "1h")[1])
+        self.assertTrue(make_job(hidden_hours, "binance", "5m")[1])
         no_symbols = {**params, **{f"scan_symbol_{index}": "" for index in range(1, SCANNER_SYMBOLS + 1)}}
         self.assertIsNone(make_job({**spec, "params": no_symbols}, "binance")[0])
         # Indikátor bez vstupů scanneru nic neskenuje; shodné instance ve dvou grafech = jedna úloha

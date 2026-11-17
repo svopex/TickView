@@ -16,7 +16,7 @@ from typing import Optional
 
 from tickview.indicators.api import SCANNER_SYMBOLS, split_symbol
 from tickview.indicators.registry import get_indicator
-from tickview.logic.styles import plural
+from tickview.logic.styles import normalize_indicator_style, plural, timeframe_visible
 
 
 def parse_symbol(text: str, default_source: str) -> Optional[tuple[str, str]]:
@@ -62,17 +62,18 @@ def scan_config(params: dict, default_source: str) -> dict:
     }
 
 
-def make_job(spec: dict, default_source: str) -> tuple[Optional[dict], bool]:
+def make_job(spec: dict, default_source: str, timeframe: str = "") -> tuple[Optional[dict], bool]:
     """Úloha scanneru pro instanci indikátoru v grafu a zda instance ukazuje tabulku.
 
     Instance skenuje, když indikátor má vstupy scanneru, aspoň jeden symbol
-    a buď viditelnou tabulku (viditelný indikátor, pozice ≠ nezobrazovat),
-    nebo zapnutý alert. Klíč úlohy je stejný pro shodné instance ve více
+    a buď viditelnou tabulku (viditelný indikátor i na timeframu grafu,
+    zapnuté Tables v záložce Style, pozice ≠ nezobrazovat), nebo zapnutý alert. Klíč úlohy je stejný pro shodné instance ve více
     grafech, takže se počítají jednou.
 
     Parametry:
         spec: instance {"kind", "params", "visible"} s normalizovanými parametry.
         default_source: zdroj grafu (pro symboly bez prefixu).
+        timeframe: timeframe grafu (záložka Visibility; prázdný = viditelný).
 
     Vrací (úloha {"key", "kind", "title", "params", "config"} nebo None, tabulka).
     """
@@ -81,7 +82,9 @@ def make_job(spec: dict, default_source: str) -> tuple[Optional[dict], bool]:
         return None, False
     params = spec["params"]
     config = scan_config(params, default_source)
-    table = bool(config["symbols"]) and spec.get("visible", True) and config["position"] != "off"
+    table = (bool(config["symbols"]) and spec.get("visible", True) and config["position"] != "off"
+             and normalize_indicator_style(spec.get("style"))["tables"]
+             and timeframe_visible(spec.get("visibility"), timeframe))
     if not (table or (config["symbols"] and config["alert"]["enabled"])):
         return None, False
     # Klíč: indikátor, parametry výpočtu (bez vstupů scanneru) a nastavení scanneru
@@ -104,7 +107,7 @@ def layout_jobs(layout: dict) -> tuple[dict[str, dict], list[Optional[str]]]:
         default_source = split_symbol(pane["symbol"])[0]
         table_key = None
         for spec in pane["indicators"]:
-            job, table = make_job(spec, default_source)
+            job, table = make_job(spec, default_source, pane.get("timeframe", ""))
             if job:
                 jobs[job["key"]] = job
                 if table and table_key is None:

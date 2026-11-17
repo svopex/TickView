@@ -24,7 +24,7 @@ from tickview.indicators.api import (
     Result,
 )
 from tickview.indicators.registry import get_indicator
-from tickview.logic.styles import normalize_color
+from tickview.logic.styles import normalize_color, normalize_indicator_style, normalize_visibility, timeframe_visible
 from tickview.providers.base import TIMEFRAME_MS, Candle
 
 logger = logging.getLogger(__name__)
@@ -45,12 +45,20 @@ def indicator_color(spec: dict, index: int) -> str:
     return spec.get("color") or PALETTE[index % len(PALETTE)]
 
 
-def indicator_title(spec: dict) -> str:
-    """Krátký název instance pro legendu (např. "SMA 20"); nenačtený indikátor = jeho id."""
+def indicator_title(spec: dict, style: Optional[dict] = None) -> str:
+    """Krátký název instance pro legendu (např. "SMA 20"); nenačtený indikátor = jeho id.
+
+    Bez „Inputs in status line“ (záložka Style) jen název bez hodnot vstupů.
+
+    Parametry:
+        spec: instance indikátoru.
+        style: už normalizovaný styl instance (None = spočítá se ze spec).
+    """
     indicator = get_indicator(spec["kind"])
     if indicator is None:
         return f"{spec['kind']} (nenačten)"
-    return indicator.legend_title(spec["params"])
+    style = style or normalize_indicator_style(spec.get("style"))
+    return indicator.legend_title(spec["params"], with_inputs=style["inputs_in_status"])
 
 
 def normalize_params(kind: str, values: dict) -> dict:
@@ -105,6 +113,23 @@ def instance_params(kind: str, raw) -> dict:
         return indicator.defaults()
 
 
+def instance_options(source: dict) -> dict:
+    """Volby záložek Style (grafické objekty, vstupy v legendě) a Visibility (timeframy) instance.
+
+    Vrací jen volby změněné proti výchozímu stavu (vše zapnuto / viditelné
+    všude) – výchozí se do rozložení a šablon neukládají.
+
+    Parametry:
+        source: instance nebo hodnoty dialogu s klíči "style"? a "visibility"?.
+    """
+    options = {}
+    for key, normalize in (("style", normalize_indicator_style), ("visibility", normalize_visibility)):
+        value = normalize(source.get(key))
+        if value != normalize(None):
+            options[key] = value
+    return options
+
+
 def normalize_indicators(items) -> list[dict]:
     """Zkontroluje seznam instancí (rozložení, šablona, nastavení).
 
@@ -113,7 +138,8 @@ def normalize_indicators(items) -> list[dict]:
     (změněné schéma indikátoru nesmí instanci zahodit).
 
     Parametry:
-        items: seznam [{"id", "kind", "params", "visible"?, "color"?}] (jiný typ = prázdný seznam).
+        items: seznam [{"id", "kind", "params", "visible"?, "color"?, "style"?, "visibility"?}]
+            (jiný typ = prázdný seznam).
     """
     indicators: list[dict] = []
     for item in items if isinstance(items, list) else []:
@@ -125,6 +151,7 @@ def normalize_indicators(items) -> list[dict]:
             "params": instance_params(item["kind"], item.get("params")),
             "visible": item.get("visible", True) is not False,
         }
+        spec.update(instance_options(item))
         # Vlastní barva jen ve tvaru #rrggbb (jinak výchozí z palety)
         if color := normalize_color(item.get("color")):
             spec["color"] = color
@@ -271,8 +298,9 @@ def compute_indicators(indicators: list[dict], candles: list[Candle], ctx: Optio
     overlays = čáry přes hlavní graf, panes = samostatné panely s úrovněmi,
     segments / markers = úsečky a značky indikátorů v hlavním grafu,
     groups = jedna položka na instanci pro legendu (název, viditelnost,
-    panel, signals = lze nastavit alert na signál). Instance bez dat, nenačteného indikátoru nebo s chybou výpočtu
-    v legendě zůstane, jen bez čar.
+    panel, signals = lze nastavit alert na signál). Instance bez dat, nenačteného indikátoru, s chybou výpočtu
+    nebo skrytá na timeframu grafu (záložka Visibility, ctx.timeframe) v legendě zůstane, jen bez čar;
+    úsečky se vynechají při vypnutých Lines (záložka Style).
 
     Parametry:
         indicators: instance [{"id", "kind", "params", "visible"?, "color"?}].
@@ -290,11 +318,12 @@ def compute_indicators(indicators: list[dict], candles: list[Candle], ctx: Optio
     for index, spec in enumerate(indicators):
         indicator = get_indicator(spec["kind"])
         color = indicator_color(spec, index)
-        title = indicator_title(spec)
+        style = normalize_indicator_style(spec.get("style"))
+        title = indicator_title(spec, style)
         group = {"id": spec["id"], "title": title, "visible": spec.get("visible", True) is not False, "pane": None,
                  "signals": bool(indicator and indicator.has_signals)}
         groups.append(group)
-        if indicator is None or not candles:
+        if indicator is None or not candles or not timeframe_visible(spec.get("visibility"), ctx.timeframe):
             continue
         try:
             result = indicator.compute(df, spec["params"], ctx)
@@ -312,14 +341,15 @@ def compute_indicators(indicators: list[dict], candles: list[Candle], ctx: Optio
                           "series": payloads, "levels": list(result.levels)})
         else:
             overlays.extend({**payload, "group": spec["id"]} for payload in payloads)
-        # Úsečky a značky (jen s platnými souřadnicemi)
-        segments.extend(
-            {"group": spec["id"], "time1": int(seg.time1), "price1": float(seg.price1),
-             "time2": int(seg.time2), "price2": float(seg.price2),
-             "color": seg.color, "width": seg.width, "style": seg.style}
-            for seg in result.segments
-            if _finite(seg.time1, seg.price1, seg.time2, seg.price2)
-        )
+        # Úsečky jen se zapnutými Lines (záložka Style) a s platnými souřadnicemi
+        if style["lines"]:
+            segments.extend(
+                {"group": spec["id"], "time1": int(seg.time1), "price1": float(seg.price1),
+                 "time2": int(seg.time2), "price2": float(seg.price2),
+                 "color": seg.color, "width": seg.width, "style": seg.style}
+                for seg in result.segments
+                if _finite(seg.time1, seg.price1, seg.time2, seg.price2)
+            )
         markers.extend(
             {"group": spec["id"], "time": int(marker.time), "position": marker.position,
              "shape": marker.shape, "color": marker.color, "text": marker.text}

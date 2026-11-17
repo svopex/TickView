@@ -117,17 +117,22 @@ def normalize_text_options(options) -> dict:
     }
 
 
-# Viditelnost kreseb podle timeframu (záložka Visibility jako v TradingView):
-# jednotka → (popisek, nejmenší a největší hodnota rozsahu). Aplikace nemá
-# tickové, sekundové, měsíční ani range timeframy – nabízí jen použitelné jednotky
-VISIBILITY_UNITS: dict[str, tuple[str, int, int]] = {
+# Viditelnost kreseb a indikátorů podle timeframu (záložka Visibility jako
+# v TradingView): jednotka → (popisek, nejmenší a největší hodnota rozsahu;
+# None = jednotka jen se zaškrtávátkem). Řádky jsou všechny jako v TradingView,
+# i když aplikace tickové, sekundové, měsíční a range timeframy (zatím) nemá
+VISIBILITY_UNITS: dict[str, tuple[str, int | None, int | None]] = {
+    "ticks": ("Ticks", None, None),
+    "seconds": ("Seconds", 1, 59),
     "minutes": ("Minutes", 1, 59),
     "hours": ("Hours", 1, 24),
     "days": ("Days", 1, 366),
     "weeks": ("Weeks", 1, 52),
+    "months": ("Months", 1, 12),
+    "ranges": ("Ranges", None, None),
 }
-# Přípona timeframu → jednotka viditelnosti (1m, 4h, 1D, 1W)
-_TIMEFRAME_SUFFIX_UNITS = {"m": "minutes", "h": "hours", "D": "days", "W": "weeks"}
+# Přípona timeframu → jednotka viditelnosti (30s, 1m, 4h, 1D, 1W, 3M)
+_TIMEFRAME_SUFFIX_UNITS = {"s": "seconds", "m": "minutes", "h": "hours", "D": "days", "W": "weeks", "M": "months"}
 
 
 def timeframe_unit(timeframe: str) -> tuple[str, int] | None:
@@ -161,14 +166,33 @@ def normalize_visibility(data) -> dict:
     result = {}
     for unit, (_, low, high) in VISIBILITY_UNITS.items():
         item = source.get(unit) if isinstance(source.get(unit), dict) else {}
+        enabled = item.get("enabled", True) is not False
+        # Jednotka bez rozsahu (Ticks, Ranges) má jen zaškrtnutí
+        if low is None:
+            result[unit] = {"enabled": enabled}
+            continue
         start = _bounded_int(item.get("from"), low, high, low)
         end = _bounded_int(item.get("to"), low, high, high)
         result[unit] = {
-            "enabled": item.get("enabled", True) is not False,
+            "enabled": enabled,
             "from": min(start, end),
             "to": max(start, end),
         }
     return result
+
+
+def timeframe_visible(visibility, timeframe: str) -> bool:
+    """Je kresba / indikátor s danou viditelností vidět na timeframu? (záložka Visibility)
+
+    Parametry:
+        visibility: {jednotka: {"enabled", "from", "to"}} (jiný typ = viditelný všude).
+        timeframe: timeframe grafu, např. "5m" (neznámý = viditelný).
+    """
+    unit = timeframe_unit(timeframe)
+    if unit is None or not isinstance(visibility, dict):
+        return True
+    rule = normalize_visibility(visibility)[unit[0]]
+    return rule["enabled"] and rule["from"] <= unit[1] <= rule["to"]
 
 
 def drawing_visible(options, timeframe: str) -> bool:
@@ -178,14 +202,22 @@ def drawing_visible(options, timeframe: str) -> bool:
         options: volby kresby (může obsahovat "visibility"; bez ní je viditelná všude).
         timeframe: timeframe grafu, např. "5m" (neznámý = viditelná).
     """
-    unit = timeframe_unit(timeframe)
-    if unit is None:
-        return True
-    raw = options.get("visibility") if isinstance(options, dict) else None
-    if not isinstance(raw, dict):
-        return True
-    rule = normalize_visibility(raw)[unit[0]]
-    return rule["enabled"] and rule["from"] <= unit[1] <= rule["to"]
+    return timeframe_visible(options.get("visibility") if isinstance(options, dict) else None, timeframe)
+
+
+# Záložka Style instance indikátoru jako v TradingView: grafické objekty
+# (Lines = úsečky, Tables = tabulka scanneru) a vstupy v legendě (status line)
+INDICATOR_STYLE_DEFAULTS: dict[str, bool] = {"lines": True, "tables": True, "inputs_in_status": True}
+
+
+def normalize_indicator_style(data) -> dict:
+    """Přepínače záložky Style instance indikátoru s výchozími hodnotami (vše zapnuto).
+
+    Parametry:
+        data: {"lines", "tables", "inputs_in_status"} – může být neúplný nebo None.
+    """
+    source = data if isinstance(data, dict) else {}
+    return {key: source.get(key, default) is not False for key, default in INDICATOR_STYLE_DEFAULTS.items()}
 
 
 def normalize_drawing_style(values, kind: str | None = None) -> dict:

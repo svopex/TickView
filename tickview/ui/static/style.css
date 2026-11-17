@@ -2104,21 +2104,96 @@
   min-height: 110px;
 }
 
-/* Záložka Visibility: zaškrtnutí jednotky, od, posuvník rozsahu, do */
+/* Záložka Visibility jako v TradingView: zaškrtnutí jednotky, od, posuvník
+   rozsahu, do; Ticks a Ranges jen se zaškrtnutím přes celý řádek */
 .visibility-grid {
   display: grid;
-  grid-template-columns: 110px 72px 1fr 72px;
+  /* Pole od, posuvník a pole do stejně široké jako v TradingView */
+  grid-template-columns: 0.75fr 1fr 1fr 1fr;
   align-items: center;
   column-gap: 10px;
-  row-gap: 8px;
+  row-gap: 14px;
+  padding: 6px 0 4px;
 }
 
+.visibility-check-only {
+  grid-column: 1 / -1;
+}
+
+/* Zaškrtávátko jako v TradingView (záložky Visibility a Style): bílý
+   zaoblený čtvereček s tmavou fajfkou */
+.tv-check .q-checkbox__inner {
+  color: var(--tv-text, #d1d4dc);
+}
+
+.tv-check .q-checkbox__inner--truthy .q-checkbox__bg {
+  background: #f0f3fa;
+  border-color: #f0f3fa;
+  border-radius: 4px;
+}
+
+.tv-check .q-checkbox__inner--truthy .q-checkbox__svg {
+  color: #131722;
+}
+
+.visibility-check .q-checkbox__label {
+  font-size: 14px;
+}
+
+/* Číselné meze bez šipek (jako v TradingView) */
 .visibility-num .q-field__control {
   min-height: 36px;
+  border-radius: 6px;
 }
 
+.visibility-num input::-webkit-outer-spin-button,
+.visibility-num input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.visibility-num input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+/* Posuvník přes celou buňku mřížky (q-range má od Quasaru třídu inline);
+   velikost dráhy a barvy přes vlastnosti q-range */
 .visibility-range {
+  width: 100%;
   min-width: 80px;
+  padding: 0 8px;
+}
+
+.visibility-range .q-slider__track {
+  border-radius: 6px;
+}
+
+/* Úchyt jako v TradingView: bílé kolečko s tmavým okrajem místo SVG tvaru Quasaru */
+.visibility-range .q-slider__thumb-shape {
+  display: none;
+}
+
+/* Úchyt nad dráhou (jinak dráha zakryje vnitřní polovinu okraje) */
+.visibility-range .q-slider__thumb {
+  z-index: 2;
+}
+
+.visibility-range .q-slider__thumb::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  transform: translate(-50%, -50%);
+  box-sizing: border-box;
+  border: 2px solid #131722;
+  border-radius: 50%;
+  background: #ffffff;
+}
+
+.visibility-range .q-slider__focus-ring {
+  display: none;
 }
 
 /* Parametry indikátoru generované ze schématu (záložka Inputs jako v TradingView):
@@ -2141,6 +2216,12 @@
 
 .param-group:first-child {
   margin-top: 0;
+}
+
+/* Záložka Style indikátoru: sekce Graphic objects / Input values se zaškrtávátky */
+.indicator-style-group {
+  flex-wrap: nowrap;
+  gap: 6px !important;
 }
 
 .param-row {

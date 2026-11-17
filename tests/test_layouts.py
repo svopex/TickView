@@ -108,7 +108,8 @@ class VisibilityTest(unittest.TestCase):
             self.assertIsNotNone(timeframe_unit(timeframe), timeframe)
         self.assertEqual(timeframe_unit("15m"), ("minutes", 15))
         self.assertEqual(timeframe_unit("4h"), ("hours", 4))
-        self.assertIsNone(timeframe_unit("3M"))
+        self.assertEqual(timeframe_unit("3M"), ("months", 3))
+        self.assertIsNone(timeframe_unit("3X"))
 
     def test_default_visible_everywhere(self) -> None:
         for timeframe in TIMEFRAMES:
@@ -126,8 +127,9 @@ class VisibilityTest(unittest.TestCase):
         self.assertTrue(drawing_visible(options, "15m"))
         self.assertTrue(drawing_visible(options, "1D"))
         self.assertTrue(drawing_visible(options, "1W"))
-        # Neznámý timeframe = viditelná
+        # Jednotka bez pravidla a neznámý timeframe = viditelná
         self.assertTrue(drawing_visible(options, "3M"))
+        self.assertTrue(drawing_visible(options, "3X"))
 
     def test_normalize_visibility(self) -> None:
         # Meze se omezí na rozsah jednotky a prohozené se srovnají

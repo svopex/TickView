@@ -185,6 +185,36 @@ class IndicatorsTest(unittest.TestCase):
         self.assertEqual(payload["overlays"][0]["color"], "#123456")
         self.assertEqual(payload["groups"][0]["title"], "SMA 5")
 
+    def test_style_and_visibility(self) -> None:
+        from tickview.indicators.api import Context, Result, Segment
+        from tickview.indicators.registry import get_indicator
+
+        candles = [make_candle(i * 60_000, close=1 + (i % 7) * 0.1) for i in range(100)]
+        # Bez vstupů v legendě jen název; skrytý na timeframu = v legendě, ale bez čar
+        spec = {"id": "x", "kind": "sma", "params": {"length": 5}, "style": {"inputs_in_status": False},
+                "visibility": {"minutes": {"enabled": False}}}
+        payload = compute_indicators([spec], candles, Context(timeframe="5m"))
+        self.assertEqual((payload["groups"][0]["title"], payload["overlays"]), ("SMA", []))
+        self.assertTrue(compute_indicators([spec], candles, Context(timeframe="1h"))["overlays"])
+        # Vypnuté Lines vynechají úsečky indikátoru
+        indicator = get_indicator("sma")
+        original = indicator.compute
+        indicator.compute = lambda df, params, ctx: Result(segments=[Segment(1, 1.0, 2, 2.0, "#fff")])
+        try:
+            lines_on = compute_indicators([{**spec, "visibility": None}], candles)
+            lines_off = compute_indicators([{**spec, "visibility": None, "style": {"lines": False}}], candles)
+        finally:
+            indicator.compute = original
+        self.assertEqual((len(lines_on["segments"]), len(lines_off["segments"])), (1, 0))
+        # Výchozí styl a viditelnost se do instance neukládají, změněné ano
+        loaded = load_saved_indicators('[{"kind": "sma", "params": {}, "style": {"lines": true}},'
+                                       ' {"kind": "sma", "params": {}, "style": {"tables": false},'
+                                       ' "visibility": {"days": {"enabled": false}}}]')
+        self.assertNotIn("style", loaded[0])
+        self.assertNotIn("visibility", loaded[0])
+        self.assertFalse(loaded[1]["style"]["tables"])
+        self.assertFalse(loaded[1]["visibility"]["days"]["enabled"])
+
     def test_series_keep_candle_count(self) -> None:
         candles = [make_candle(i * 60_000, close=1 + (i % 7) * 0.1) for i in range(100)]
         payload = compute_indicators(self.SPECS, candles)

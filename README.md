@@ -198,12 +198,14 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   pozadí a rámeček (zaškrtnutí + barva) a zalomení řádků (Text wrap, šířka
   240 px); text se kreslí od kotevního bodu doprava dolů. Šablony včetně
   „Save as default“ platí i pro text.
-- Viditelnost kreseb (záložka Visibility v Settings každé kresby): pro
-  Minutes (1–59), Hours (1–24), Days (1–366) a Weeks (1–52) zaškrtnutí
-  a rozsah (pole od / do a posuvník); kresba je vidět jen na timeframech,
-  které odpovídají zaškrtnuté jednotce a rozsahu (např. Hours vypnuté = text
-  není na 1h ani 4h). Výchozí je kresba vidět všude. Tick, Seconds, Months
-  a Ranges aplikace nenabízí, protože takové timeframy nemá.
+- Viditelnost kreseb a indikátorů (záložka Visibility v Settings každé
+  kresby i indikátoru, vzhled jako v TradingView): řádky Ticks, Seconds
+  (1–59), Minutes (1–59), Hours (1–24), Days (1–366), Weeks (1–52), Months
+  (1–12) a Ranges; u jednotek s rozsahem zaškrtnutí, pole od / do
+  a posuvník. Kresba / indikátor je vidět jen na timeframech, které
+  odpovídají zaškrtnuté jednotce a rozsahu (např. Hours vypnuté = text není
+  na 1h ani 4h). Výchozí je vidět všude. Ticks, Seconds, Months a Ranges se
+  ukládají, ale aplikace takové timeframy zatím nemá.
 - Šablony indikátorů jako v TradingView: šipka vedle tlačítka Indikátory
   otevře nabídku (záložky Indicators / Templates) – „Save indicator
   template…“ uloží všechny indikátory aktivního grafu pod názvem (volitelně
@@ -280,9 +282,15 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   MACD, Stochastic, Stoch RSI, CCI, Williams %R, Momentum, ROC, Awesome
   Oscillator, TRIX, TSI, ATR, OBV, MFI, CMF a vlastní Svopex TTW. Řádek indikátoru v legendě (i
   v titulku panelu) má při najetí myší oko (skrýt/zobrazit), ozubené kolečko
-  (Settings – parametry a barva) a křížek (odebrat). Dialog Settings má jako
-  v TradingView záložky Inputs a Style (barva, jen u indikátorů s hlavní
-  barvou) a skládá se ze schématu parametrů indikátoru: skupiny jako nadpisy
+  (Settings) a křížek (odebrat). Dialog Settings má u každého indikátoru
+  jako v TradingView záložky Inputs, Style a Visibility. Style: barva (jen
+  u indikátorů s hlavní barvou), Graphic objects – Lines (úsečky indikátoru,
+  např. trendové linky Svopex TTW) a Tables (tabulka scanneru) jen
+  u indikátorů, které je kreslí, a Input values – Inputs in status line
+  (vypnuté = v legendě jen název bez hodnot vstupů). Visibility: timeframy,
+  na kterých se indikátor počítá a kreslí včetně tabulky scanneru (v legendě
+  zůstává). Styl a viditelnost se ukládají s instancí (jen změněné proti
+  výchozímu stavu) a do šablon. Inputs se skládá ze schématu parametrů indikátoru: skupiny jako nadpisy
   sekcí, v řádku popisek vlevo a pole vpravo (číslo, barva, výběr, text,
   timeframe, symbol), přepínač přes celý řádek, nápověda v tooltipu. Pole
   symbolu má tužku, která otevře hledání symbolu a zvolený „zdroj:SYMBOL“
@@ -297,7 +305,8 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   poznámky) TickView ignoruje. Indikátor importuje jen `tickview.indicators.api`
   a pandas/numpy, dostane svíčky, parametry a `Context` (druh instrumentu,
   tick, pásmo burzy, timeframe) a vrátí `Result`: čáry, úrovně panelu,
-  úsečky, značky u svíček a signály pro scanner. Nový indikátor = nový
+  úsečky, značky u svíček a signály pro scanner (indikátor s úsečkami
+  nastaví `has_lines = True`, aby Style nabídl přepínač Lines). Nový indikátor = nový
   adresář, odebrání = smazání adresáře. Chyba importu nebo jiná verze
   rozhraní (`API_VERSION`) se zapíše do logu a ukáže v kategorii Vlastní,
   ostatní indikátory fungují dál.
@@ -564,6 +573,8 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   šablon „Template“
 - `tickview/ui/param_form.py` – formulář parametrů indikátoru ze schématu
   (záložka Inputs v Settings indikátoru, pole symbolu s hledáním)
+- `tickview/ui/visibility_fields.py` – pole záložky Visibility (kresby
+  i indikátory)
 - `tickview/ui/reminders_dialog.py` – dialog Časové připomínky
 - `tickview/ui/notify_fields.py` – pole notifikací (Telegram, oznámení,
   zvuk, webhook) pro časové připomínky
@@ -571,7 +582,8 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   setup, aktivní graf, hledání symbolu (dialog), pravý panel (watchlist,
   alerty – seznam, log, hledání, hromadné akce), dialog alertu, Telegram
   v Settings), timeframy, watchlist, nabídka, šablony a Settings
-  indikátorů, lišta kreslení, Settings kreseb (Text, Visibility) a grafu,
+  indikátorů (Inputs, Style, Visibility), lišta kreslení, Settings kreseb
+  (Text, Visibility) a grafu,
   stavová lišta se seancí a časovým pásmem
 - `tickview/ui/static/lightweight_chart.js` – JS komponenta grafu (svíčky,
   objem, nadpis a legenda ve stylu TradingView, motivy, časové pásmo,

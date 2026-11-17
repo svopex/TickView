@@ -364,6 +364,8 @@ class Indicator:
             (None = všechny číselné).
         uses_color: instance má hlavní barvu (pole Barva v dialogu).
         has_signals: indikátor vrací signály (alert na signál, scanner).
+        has_lines: indikátor vrací úsečky (Result.segments) – záložka Style
+            nabídne přepínač Lines.
         api_version: verze rozhraní, pro kterou je indikátor napsaný.
     """
 
@@ -377,6 +379,7 @@ class Indicator:
     title_params: Optional[tuple] = None
     uses_color: bool = True
     has_signals: bool = False
+    has_lines: bool = False
     api_version: int = API_VERSION
 
     def validate(self, params: dict) -> None:
@@ -420,9 +423,17 @@ class Indicator:
         self.validate(params)
         return params
 
-    def legend_title(self, params: dict) -> str:
-        """Název instance do legendy, např. "SMA 20" nebo "BB 20 2"."""
-        if self.title_params is None:
+    def legend_title(self, params: dict, with_inputs: bool = True) -> str:
+        """Název instance do legendy, např. "SMA 20" nebo "BB 20 2".
+
+        Parametry:
+            params: parametry instance.
+            with_inputs: připojit hodnoty vstupů (False = jen název, vypnuté
+                „Inputs in status line“ v záložce Style).
+        """
+        if not with_inputs:
+            names = []
+        elif self.title_params is None:
             names = [param.name for param in self.params if param.kind in ("int", "float")]
         else:
             names = list(self.title_params)
