@@ -331,11 +331,6 @@
   color: #131722;
 }
 
-/* Dialog pro přidání indikátoru */
-.indicator-dialog {
-  min-width: 320px;
-}
-
 /* Dialog nastavení API klíčů */
 .settings-dialog {
   min-width: 360px;
@@ -386,36 +381,9 @@
   color: #2962ff;
 }
 
-/* Paleta barev nových kreseb */
-.swatch {
-  min-height: 22px !important;
-  min-width: 22px !important;
-  padding: 0 !important;
-  border-radius: 11px;
-}
-
-.swatch-0 {
-  background: #2962ff;
-}
-
-.swatch-1 {
-  background: #e91e63;
-}
-
-.swatch-2 {
-  background: #26a69a;
-}
-
-.swatch-3 {
-  background: #ff9800;
-}
-
-.swatch-4 {
-  background: #d1d4dc;
-}
-
-.swatch-active {
-  outline: 2px solid #2962ff;
+/* Tlačítko barvy nových kreseb v liště nástrojů */
+.toolbar-color {
+  margin: 4px 0;
 }
 
 /* Překryvný canvas pro kreslení: průchodný myši, v módě kreslení zachytává kliky.
@@ -785,6 +753,414 @@
 
 /* Zvolená položka nabídky (seance, časové pásmo) */
 .menu-item-active {
+  background: rgba(41, 98, 255, 0.18);
+  color: #2962ff;
+}
+
+/* ---------- Výběr barvy ve stylu TradingView ---------- */
+
+/* Tlačítko barvy: vzorek s šachovnicí pod ním (ukáže průhlednost) */
+.tv-color-btn {
+  width: 32px;
+  height: 32px;
+  padding: 3px;
+  border: 1px solid rgba(128, 128, 128, 0.5);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.tv-color-btn:hover,
+.tv-color-btn-open {
+  border-color: #2962ff;
+}
+
+.tv-color-btn-open {
+  box-shadow: 0 0 0 1px #2962ff;
+}
+
+.tv-color-btn-fill {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 3px;
+  background:
+    linear-gradient(var(--tv-swatch, transparent), var(--tv-swatch, transparent)),
+    repeating-conic-gradient(#b2b5be 0% 25%, #ffffff 0% 50%) 50% / 8px 8px;
+}
+
+/* Vyskakovací panel s paletou */
+.tv-color-picker {
+  position: fixed;
+  z-index: 9000;
+  pointer-events: auto;
+  width: 232px;
+  padding: 12px;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #131722;
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
+  font-size: 13px;
+}
+
+/* V dialogu je panel přímým potomkem .q-dialog__inner – Quasar by mu jako
+   „obsahu dialogu“ nastavil posuvník a omezenou výšku */
+.q-dialog__inner > .tv-color-picker {
+  overflow: visible;
+  max-height: none;
+  max-width: none;
+}
+
+.tv-color-picker * {
+  box-sizing: border-box;
+}
+
+.body--dark .tv-color-picker {
+  background: #1e222d;
+  color: #d1d4dc;
+}
+
+.tv-cp-row {
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  gap: 2px;
+  margin-bottom: 2px;
+}
+
+/* Mezi hlavními barvami a odstíny je mezera jako v TradingView */
+.tv-cp-row-main {
+  margin-bottom: 8px;
+}
+
+.tv-cp-swatch {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid rgba(128, 128, 128, 0.25);
+  border-radius: 3px;
+  background: var(--tv-cp-swatch);
+  cursor: pointer;
+}
+
+.tv-cp-swatch:hover {
+  transform: scale(1.15);
+}
+
+.tv-cp-swatch.selected {
+  outline: 2px solid #2962ff;
+  outline-offset: 1px;
+}
+
+.tv-cp-sep {
+  height: 1px;
+  margin: 10px 0;
+  background: rgba(128, 128, 128, 0.3);
+}
+
+.tv-cp-custom {
+  align-items: center;
+}
+
+/* Tlačítko „+“ vlastní barvy */
+.tv-cp-add {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.tv-cp-add .material-icons {
+  font-size: 18px;
+  line-height: 20px;
+}
+
+.tv-cp-add:hover {
+  background: rgba(128, 128, 128, 0.2);
+}
+
+/* Systémový výběr barvy je skrytý, otevírá ho tlačítko „+“ */
+.tv-cp-native {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.tv-cp-label {
+  margin: 10px 0 6px;
+  color: #808080;
+}
+
+.tv-cp-alpha {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Posuvník průhlednosti: šachovnice + přechod do aktuální barvy */
+.tv-cp-alpha-range {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 14px;
+  margin: 0;
+  border-radius: 7px;
+  appearance: none;
+  -webkit-appearance: none;
+  background:
+    linear-gradient(to right, rgba(var(--tv-cp-rgb), 0), rgba(var(--tv-cp-rgb), 1)),
+    repeating-conic-gradient(#b2b5be 0% 25%, #ffffff 0% 50%) 50% / 8px 8px;
+  cursor: pointer;
+}
+
+.tv-cp-alpha-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 3px solid #131722;
+  background: #ffffff;
+}
+
+.tv-cp-alpha-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 3px solid #131722;
+  background: #ffffff;
+}
+
+.tv-cp-alpha-input {
+  width: 58px;
+  padding: 5px 6px;
+  border: 1px solid rgba(128, 128, 128, 0.45);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: right;
+}
+
+.tv-cp-alpha-input:focus {
+  outline: none;
+  border-color: #2962ff;
+}
+
+/* ---------- Dialogy Settings ve stylu TradingView ---------- */
+
+.tv-settings {
+  width: 420px;
+  max-width: 95vw;
+  padding: 16px 20px !important;
+  gap: 10px !important;
+}
+
+.tv-settings-header {
+  align-items: center;
+  flex-wrap: nowrap;
+}
+
+.tv-settings-title {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+/* Nadpis sekce v dialogu Settings (SVÍČKY, INPUTS…) a ve flyoutu nástrojů
+   (ČÁRY, KANÁLY…) – stejné písmo, liší se jen odsazením */
+.tv-settings-section,
+.tool-flyout-section {
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #808080;
+}
+
+.tv-settings-section {
+  margin-top: 6px;
+}
+
+.tv-settings-row {
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 8px !important;
+}
+
+.tv-settings-check,
+.tv-settings-label {
+  min-width: 110px;
+}
+
+/* Patička: Template vlevo, Cancel a Ok vpravo */
+.tv-settings-actions {
+  margin-top: 10px;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 8px !important;
+}
+
+.tv-btn-cancel {
+  min-width: 80px;
+}
+
+/* Tlačítka bez barvy Quasaru (prop color odebraný), barvy podle motivu jako
+   v TradingView; !important nepoužíváme – Quasar ho má v CSS vrstvě, kde by
+   vyhrál nad naším */
+.tv-btn-ok {
+  min-width: 64px;
+  background: #131722;
+  color: #ffffff;
+}
+
+.body--dark .tv-btn-ok {
+  background: #ffffff;
+  color: #131722;
+}
+
+.tv-btn-cancel,
+.tpl-button {
+  color: inherit;
+}
+
+/* Nabídka šablon */
+.tpl-menu {
+  min-width: 220px;
+}
+
+.tpl-item {
+  min-height: 36px;
+  font-size: 14px;
+}
+
+.tpl-saved {
+  align-items: center;
+  gap: 8px;
+}
+
+.tpl-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+}
+
+/* Křížek smazání šablony se ukáže při najetí na řádek */
+.tpl-delete {
+  opacity: 0;
+}
+
+.tpl-saved:hover .tpl-delete {
+  opacity: 0.8;
+}
+
+.tpl-name-dialog {
+  width: 340px;
+  max-width: 95vw;
+  gap: 10px !important;
+}
+
+/* ---------- Oblíbené nástroje ---------- */
+
+.tool-flyout-section {
+  padding: 8px 10px 2px;
+}
+
+/* Hvězdička oblíbeného nástroje vpravo v položce flyoutu */
+.tool-flyout-star {
+  margin-left: auto;
+  padding-left: 16px;
+  font-size: 18px !important;
+  color: #808080;
+  opacity: 0;
+}
+
+.tool-flyout-item:hover .tool-flyout-star,
+.tool-flyout-star.on {
+  opacity: 1;
+}
+
+.tool-flyout-star:hover {
+  color: #2962ff;
+}
+
+.tool-flyout-star.on {
+  color: #f7b500;
+}
+
+/* Plovoucí panel oblíbených nástrojů nad grafem */
+.fav-toolbar {
+  position: absolute;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 4px;
+  border-radius: 6px;
+  background: #ffffff;
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+  user-select: none;
+}
+
+.body--dark .fav-toolbar {
+  background: #1e222d;
+}
+
+.fav-toolbar.hidden {
+  display: none;
+}
+
+.fav-toolbar.dragging {
+  opacity: 0.85;
+}
+
+/* Úchop pro přesun panelu */
+.fav-handle {
+  font-size: 18px !important;
+  color: #808080;
+  cursor: grab;
+  touch-action: none;
+}
+
+.fav-toolbar.dragging .fav-handle {
+  cursor: grabbing;
+}
+
+.fav-tool {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.body--dark .fav-tool {
+  color: #d1d4dc;
+}
+
+.body--light .fav-tool {
+  color: #131722;
+}
+
+.fav-tool .material-icons {
+  font-size: 20px;
+}
+
+.fav-tool:hover {
+  background: rgba(128, 128, 128, 0.2);
+}
+
+.fav-tool.active {
   background: rgba(41, 98, 255, 0.18);
   color: #2962ff;
 }

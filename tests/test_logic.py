@@ -21,6 +21,20 @@ from tickview.logic.indicators import (
     normalize_params,
 )
 from tickview.logic.sessions import filter_session, timezone_options, utc_offset_label
+from tickview.logic.styles import (
+    CHART_DEFAULTS,
+    clean_template_name,
+    delete_template,
+    load_chart_style,
+    load_favorite_tools,
+    load_panel_position,
+    load_templates,
+    normalize_chart_style,
+    normalize_color,
+    normalize_favorite_tools,
+    normalize_panel_position,
+    save_template,
+)
 from tickview.providers.base import (
     TIMEFRAME_MS,
     Candle,
@@ -398,6 +412,58 @@ class ConfigTest(unittest.TestCase):
             update_config_section("alpaca", {"api_key": "k"}, path)
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             self.assertEqual(yaml.safe_load(path.read_text(encoding="utf-8")), {"alpaca": {"api_key": "k"}})
+
+
+class StylesTest(unittest.TestCase):
+    """Barvy s průhledností, styl grafu, šablony a oblíbené nástroje."""
+
+    def test_normalize_color(self) -> None:
+        self.assertEqual(normalize_color("#2962FF"), "#2962ff")
+        # Plně krycí rgba se ukládá jako hex, průhledná zůstane rgba
+        self.assertEqual(normalize_color("rgba(41, 98, 255, 1)"), "#2962ff")
+        self.assertEqual(normalize_color("rgb(41,98,255)"), "#2962ff")
+        self.assertEqual(normalize_color("rgba(41,98,255,0.456)"), "rgba(41, 98, 255, 0.46)")
+        self.assertEqual(normalize_color("rgba(0, 0, 0, 0)"), "rgba(0, 0, 0, 0)")
+        for invalid in ("#12345", "red", "rgba(256, 0, 0, 1)", "rgba(1, 2, 3, 1.5)", None, 5):
+            self.assertIsNone(normalize_color(invalid), invalid)
+
+    def test_chart_style(self) -> None:
+        style = normalize_chart_style({"body_up": "rgba(1, 2, 3, 0.5)", "wick": 0, "body_down": "xx", "extra": 1})
+        self.assertEqual(style["body_up"], "rgba(1, 2, 3, 0.5)")
+        self.assertIs(style["wick"], False)
+        # Neplatná barva → výchozí, neznámý klíč zmizí
+        self.assertEqual(style["body_down"], CHART_DEFAULTS["body_down"])
+        self.assertNotIn("extra", style)
+        self.assertEqual(load_chart_style("{nejson"), CHART_DEFAULTS)
+        self.assertEqual(load_chart_style(None), CHART_DEFAULTS)
+
+    def test_templates(self) -> None:
+        templates = save_template({}, "Moje", {"a": 1})
+        templates = save_template(templates, "alfa", {"a": 2})
+        # Stejný název bez ohledu na velikost písmen šablonu přepíše
+        templates = save_template(templates, "MOJE", {"a": 3})
+        self.assertEqual(list(templates), ["alfa", "MOJE"])
+        self.assertEqual(templates["MOJE"], {"a": 3})
+        self.assertEqual(list(delete_template(templates, "alfa")), ["MOJE"])
+        self.assertEqual(load_templates('{"b": {"x": 1}, "a": {"y": 2}, "": {}, "c": 5}'), {"a": {"y": 2}, "b": {"x": 1}})
+        self.assertEqual(load_templates("[1]"), {})
+        self.assertEqual(clean_template_name("  Můj   styl "), "Můj styl")
+        self.assertIsNone(clean_template_name("   "))
+        self.assertIsNone(clean_template_name("x" * 41))
+
+    def test_favorite_tools(self) -> None:
+        allowed = ["cursor", "trend", "hline", "fib"]
+        # Pořadí podle lišty, neznámé a duplicitní režimy vynechány
+        self.assertEqual(load_favorite_tools('["fib", "nope", "trend", "fib"]', allowed), ["trend", "fib"])
+        self.assertEqual(load_favorite_tools("{}", allowed), [])
+        self.assertEqual(load_favorite_tools("x", allowed), [])
+        self.assertEqual(load_panel_position('{"left": 10.6, "top": -5}'), {"left": 10, "top": 0})
+        self.assertIsNone(load_panel_position('{"left": true, "top": 1}'))
+        self.assertIsNone(load_panel_position(None))
+        # Hodnoty přímo z události JS (bez JSON)
+        self.assertEqual(normalize_favorite_tools(["hline", 5], allowed), ["hline"])
+        self.assertEqual(normalize_favorite_tools("trend", allowed), [])
+        self.assertEqual(normalize_panel_position({"left": 3, "top": 4}), {"left": 3, "top": 4})
 
 
 if __name__ == "__main__":

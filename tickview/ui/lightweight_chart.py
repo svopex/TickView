@@ -5,6 +5,7 @@ import uuid
 
 from nicegui import ui
 
+from tickview.logic.styles import CHART_DEFAULTS
 from tickview.providers.base import Candle
 
 
@@ -18,9 +19,12 @@ class LightweightChart(ui.element):
         dark: počáteční motiv grafu.
         on_ready: async callback volaný po inicializaci grafu v prohlížeči.
         show_volume: zda zobrazit objem (Settings grafu).
+        chart_style: styl svíček (Settings grafu, viz CHART_DEFAULTS).
     """
 
-    def __init__(self, dark: bool = True, on_ready=None, show_volume: bool = True) -> None:
+    def __init__(
+        self, dark: bool = True, on_ready=None, show_volume: bool = True, chart_style: dict | None = None
+    ) -> None:
         super().__init__("div")
         self._js_id = f"tickview-chart-{uuid.uuid4().hex[:8]}"
         # JS graf hledá kontejner přes data-chart-id (vlastní id prvku necháme
@@ -29,6 +33,7 @@ class LightweightChart(ui.element):
         self.classes("chart-container")
         self._dark = dark
         self._show_volume = show_volume
+        self._chart_style = chart_style or dict(CHART_DEFAULTS)
         self._on_ready = on_ready
         # Graf inicializujeme až po prvním vykreslení stránky v prohlížeči
         ui.timer(0.1, self._init_in_browser, once=True)
@@ -51,7 +56,7 @@ class LightweightChart(ui.element):
             return await ui.run_javascript("return " + self._js(method, args) + ";")
 
     async def _init_in_browser(self) -> None:
-        self._call("init", {"dark": self._dark, "showVolume": self._show_volume})
+        self._call("init", {"dark": self._dark, "showVolume": self._show_volume, "chartStyle": self._chart_style})
         if self._on_ready:
             await self._on_ready()
 
@@ -155,6 +160,24 @@ class LightweightChart(ui.element):
             exchange_timezone: IANA pásmo burzy aktuálního instrumentu (pro "exchange").
         """
         self._call("setTimezone", setting, exchange_timezone)
+
+    def set_chart_style(self, style: dict) -> None:
+        """Použije styl svíček (barvy těla, okrajů a knotů, obarvení podle předchozího závěru)."""
+        self._call("setChartStyle", style)
+
+    def set_favorites(self, modes: list[str], position: dict | None, visible: bool) -> None:
+        """Oblíbené nástroje pro plovoucí panel.
+
+        Parametry:
+            modes: režimy oblíbených nástrojů.
+            position: pozice panelu {"left", "top"} v px vůči grafu (None = nahoře uprostřed).
+            visible: zda panel zobrazit.
+        """
+        self._call("setFavorites", modes, position, visible)
+
+    def set_favorites_visible(self, visible: bool) -> None:
+        """Zobrazí / skryje plovoucí panel oblíbených nástrojů."""
+        self._call("setFavoritesVisible", visible)
 
     def set_volume_visible(self, visible: bool) -> None:
         """Zapne/vypne zobrazení objemu v grafu."""

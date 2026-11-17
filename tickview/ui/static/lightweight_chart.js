@@ -14,15 +14,11 @@ window.TickViewChart = (function () {
       layout: { background: { type: 'solid', color: '#131722' }, textColor: '#d1d4dc' },
       grid: { vertLines: { color: '#1e222d' }, horzLines: { color: '#1e222d' } },
       border: '#2a2e39',
-      up: '#26a69a',
-      down: '#ef5350',
     },
     light: {
       layout: { background: { type: 'solid', color: '#ffffff' }, textColor: '#131722' },
       grid: { vertLines: { color: '#e0e3eb' }, horzLines: { color: '#e0e3eb' } },
       border: '#c9cdd4',
-      up: '#26a69a',
-      down: '#ef5350',
     },
   };
 
@@ -39,6 +35,42 @@ window.TickViewChart = (function () {
 
   // Definice skupin nástrojů pro flyout nabídky, když je přijme Python dřív než init
   const pendingToolGroups = new Map();
+
+  // Neviditelná barva (vypnuté tělo svíčky)
+  const TRANSPARENT = 'rgba(0, 0, 0, 0)';
+
+  // Volby svíčkové série podle stylu grafu (tělo, okraje, knoty); úplný
+  // styl (CHART_DEFAULTS) posílá Python při init i po změně v Settings
+  function candleOptions(style) {
+    return {
+      upColor: style.body ? style.body_up : TRANSPARENT,
+      downColor: style.body ? style.body_down : TRANSPARENT,
+      borderVisible: !!style.borders,
+      borderUpColor: style.border_up,
+      borderDownColor: style.border_down,
+      wickVisible: !!style.wick,
+      wickUpColor: style.wick_up,
+      wickDownColor: style.wick_down,
+    };
+  }
+
+  // Bod svíčkové série: při obarvení podle předchozího závěru nese vlastní
+  // barvy (růst = závěr ≥ předchozí závěr), jinak barvy řídí volby série
+  function candlePoint(s, candle, previous) {
+    const style = s.chartStyle;
+    if (!style.color_by_prev_close || !previous) return candle;
+    const up = candle.close >= previous.close;
+    return Object.assign({}, candle, {
+      color: style.body ? (up ? style.body_up : style.body_down) : TRANSPARENT,
+      borderColor: up ? style.border_up : style.border_down,
+      wickColor: up ? style.wick_up : style.wick_down,
+    });
+  }
+
+  // Body svíčkové série ze s.candles (s barvami podle předchozího závěru, je-li zapnuto)
+  function candleData(s) {
+    return s.candles.map((candle, index) => candlePoint(s, candle, s.candles[index - 1]));
+  }
 
   // Barva objemového sloupce podle směru svíčky (poloprůhledná)
   function volumeColor(candle) {
@@ -498,13 +530,8 @@ window.TickViewChart = (function () {
     });
 
     // Svíčky
-    const candleSeries = chart.addCandlestickSeries({
-      upColor: theme.up,
-      downColor: theme.down,
-      wickUpColor: theme.up,
-      wickDownColor: theme.down,
-      borderVisible: false,
-    });
+    const chartStyle = options.chartStyle;
+    const candleSeries = chart.addCandlestickSeries(candleOptions(chartStyle));
 
     // Objem jako překryvná série v dolní části hlavního panelu
     const volumeSeries = chart.addHistogramSeries({
@@ -520,6 +547,7 @@ window.TickViewChart = (function () {
       candleSeries,
       volumeSeries,
       legend,
+      container,
       panes,
       mainHost,
       overlay: {
@@ -546,6 +574,13 @@ window.TickViewChart = (function () {
       indicatorValues: new Map(),
       elementId: id,
       toolGroups: pendingToolGroups.get(id) || [],
+      // Styl svíček (Settings grafu)
+      chartStyle: chartStyle,
+      // Oblíbené nástroje (plovoucí panel): pořadí, pozice v px vůči grafu, viditelnost
+      favorites: [],
+      favoritesPos: null,
+      favoritesVisible: true,
+      favoritesEl: null,
       themeName,
       candles: [],
       byTime: new Map(),
@@ -820,6 +855,23 @@ window.TickViewChart = (function () {
         }
       });
     }
+    // Pravý klik na skupinu s jediným nástrojem (kurzor, měřič…) nabídne
+    // přidání do / odebrání z oblíbených (ostatní mají hvězdičku ve flyoutu)
+    if (toolbar) {
+      toolbar.addEventListener('contextmenu', (event) => {
+        const groupButton = event.target.closest('[data-tool-group]');
+        if (!groupButton) return;
+        const group = (s.toolGroups || []).find((g) => g.id === groupButton.dataset.toolGroup);
+        const tools = group ? groupTools(group) : [];
+        if (tools.length !== 1) return;
+        event.preventDefault();
+        closeFlyout();
+        showContextMenu(event.clientX, event.clientY, [favoriteMenuItem(s, tools[0].mode)]);
+      });
+    }
+    // Plovoucí panel oblíbených zůstává při změně velikosti grafu uvnitř
+    new ResizeObserver(() => positionFavorites(s)).observe(container);
+
     // Klik mimo lištu a flyout nabídku flyout zavře; klik mimo kontextové menu ho zavře
     document.addEventListener('click', (event) => {
       if (!event.target.closest('.drawing-toolbar') && !event.target.closest('.tool-flyout')) {
@@ -924,26 +976,163 @@ window.TickViewChart = (function () {
     document.querySelectorAll('.drawing-contextmenu').forEach((menu) => menu.remove());
   }
 
-  // Flyout nabídka skupiny nástrojů (pozice u tlačítka, jako v TradingView)
+  // Nástroje skupiny bez nadpisů sekcí ({section: "…"} jen člení flyout)
+  function groupTools(group) {
+    return (group.tools || []).filter((tool) => tool.mode);
+  }
+
+  // Všechny nástroje lišty v pořadí skupin (pořadí v panelu oblíbených)
+  function allTools(s) {
+    return (s.toolGroups || []).flatMap(groupTools);
+  }
+
+  // Událost výběru nástroje: klik na už aktivní nástroj ho vypne (návrat na kurzor)
+  function toolEvent(s, mode) {
+    if (mode === 'cursor') return { type: 'tool', mode: 'cursor' };
+    return { type: 'tool', mode: s.overlay.mode === mode ? null : mode };
+  }
+
+  // Je nástroj právě aktivní? (kurzor = žádný kreslicí režim)
+  function toolActive(s, mode) {
+    return (s.overlay.mode || 'cursor') === mode;
+  }
+
+  // Flyout nabídka skupiny nástrojů (pozice u tlačítka, jako v TradingView):
+  // nadpisy sekcí, nástroje a u každého hvězdička pro oblíbené
   function openToolFlyout(s, groupId, anchorButton) {
     closeFlyout();
     const group = (s.toolGroups || []).find((g) => g.id === groupId);
     if (!group) return;
-    if (group.tools.length === 1) {
-      // Skupina s jediným nástrojem se aktivuje rovnou přes frontu; klik na
-      // už aktivní nástroj ho vypne (návrat na kurzor)
-      const mode = group.tools[0].mode;
-      const active = mode !== 'cursor' && s.overlay.mode === mode;
-      s.finishedQueue.push({ type: 'tool', mode: active ? null : mode });
+    const tools = groupTools(group);
+    if (tools.length === 1) {
+      // Skupina s jediným nástrojem se aktivuje rovnou přes frontu
+      s.finishedQueue.push(toolEvent(s, tools[0].mode));
       return;
     }
     const flyout = el('div', 'tool-flyout');
     for (const tool of group.tools) {
-      // Výběr už aktivního nástroje ho vypne (návrat na kurzor)
-      const active = s.overlay.mode === tool.mode;
-      flyout.appendChild(flyoutItem(tool.icon, tool.tooltip, active, { type: 'tool', mode: active ? null : tool.mode }, s));
+      if (!tool.mode) {
+        flyout.appendChild(el('div', 'tool-flyout-section', tool.section || ''));
+        continue;
+      }
+      const item = flyoutItem(tool.icon, tool.tooltip, toolActive(s, tool.mode), toolEvent(s, tool.mode), s);
+      item.appendChild(favoriteStar(s, tool.mode));
+      flyout.appendChild(item);
     }
     placeFlyout(flyout, anchorButton);
+  }
+
+  // Hvězdička položky flyoutu: přidá / odebere nástroj z oblíbených (nevybírá ho)
+  function favoriteStar(s, mode) {
+    const star = el('span', 'material-icons tool-flyout-star');
+    const paint = () => {
+      const on = s.favorites.includes(mode);
+      star.textContent = on ? 'star' : 'star_border';
+      star.classList.toggle('on', on);
+      star.title = on ? 'Odebrat z oblíbených' : 'Přidat do oblíbených';
+    };
+    paint();
+    star.addEventListener('click', (event) => {
+      event.stopPropagation();
+      toggleFavorite(s, mode);
+      paint();
+    });
+    return star;
+  }
+
+  // Položka kontextového menu pro přidání / odebrání nástroje z oblíbených
+  function favoriteMenuItem(s, mode) {
+    const on = s.favorites.includes(mode);
+    return [on ? 'Odebrat z oblíbených' : 'Přidat do oblíbených', () => toggleFavorite(s, mode), on ? 'star' : 'star_border'];
+  }
+
+  // Přepne nástroj v oblíbených; seznam se drží v pořadí lišty a ukládá v Pythonu
+  function toggleFavorite(s, mode) {
+    const wanted = s.favorites.includes(mode) ? s.favorites.filter((item) => item !== mode) : s.favorites.concat([mode]);
+    s.favorites = allTools(s).map((tool) => tool.mode).filter((item) => wanted.includes(item));
+    renderFavorites(s);
+    s.finishedQueue.push({ type: 'favorites', modes: s.favorites.slice() });
+  }
+
+  // Plovoucí panel oblíbených nástrojů nad grafem (jako v TradingView):
+  // úchop pro přesun a tlačítka nástrojů; bez oblíbených nebo skrytý se nezobrazí
+  function renderFavorites(s) {
+    const tools = allTools(s).filter((tool) => s.favorites.includes(tool.mode));
+    let panel = s.favoritesEl;
+    if (!tools.length || !s.favoritesVisible) {
+      if (panel) panel.classList.add('hidden');
+      return;
+    }
+    if (!panel) {
+      panel = el('div', 'fav-toolbar');
+      const handle = el('span', 'material-icons fav-handle', 'drag_indicator');
+      handle.title = 'Přesunout panel';
+      panel.appendChild(handle);
+      attachFavoritesDrag(s, panel, handle);
+      s.container.appendChild(panel);
+      s.favoritesEl = panel;
+    }
+    panel.classList.remove('hidden');
+    panel.querySelectorAll('.fav-tool').forEach((node) => node.remove());
+    for (const tool of tools) {
+      const button = el('button', 'fav-tool' + (toolActive(s, tool.mode) ? ' active' : ''));
+      button.type = 'button';
+      button.title = tool.tooltip;
+      button.dataset.mode = tool.mode;
+      button.appendChild(el('span', 'material-icons', tool.icon));
+      button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        closeFlyout();
+        s.finishedQueue.push(toolEvent(s, tool.mode));
+      });
+      // Pravý klik na nástroj v panelu ho z oblíbených odebere
+      button.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        showContextMenu(event.clientX, event.clientY, [favoriteMenuItem(s, tool.mode)]);
+      });
+      panel.appendChild(button);
+    }
+    positionFavorites(s);
+  }
+
+  // Umístí panel oblíbených: uložená pozice, jinak nahoře uprostřed grafu;
+  // vždy celý uvnitř grafu (po zúžení okna se posune dovnitř)
+  function positionFavorites(s) {
+    const panel = s.favoritesEl;
+    if (!panel || panel.classList.contains('hidden')) return;
+    const maxLeft = Math.max(0, s.container.clientWidth - panel.offsetWidth);
+    const maxTop = Math.max(0, s.container.clientHeight - panel.offsetHeight);
+    const pos = s.favoritesPos || { left: (s.container.clientWidth - panel.offsetWidth) / 2, top: 6 };
+    panel.style.left = Math.round(Math.min(maxLeft, Math.max(0, pos.left))) + 'px';
+    panel.style.top = Math.round(Math.min(maxTop, Math.max(0, pos.top))) + 'px';
+  }
+
+  // Tažení panelu oblíbených za úchop; konečná pozice se uloží v Pythonu
+  function attachFavoritesDrag(s, panel, handle) {
+    let start = null;
+    handle.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      handle.setPointerCapture(event.pointerId);
+      start = { x: event.clientX, y: event.clientY, left: panel.offsetLeft, top: panel.offsetTop };
+      panel.classList.add('dragging');
+    });
+    handle.addEventListener('pointermove', (event) => {
+      if (!start) return;
+      s.favoritesPos = { left: start.left + event.clientX - start.x, top: start.top + event.clientY - start.y };
+      positionFavorites(s);
+    });
+    const finish = () => {
+      if (!start) return;
+      start = null;
+      panel.classList.remove('dragging');
+      // Uložíme skutečnou (ořezanou) pozici, ne pozici kurzoru mimo graf
+      s.favoritesPos = { left: panel.offsetLeft, top: panel.offsetTop };
+      s.finishedQueue.push({ type: 'favorites_position', left: s.favoritesPos.left, top: s.favoritesPos.top });
+    };
+    handle.addEventListener('pointerup', finish);
+    handle.addEventListener('pointercancel', finish);
   }
 
   // Položka flyout nabídky (ikona + popisek); klik pošle událost a zavře nabídku
@@ -1407,7 +1596,7 @@ window.TickViewChart = (function () {
 
   // Nastaví svíčky i objemy grafu ze s.candles (barva objemu podle směru svíčky)
   function applySeriesData(s) {
-    s.candleSeries.setData(s.candles);
+    s.candleSeries.setData(candleData(s));
     s.volumeSeries.setData(
       s.candles.map((candle) => ({ time: candle.time, value: candle.volume, color: volumeColor(candle) }))
     );
@@ -1511,7 +1700,9 @@ window.TickViewChart = (function () {
     const last = s.candles[s.candles.length - 1];
     // Starší svíčku ignorujeme – graf se nevrací zpět v čase
     if (candle.time < last.time) return;
-    s.candleSeries.update(candle);
+    // Předchozí svíčka pro obarvení podle předchozího závěru
+    const previous = candle.time === last.time ? s.candles[s.candles.length - 2] : last;
+    s.candleSeries.update(candlePoint(s, candle, previous));
     s.volumeSeries.update({ time: candle.time, value: candle.volume, color: volumeColor(candle) });
     if (candle.time === last.time) {
       s.candles[s.candles.length - 1] = candle;
@@ -1540,12 +1731,7 @@ window.TickViewChart = (function () {
       rightPriceScale: { borderColor: theme.border },
       timeScale: { borderColor: theme.border },
     });
-    s.candleSeries.applyOptions({
-      upColor: theme.up,
-      downColor: theme.down,
-      wickUpColor: theme.up,
-      wickDownColor: theme.down,
-    });
+    s.candleSeries.applyOptions(candleOptions(s.chartStyle));
     // Svíčky a objemy překreslit, aby měly správné barvy po přepnutí motivu
     applySeriesData(s);
     // Panely indikátorů přegenerovat v novém motivu
@@ -1569,6 +1755,47 @@ window.TickViewChart = (function () {
     // Aktivní kreslicí nástroj = crosshair kurzor na overlay (v kurzoru je crosshair grafu)
     s.overlay.canvas.classList.toggle('drawing-active', !!mode && mode !== 'cursor');
     redrawOverlay(s);
+    // Zvýraznění aktivního nástroje v panelu oblíbených (bez přestavby panelu)
+    if (s.favoritesEl) {
+      s.favoritesEl.querySelectorAll('.fav-tool').forEach((button) => {
+        button.classList.toggle('active', toolActive(s, button.dataset.mode));
+      });
+    }
+  }
+
+  // Oblíbené nástroje z nastavení: seznam režimů, uložená pozice panelu
+  // ({left, top} v px vůči grafu, null = nahoře uprostřed) a viditelnost
+  // (Python je už zkontroloval – normalize_favorite_tools / normalize_panel_position)
+  function setFavorites(id, modes, position, visible) {
+    const s = state.get(id);
+    if (!s) return;
+    s.favorites = modes;
+    s.favoritesPos = position;
+    s.favoritesVisible = visible;
+    renderFavorites(s);
+  }
+
+  // Zobrazí / skryje plovoucí panel oblíbených (tlačítko hvězdy v liště)
+  function setFavoritesVisible(id, visible) {
+    const s = state.get(id);
+    if (!s) return;
+    s.favoritesVisible = !!visible;
+    renderFavorites(s);
+  }
+
+  // Styl svíček ze Settings grafu (barvy těla, okrajů, knotů, obarvení podle
+  // předchozího závěru) – použije se hned, svíčky se překreslí
+  function setChartStyle(id, style) {
+    const s = state.get(id);
+    if (!s) return;
+    // Vlastní barvy bodů (obarvení podle předchozího závěru) nese jen setData;
+    // bez nich stačí volby série – objem ani svíčky se znovu neposílají
+    const perBar = style.color_by_prev_close || s.chartStyle.color_by_prev_close;
+    s.chartStyle = style;
+    s.candleSeries.applyOptions(candleOptions(style));
+    if (perBar) {
+      s.candleSeries.setData(candleData(s));
+    }
   }
 
   // Nastaví definice skupin nástrojů pro flyout nabídky (přijde z Pythonu;
@@ -2034,11 +2261,12 @@ window.TickViewChart = (function () {
   // Přerušování čar podle stylu kresby (solid / dashed / dotted)
   const LINE_DASHES = { solid: [], dashed: [6, 4], dotted: [1.5, 3] };
 
-  // Barva #rrggbb s průhledností (výplň obdélníku a kanálu v barvě kresby)
-  function withAlpha(hex, alpha) {
-    const match = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex || '');
-    if (!match) return 'rgba(41, 98, 255, ' + alpha + ')';
-    return 'rgba(' + parseInt(match[1], 16) + ', ' + parseInt(match[2], 16) + ', ' + parseInt(match[3], 16) + ', ' + alpha + ')';
+  // Barva kresby (#rrggbb nebo rgba) s průhledností výplně obdélníku a kanálu;
+  // vlastní průhlednost barvy se násobí průhledností výplně
+  function withAlpha(color, alpha) {
+    const parsed = window.TickViewColorPicker.parseColor(color);
+    if (!parsed) return 'rgba(41, 98, 255, ' + alpha + ')';
+    return 'rgba(' + parsed.r + ', ' + parsed.g + ', ' + parsed.b + ', ' + Math.round(parsed.a * alpha * 1000) / 1000 + ')';
   }
 
   // Nakreslí úchopové čtverečky koncových bodů označené kresby; označený
@@ -2485,6 +2713,9 @@ window.TickViewChart = (function () {
     addText: addText,
     trashDrawings: trashDrawings,
     setToolGroups: setToolGroups,
+    setFavorites: setFavorites,
+    setFavoritesVisible: setFavoritesVisible,
+    setChartStyle: setChartStyle,
     setKeepTool: setKeepTool,
     setLocked: setLocked,
     addSticker: addSticker,

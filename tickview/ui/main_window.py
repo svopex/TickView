@@ -19,9 +19,18 @@ from tickview.logic.indicators import (
     indicator_title,
     load_saved_indicators,
     new_indicator,
-    normalize_color,
     normalize_params,
     tail_payload,
+)
+from tickview.logic.styles import (
+    CHART_DEFAULTS,
+    load_chart_style,
+    load_favorite_tools,
+    load_panel_position,
+    normalize_chart_style,
+    normalize_color,
+    normalize_favorite_tools,
+    normalize_panel_position,
 )
 from tickview.logic.sessions import (
     SESSION_ETH,
@@ -32,7 +41,9 @@ from tickview.logic.sessions import (
 )
 from tickview.providers import PROVIDERS, get_provider
 from tickview.providers.base import TIMEFRAME_MS, Candle, StreamStatus, is_closed, utc_now_ms
+from tickview.ui.color_button import ColorButton
 from tickview.ui.lightweight_chart import LightweightChart
+from tickview.ui.templates import TemplateMenu, load_default_template, settings_buttons, settings_header
 
 # Kolik svíček historie se načte pro jedno zobrazení (a uloží do cache)
 DEFAULT_BARS = 600
@@ -43,6 +54,21 @@ VISIBLE_BARS = 150
 OLDER_LOAD_ATTEMPTS = 4
 # Jak často nejvýš se z živých svíček přepočítají indikátory (sekundy)
 LIVE_INDICATOR_REFRESH_S = 2.0
+# Tovární styl kreseb: barva (nové kresby, „Apply defaults“), šířka čáry a písmo
+DEFAULT_DRAWING_COLOR = "#2962ff"
+DEFAULT_LINE_WIDTH = 1.5
+DEFAULT_FONT_SIZE = 13
+# Za jak dlouho po poslední změně barvy v liště se barva uloží (tažení
+# průhlednosti posílá změny průběžně – do databáze stačí výsledná)
+DRAWING_COLOR_SAVE_DELAY_S = 0.5
+
+
+def clamp_font_size(value) -> int:
+    """Velikost písma textové kresby v rozsahu 8–72 px (neplatná hodnota = výchozí)."""
+    try:
+        return max(8, min(72, int(value or DEFAULT_FONT_SIZE)))
+    except (TypeError, ValueError):
+        return DEFAULT_FONT_SIZE
 
 
 
@@ -57,7 +83,7 @@ def _static_version() -> str:
     nepoužije starou verzi z cache – verzi není potřeba ručně zvyšovat.
     """
     digest = hashlib.sha1()
-    for name in ("style.css", "lightweight_chart.js", "lightweight-charts.standalone.production.js"):
+    for name in ("style.css", "color_picker.js", "lightweight_chart.js", "lightweight-charts.standalone.production.js"):
         digest.update((STATIC_DIR / name).read_bytes())
     return digest.hexdigest()[:10]
 
@@ -80,6 +106,7 @@ async def _build_index(cache: KlineCache) -> None:
     ui.add_head_html(
         f'<link rel="stylesheet" href="/static/style.css?v={STATIC_VERSION}">'
         f'<script src="/static/lightweight-charts.standalone.production.js?v={STATIC_VERSION}"></script>'
+        f'<script src="/static/color_picker.js?v={STATIC_VERSION}"></script>'
         f'<script src="/static/lightweight_chart.js?v={STATIC_VERSION}"></script>'
     )
 
@@ -96,6 +123,10 @@ async def _build_index(cache: KlineCache) -> None:
     show_volume = (await cache.get_setting("show_volume", "1")) != "0"
     # Režim magnetu z minula (off / weak / strong)
     saved_magnet = await cache.get_setting("magnet", "off") or "off"
+    # Styl svíček (Settings grafu); objem drží samostatné nastavení show_volume
+    chart_style = load_chart_style(await cache.get_setting("chart_style"))
+    # Barva nových kreseb (tlačítko barvy v liště)
+    saved_drawing_color = normalize_color(await cache.get_setting("drawing_color")) or DEFAULT_DRAWING_COLOR
     # Handle si držíme: každé volání ui.dark_mode() by vytvořilo nový prvek
     dark_mode = ui.dark_mode(dark)
 
@@ -122,6 +153,7 @@ async def _build_index(cache: KlineCache) -> None:
         # Název a burza zobrazeného instrumentu pro nadpis grafu
         "symbol_meta": None,
         "show_volume": show_volume,
+        "chart_style": chart_style,
         "timezone": saved_timezone,
         "session": saved_session,
     }
@@ -579,33 +611,32 @@ async def _build_index(cache: KlineCache) -> None:
         "hline", "vline", "trend", "ray", "extended", "arrow", "hray", "cross",
         "channel", "fib", "fibext", "pitchfork", "rect", "brush", "text", "sticker",
     ]
-    # Skupiny nástrojů lišty (jako v TradingView): id, ikona, tooltip, nástroje
+    # Skupiny nástrojů lišty (jako v TradingView): id, ikona, tooltip, nástroje;
+    # položka {"section": …} je jen nadpis sekce ve flyout nabídce
     DRAWING_GROUPS = [
         {"id": "g_cursor", "icon": "near_me", "tooltip": "Kurzor (výběr a tažení kreseb)",
          "tools": [{"mode": "cursor", "tooltip": "Kurzor", "icon": "near_me"}]},
-        {"id": "g_trend", "icon": "show_chart", "tooltip": "Čáry",
+        {"id": "g_lines", "icon": "show_chart", "tooltip": "Čáry, kanály a pitchforky",
          "tools": [
+             {"section": "Čáry"},
              {"mode": "trend", "tooltip": "Trendová čára", "icon": "show_chart"},
              {"mode": "ray", "tooltip": "Polopřímka", "icon": "trending_up"},
              {"mode": "extended", "tooltip": "Přímka (oboustranná)", "icon": "sync_alt"},
              {"mode": "arrow", "tooltip": "Trendová šipka", "icon": "north_east"},
-         ]},
-        {"id": "g_levels", "icon": "horizontal_rule", "tooltip": "Horizontální a svislé linie",
-         "tools": [
              {"mode": "hline", "tooltip": "Horizontální linie", "icon": "horizontal_rule"},
-             {"mode": "vline", "tooltip": "Svislá linie", "icon": "height"},
              {"mode": "hray", "tooltip": "Horizontální polopřímka", "icon": "trending_flat"},
+             {"mode": "vline", "tooltip": "Svislá linie", "icon": "height"},
              {"mode": "cross", "tooltip": "Kříž", "icon": "add"},
+             {"section": "Kanály"},
+             {"mode": "channel", "tooltip": "Paralelní kanál (3 kliky)", "icon": "view_stream"},
+             {"section": "Pitchforky"},
+             {"mode": "pitchfork", "tooltip": "Pitchfork (3 kliky)", "icon": "gesture"},
          ]},
         {"id": "g_fib", "icon": "align_vertical_center", "tooltip": "Fibonacci",
          "tools": [
              {"mode": "fib", "tooltip": "Fibonacci retracement", "icon": "align_vertical_center"},
              {"mode": "fibext", "tooltip": "Fibonacci extension", "icon": "linear_scale"},
          ]},
-        {"id": "g_channel", "icon": "view_stream", "tooltip": "Paralelní kanál (3 kliky)",
-         "tools": [{"mode": "channel", "tooltip": "Paralelní kanál (3 kliky)", "icon": "view_stream"}]},
-        {"id": "g_pitchfork", "icon": "gesture", "tooltip": "Pitchfork (3 kliky)",
-         "tools": [{"mode": "pitchfork", "tooltip": "Pitchfork (3 kliky)", "icon": "gesture"}]},
         {"id": "g_shapes", "icon": "crop_square", "tooltip": "Tvary",
          "tools": [
              {"mode": "rect", "tooltip": "Obdélník", "icon": "crop_square"},
@@ -619,6 +650,8 @@ async def _build_index(cache: KlineCache) -> None:
         {"id": "g_measure", "icon": "straighten", "tooltip": "Měřič (Δcena, %, bary)",
          "tools": [{"mode": "measure", "tooltip": "Měřič (Δcena, %, bary)", "icon": "straighten"}]},
     ]
+    # Režimy všech nástrojů v pořadí lišty (oblíbené v plovoucím panelu)
+    TOOL_MODES = [tool["mode"] for group in DRAWING_GROUPS for tool in group["tools"] if "mode" in tool]
     DRAWING_LABELS = {
         "hline": "Horizontální linie",
         "vline": "Svislá linie",
@@ -637,8 +670,6 @@ async def _build_index(cache: KlineCache) -> None:
         "text": "Text",
         "sticker": "Sticker",
     }
-    # Barvy nových kreseb (paleta v liště)
-    DRAWING_COLORS = ["#2962ff", "#e91e63", "#26a69a", "#ff9800", "#d1d4dc"]
     EMOJIS = ["😀", "🚀", "💰", "📈", "📉", "👍", "⚡", "🎯"]
 
     async def set_drawing_mode(mode) -> None:
@@ -650,18 +681,64 @@ async def _build_index(cache: KlineCache) -> None:
             button = drawing_buttons.get(group["id"])
             if not button:
                 continue
-            group_modes = [tool["mode"] for tool in group["tools"]]
+            group_modes = [tool["mode"] for tool in group["tools"] if "mode" in tool]
             button.classes(
                 add="drawing-btn-active" if mode in group_modes else "",
                 remove="" if mode in group_modes else "drawing-btn-active",
             )
         await chart.set_drawing_mode(None if mode == "cursor" else mode)
 
-    async def set_drawing_color(color: str) -> None:
-        # Barva nových kreseb; aktivní paletu zvýrazníme
-        for hex_color, button in swatch_buttons.items():
-            button.classes(add="swatch-active" if hex_color == color else "", remove="" if hex_color == color else "swatch-active")
+    async def set_drawing_color(color) -> None:
+        # Barva nových kreseb (tlačítko barvy v liště): do grafu hned, do
+        # databáze až po DRAWING_COLOR_SAVE_DELAY_S bez další změny
+        color = normalize_color(color)
+        if not color:
+            return
         await chart.set_drawing_color(color)
+        pending = state.get("drawing_color_save")
+        if pending and not pending.done():
+            pending.cancel()
+
+        async def save_later() -> None:
+            await asyncio.sleep(DRAWING_COLOR_SAVE_DELAY_S)
+            await cache.set_setting("drawing_color", color)
+
+        state["drawing_color_save"] = asyncio.create_task(save_later())
+
+    # ---------- oblíbené nástroje (plovoucí panel) ----------
+
+    async def save_favorites(modes) -> None:
+        # Oblíbené nástroje z hvězdiček ve flyoutu (JS je už zobrazil)
+        favorites = normalize_favorite_tools(modes, TOOL_MODES)
+        await cache.set_setting("favorite_tools", json.dumps(favorites))
+        show_status(f"Oblíbené nástroje: {len(favorites)}." if favorites else "Žádné oblíbené nástroje.")
+
+    async def save_favorites_position(left, top) -> None:
+        # Pozice plovoucího panelu po přetažení (px vůči grafu)
+        position = normalize_panel_position({"left": left, "top": top})
+        if position:
+            await cache.set_setting("favorites_position", json.dumps(position))
+
+    def paint_favorites_button() -> None:
+        # Ikona hvězdy v liště: plná = panel oblíbených zobrazen
+        action_buttons["favorites"].props(f'icon={"star" if state["favorites_visible"] else "star_border"}')
+
+    async def toggle_favorites_bar() -> None:
+        # Tlačítko hvězdy v liště: zobrazí / skryje plovoucí panel oblíbených
+        state["favorites_visible"] = not state.get("favorites_visible", True)
+        visible = state["favorites_visible"]
+        paint_favorites_button()
+        chart.set_favorites_visible(visible)
+        await cache.set_setting("favorites_visible", "1" if visible else "0")
+        show_status(f"Panel oblíbených nástrojů {'zobrazen' if visible else 'skryt'}.")
+
+    async def restore_favorites() -> None:
+        # Oblíbené nástroje, pozice a viditelnost panelu z minula (po init grafu)
+        favorites = load_favorite_tools(await cache.get_setting("favorite_tools"), TOOL_MODES)
+        position = load_panel_position(await cache.get_setting("favorites_position"))
+        state["favorites_visible"] = (await cache.get_setting("favorites_visible", "1")) != "0"
+        paint_favorites_button()
+        chart.set_favorites(favorites, position, state["favorites_visible"])
 
     # Popisy režimů magnetu pro stavovou lištu
     MAGNET_LABELS = {
@@ -743,52 +820,73 @@ async def _build_index(cache: KlineCache) -> None:
     # Kresby bez čáry (šířka a styl nemají smysl)
     NO_LINE_KINDS = {"text", "sticker"}
 
-    def open_drawing_settings(payload: dict) -> None:
-        # Dialog Settings kresby podle jejího typu: barva, šířka a styl čáry,
-        # u textu obsah a velikost písma
-        kind = payload.get("kind")
-        options = payload.get("options") or {}
-        state["drawing_settings"] = {"id": int(payload["id"]), "kind": kind}
-        drawing_settings_title.text = f"Settings – {DRAWING_LABELS.get(kind, kind)}"
-        drawing_color.value = payload.get("color") or DRAWING_COLORS[0]
-        drawing_color.set_visibility(kind != "sticker")
-        has_line = kind not in NO_LINE_KINDS
+    def apply_drawing_template(values: dict) -> None:
+        # Promítne hodnoty šablony (barva, šířka a styl čáry, velikost písma)
+        # do polí dialogu; neplatné nebo chybějící hodnoty nahradí výchozími
+        options = values.get("options") if isinstance(values.get("options"), dict) else {}
+        drawing_color.value = normalize_color(values.get("color")) or DEFAULT_DRAWING_COLOR
         width = options.get("width")
-        drawing_width.value = width if width in LINE_WIDTHS else 1.5
-        drawing_width.set_visibility(has_line)
+        drawing_width.value = width if width in LINE_WIDTHS else DEFAULT_LINE_WIDTH
         drawing_style.value = options.get("lineStyle") if options.get("lineStyle") in LINE_STYLES else "solid"
+        drawing_font.value = clamp_font_size(options.get("fontSize"))
+
+    def apply_drawing_factory() -> None:
+        # „Apply defaults“: tovární styl kresby
+        apply_drawing_template({"color": DEFAULT_DRAWING_COLOR, "options": {}})
+
+    def collect_drawing_settings() -> dict | None:
+        # Styl kresby z polí dialogu (bez textu – ten do šablony nepatří)
+        current = state.get("drawing_settings")
+        if not current:
+            return None
+        kind = current["kind"]
+        options: dict = {}
+        if kind not in NO_LINE_KINDS:
+            options["width"] = float(drawing_width.value or DEFAULT_LINE_WIDTH)
+            options["lineStyle"] = drawing_style.value or "solid"
+        if kind == "text":
+            options["fontSize"] = clamp_font_size(drawing_font.value)
+        return {"color": normalize_color(drawing_color.value) or DEFAULT_DRAWING_COLOR, "options": options}
+
+    async def open_drawing_settings(payload: dict) -> None:
+        # Dialog Settings kresby podle jejího typu: barva, šířka a styl čáry,
+        # u textu obsah a velikost písma; šablony podle typu kresby
+        kind = payload.get("kind")
+        state["drawing_settings"] = {"id": int(payload["id"]), "kind": kind}
+        drawing_settings_title.text = DRAWING_LABELS.get(kind, kind)
+        apply_drawing_template({"color": payload.get("color"), "options": payload.get("options") or {}})
+        has_line = kind not in NO_LINE_KINDS
+        drawing_color_row.set_visibility(kind != "sticker")
+        drawing_width.set_visibility(has_line)
         drawing_style.set_visibility(has_line)
         drawing_text.value = payload.get("text") or ""
         drawing_text.set_visibility(kind == "text")
-        drawing_font.value = int(options.get("fontSize") or 13)
         drawing_font.set_visibility(kind == "text")
+        # Sticker nemá nastavitelný styl – šablony nedávají smysl
+        drawing_templates.set_visible(kind != "sticker")
+        await drawing_templates.refresh()
         drawing_settings_dialog.open()
 
     async def submit_drawing_settings() -> None:
         # Uloží nastavení kresby do databáze a promítne ho do grafu
         current = state.get("drawing_settings")
         provider_id, symbol, timeframe = state.get("provider_id"), state.get("symbol"), state.get("timeframe")
-        if not current or not provider_id:
+        values = collect_drawing_settings()
+        if not current or not provider_id or values is None:
             drawing_settings_dialog.close()
             return
         kind = current["kind"]
-        options: dict = {}
-        if kind not in NO_LINE_KINDS:
-            options["width"] = float(drawing_width.value or 1.5)
-            options["lineStyle"] = drawing_style.value or "solid"
         text = None
         if kind == "text":
             text = (drawing_text.value or "").strip()
             if not text:
                 ui.notify("Text nesmí být prázdný.", type="warning")
                 return
-            options["fontSize"] = max(8, min(72, int(drawing_font.value or 13)))
-        # Barva jen ve tvaru #rrggbb (color picker může vrátit i jiný zápis)
-        color = normalize_color((drawing_color.value or "").strip())
+        # Sticker barvu nemá (emoji) – necháme ji prázdnou jako dosud
+        color = values["color"] if kind != "sticker" else None
+        options = values["options"]
         drawing_settings_dialog.close()
-        await cache.update_drawing_style(
-            provider_id, symbol, timeframe, current["id"], color, text, options
-        )
+        await cache.update_drawing_style(provider_id, symbol, timeframe, current["id"], color, text, options)
         chart.apply_drawing_settings(current["id"], {"color": color, "text": text, "options": options})
         show_status(f"{DRAWING_LABELS.get(kind, kind)}: nastavení uloženo.")
 
@@ -799,7 +897,6 @@ async def _build_index(cache: KlineCache) -> None:
             return
         state["show_volume"] = bool(visible)
         chart.set_volume_visible(state["show_volume"])
-        volume_switch.value = state["show_volume"]
         await cache.set_setting("show_volume", "1" if state["show_volume"] else "0")
 
     # ---------- časové pásmo a obchodní seance (stavová lišta) ----------
@@ -845,9 +942,65 @@ async def _build_index(cache: KlineCache) -> None:
         refresh_session_button()
         await reload_chart()
 
-    def open_chart_settings() -> None:
-        volume_switch.value = state["show_volume"]
+    # ---------- Settings grafu (styl svíček, objem, šablony) ----------
+
+    # Stav dialogu: „filling“ potlačí náhled při hromadném vyplňování polí,
+    # „dirty“ = graf ukazuje neuložený náhled (zavření bez Ok ho vrátí)
+    chart_dialog_state: dict = {"filling": False, "dirty": False}
+
+    def collect_chart_values() -> dict:
+        # Hodnoty dialogu (styl svíček + objem) – obsah šablony grafu
+        style = normalize_chart_style({key: field.value for key, field in chart_fields.items()})
+        return {**style, "volume": bool(volume_checkbox.value)}
+
+    def fill_chart_values(values: dict, preview: bool = True) -> None:
+        # Vyplní pole dialogu (otevření, šablona, výchozí hodnoty); náhled
+        # v grafu se pošle jednou až po vyplnění všech polí
+        style = normalize_chart_style(values)
+        chart_dialog_state["filling"] = True
+        try:
+            for key, field in chart_fields.items():
+                field.value = style[key]
+            volume_checkbox.value = bool(values.get("volume", True))
+        finally:
+            chart_dialog_state["filling"] = False
+        if preview:
+            preview_chart_style()
+
+    def preview_chart_style() -> None:
+        # Živý náhled v grafu (jako v TradingView); uloží se až tlačítkem Ok
+        if chart_dialog_state["filling"]:
+            return
+        values = collect_chart_values()
+        chart_dialog_state["dirty"] = True
+        chart.set_chart_style(normalize_chart_style(values))
+        chart.set_volume_visible(values["volume"])
+
+    async def open_chart_settings() -> None:
+        # Pole se vyplní uloženým stavem bez náhledu (graf ho už ukazuje)
+        fill_chart_values({**state["chart_style"], "volume": state["show_volume"]}, preview=False)
+        chart_dialog_state["dirty"] = False
+        await chart_templates.refresh()
         chart_settings_dialog.open()
+
+    async def submit_chart_settings() -> None:
+        # Ok: styl svíček uloží do nastavení, objem přes set_volume_visible;
+        # graf už ukazuje potvrzené hodnoty, zavření nic nevrací
+        values = collect_chart_values()
+        state["chart_style"] = normalize_chart_style(values)
+        chart_dialog_state["dirty"] = False
+        chart_settings_dialog.close()
+        await cache.set_setting("chart_style", json.dumps(state["chart_style"]))
+        await set_volume_visible(values["volume"])
+        show_status("Settings grafu uloženy.")
+
+    def on_chart_dialog_change(event) -> None:
+        # Zavření bez Ok (Cancel, křížek, Esc, klik mimo) vrátí uložený vzhled
+        if event.value or not chart_dialog_state["dirty"]:
+            return
+        chart_dialog_state["dirty"] = False
+        chart.set_chart_style(state["chart_style"])
+        chart.set_volume_visible(state["show_volume"])
 
     async def reload_drawings() -> None:
         """Načte kresby pro aktuální symbol z cache a pošle je do grafu."""
@@ -897,6 +1050,12 @@ async def _build_index(cache: KlineCache) -> None:
                     await toggle_hide_drawings()
                 elif action == "trash":
                     await trash_drawings()
+                elif action == "favorites":
+                    await toggle_favorites_bar()
+            elif payload.get("type") == "favorites":
+                await save_favorites(payload.get("modes"))
+            elif payload.get("type") == "favorites_position":
+                await save_favorites_position(payload.get("left"), payload.get("top"))
             elif payload.get("type") == "sticker_request":
                 state["sticker_pending"] = {
                     "time": int(payload.get("time")),
@@ -918,9 +1077,9 @@ async def _build_index(cache: KlineCache) -> None:
             elif payload.get("type") == "text_request":
                 await open_text_dialog(payload.get("time"), payload.get("price"))
             elif payload.get("type") == "drawing_settings" and payload.get("id"):
-                open_drawing_settings(payload)
+                await open_drawing_settings(payload)
             elif payload.get("type") == "chart_settings":
-                open_chart_settings()
+                await open_chart_settings()
             elif payload.get("type") == "volume":
                 await set_volume_visible(bool(payload.get("visible")))
             elif payload.get("type") == "add" and payload.get("kind") in DRAWING_KINDS:
@@ -1046,6 +1205,8 @@ async def _build_index(cache: KlineCache) -> None:
         # Po inicializaci grafu obnovíme poslední symbol a výchozí režim kurzoru
         await set_drawing_mode("cursor")
         await set_magnet(saved_magnet, announce=False)
+        await chart.set_drawing_color(saved_drawing_color)
+        await restore_favorites()
         mark_active(timezone_items, state["timezone"])
         refresh_session_button()
         await load_symbol(last_symbol)
@@ -1094,7 +1255,15 @@ async def _build_index(cache: KlineCache) -> None:
     async def add_indicator(kind: str) -> None:
         # Klik v nabídce přidá indikátor s výchozími parametry (jako v TradingView;
         # nabídka zůstává otevřená, parametry se mění ozubeným kolečkem v legendě)
-        spec = new_indicator(kind)
+        # Uživatelská výchozí šablona typu („Save as default“) má přednost
+        # před továrními parametry; neplatná šablona se ignoruje
+        default = await load_default_template(cache, f"indicator.{kind}") or {}
+        try:
+            spec = new_indicator(kind, default.get("params") if isinstance(default.get("params"), dict) else None)
+        except ValueError:
+            spec = new_indicator(kind)
+        if color := normalize_color(default.get("color")):
+            spec["color"] = color
         state["indicators"].append(spec)
         await indicators_changed()
         show_status(f"Přidán indikátor {indicator_title(spec)} – nastavení přes ozubené kolečko v legendě grafu.")
@@ -1124,7 +1293,7 @@ async def _build_index(cache: KlineCache) -> None:
         elif action == "remove":
             await remove_indicator(indicator_id)
         elif action == "settings":
-            open_indicator_settings(indicator_id)
+            await open_indicator_settings(indicator_id)
 
     # Stav nabídky indikátorů: zvolená kategorie a hledaný text
     menu_state = {"category": "all", "query": ""}
@@ -1248,7 +1417,12 @@ async def _build_index(cache: KlineCache) -> None:
                     step=1 if isinstance(default, int) else 0.1,
                 ).props("outlined dense")
 
-    def open_indicator_settings(indicator_id) -> None:
+    def indicator_scope() -> str:
+        # Rozsah šablon upravovaného indikátoru: šablony platí pro typ indikátoru
+        spec = find_indicator(settings_state["id"])
+        return f"indicator.{spec['kind'] if spec else ''}"
+
+    async def open_indicator_settings(indicator_id) -> None:
         spec = find_indicator(indicator_id)
         if not spec:
             return
@@ -1258,13 +1432,38 @@ async def _build_index(cache: KlineCache) -> None:
         fill_indicator_settings(spec["kind"], spec["params"])
         index = state["indicators"].index(spec)
         settings_color.value = indicator_color(spec, index)
+        await indicator_templates.refresh()
         indicator_settings_dialog.open()
 
-    def reset_indicator_settings() -> None:
-        # Tlačítko „Výchozí“: vrátí parametry typu indikátoru na výchozí hodnoty
+    def apply_indicator_template(values: dict) -> None:
+        # Promítne šablonu (parametry + barva) do dialogu; chybějící parametry
+        # doplní výchozími, bez barvy se použije barva z palety
         spec = find_indicator(settings_state["id"])
-        if spec:
-            fill_indicator_settings(spec["kind"], {})
+        if not spec:
+            return
+        params = values.get("params") if isinstance(values.get("params"), dict) else {}
+        fill_indicator_settings(spec["kind"], params)
+        palette_color = indicator_color({}, state["indicators"].index(spec))
+        settings_color.value = normalize_color(values.get("color")) or palette_color
+
+    def reset_indicator_settings() -> None:
+        # „Apply defaults“ bez uložené výchozí šablony: tovární parametry a barva
+        apply_indicator_template({})
+
+    def collect_indicator_settings() -> dict | None:
+        # Parametry a barva z dialogu; neplatný parametr ohlásí a vrátí None
+        spec = find_indicator(settings_state["id"])
+        if not spec:
+            return None
+        try:
+            params = normalize_params(spec["kind"], {name: field.value for name, field in settings_fields.items()})
+        except ValueError as exc:
+            ui.notify(str(exc), type="warning")
+            return None
+        values: dict = {"params": params}
+        if color := normalize_color(settings_color.value):
+            values["color"] = color
+        return values
 
     async def submit_indicator_settings() -> None:
         # Ověří parametry; při neplatné hodnotě dialog zůstane otevřený
@@ -1272,15 +1471,13 @@ async def _build_index(cache: KlineCache) -> None:
         if not spec:
             indicator_settings_dialog.close()
             return
-        try:
-            params = normalize_params(spec["kind"], {name: field.value for name, field in settings_fields.items()})
-        except ValueError as exc:
-            ui.notify(str(exc), type="warning")
+        values = collect_indicator_settings()
+        if values is None:
             return
-        spec["params"] = params
-        # Vlastní barva jen ve tvaru #rrggbb, jinak zůstane barva z palety
-        if color := normalize_color((settings_color.value or "").strip()):
-            spec["color"] = color
+        spec["params"] = values["params"]
+        # Vlastní barva jen v platném tvaru, jinak zůstane barva z palety
+        if "color" in values:
+            spec["color"] = values["color"]
         indicator_settings_dialog.close()
         await indicators_changed()
         show_status(f"Indikátor {indicator_title(spec)} upraven.")
@@ -1326,15 +1523,12 @@ async def _build_index(cache: KlineCache) -> None:
                                 .tooltip(group["tooltip"])
                             )
                         ui.separator().props("vertical").classes("toolbar-sep")
-                        # Paleta barev nových kreseb
-                        swatch_buttons = {}
-                        for index, hex_color in enumerate(DRAWING_COLORS):
-                            swatch_buttons[hex_color] = (
-                                ui.button(on_click=lambda _, c=hex_color: set_drawing_color(c))
-                                .props("flat dense")
-                                .classes(f"drawing-btn swatch swatch-{index}")
-                                .tooltip("Barva nových kreseb")
-                            )
+                        # Barva nových kreseb: výběr barvy ve stylu TradingView
+                        ColorButton(
+                            saved_drawing_color,
+                            on_change=lambda event: set_drawing_color(event.value),
+                            title="Barva nových kreseb",
+                        ).classes("toolbar-color")
                         ui.separator().props("vertical").classes("toolbar-sep")
                         # Akční tlačítka (zpracovává je on_drawing_finished přes frontu)
                         action_buttons = {}
@@ -1344,6 +1538,7 @@ async def _build_index(cache: KlineCache) -> None:
                             ("lock", "Zamknout kresby", "lock"),
                             ("eye", "Skrýt/zobrazit kresby", "visibility"),
                             ("trash", "Smazat označenou / všechny kresby", "delete_sweep"),
+                            ("favorites", "Zobrazit / skrýt panel oblíbených nástrojů (hvězdička ve flyoutu)", "star"),
                         ]:
                             action_buttons[action] = (
                                 ui.button(icon=icon)
@@ -1351,7 +1546,9 @@ async def _build_index(cache: KlineCache) -> None:
                                 .classes("drawing-btn")
                                 .tooltip(tooltip)
                             )
-                    chart = LightweightChart(dark=dark, on_ready=initial_load, show_volume=show_volume)
+                    chart = LightweightChart(
+                        dark=dark, on_ready=initial_load, show_volume=show_volume, chart_style=chart_style
+                    )
                     # Definice skupin pro flyout nabídky lišty (může přijít i před init grafu)
                     chart.set_tool_groups(DRAWING_GROUPS)
                 # Stavová lišta: zprávy vlevo, vpravo seance (RTH/ETH) a hodiny
@@ -1425,37 +1622,73 @@ async def _build_index(cache: KlineCache) -> None:
             indicator_list = ui.column().classes("ind-list")
 
     # Dialog nastavení jedné instance indikátoru (ozubené kolečko v legendě)
-    with ui.dialog() as indicator_settings_dialog, ui.card().classes("indicator-dialog"):
-        with ui.column().classes("indicator-dialog-body"):
-            settings_title = ui.label("").classes("ind-dialog-title")
-            settings_params_container = ui.column().classes("indicator-dialog-params")
-            settings_color = ui.color_input("Barva", value=indicator_color({}, 0)).props("outlined dense")
-            with ui.row().classes("dialog-actions"):
-                ui.button("Uložit", on_click=submit_indicator_settings).props("unelevated")
-                ui.button("Výchozí", on_click=reset_indicator_settings).props("flat")
-                ui.button("Zrušit", on_click=indicator_settings_dialog.close).props("flat")
+    with ui.dialog() as indicator_settings_dialog, ui.card().classes("tv-settings"):
+        settings_title = settings_header(indicator_settings_dialog)
+        ui.label("Inputs").classes("tv-settings-section")
+        settings_params_container = ui.column().classes("indicator-dialog-params w-full")
+        ui.label("Style").classes("tv-settings-section")
+        with ui.row().classes("tv-settings-row"):
+            ui.label("Barva").classes("tv-settings-label")
+            settings_color = ColorButton(indicator_color({}, 0), title="Barva indikátoru")
+        with ui.row().classes("tv-settings-actions w-full"):
+            indicator_templates = TemplateMenu(
+                cache,
+                indicator_scope,
+                collect_indicator_settings,
+                apply_indicator_template,
+                reset_indicator_settings,
+                allow_default=True,
+            )
+            settings_buttons(indicator_settings_dialog, submit_indicator_settings)
 
     # Dialog Settings kresby (pravý klik → Settings… nebo dvojklik na kresbu)
-    with ui.dialog() as drawing_settings_dialog, ui.card().classes("indicator-dialog"):
-        with ui.column().classes("indicator-dialog-body"):
-            drawing_settings_title = ui.label("Settings").classes("ind-dialog-title")
-            drawing_text = ui.input("Text").props("outlined dense")
-            drawing_font = ui.number("Velikost písma (px)", value=13, min=8, max=72, step=1).props("outlined dense")
-            drawing_color = ui.color_input("Barva", value=DRAWING_COLORS[0]).props("outlined dense")
-            drawing_width = ui.select(LINE_WIDTHS, value=1.5, label="Šířka čáry").props("outlined dense")
-            drawing_style = ui.select(LINE_STYLES, value="solid", label="Styl čáry").props("outlined dense")
-            with ui.row().classes("dialog-actions"):
-                ui.button("Uložit", on_click=submit_drawing_settings).props("unelevated")
-                ui.button("Zrušit", on_click=drawing_settings_dialog.close).props("flat")
+    with ui.dialog() as drawing_settings_dialog, ui.card().classes("tv-settings"):
+        drawing_settings_title = settings_header(drawing_settings_dialog, "Settings")
+        drawing_text = ui.input("Text").props("outlined dense").classes("w-full")
+        drawing_font = ui.number("Velikost písma (px)", value=DEFAULT_FONT_SIZE, min=8, max=72, step=1).props("outlined dense")
+        with ui.row().classes("tv-settings-row") as drawing_color_row:
+            ui.label("Barva").classes("tv-settings-label")
+            drawing_color = ColorButton(DEFAULT_DRAWING_COLOR, title="Barva kresby")
+        drawing_width = ui.select(LINE_WIDTHS, value=1.5, label="Šířka čáry").props("outlined dense").classes("w-full")
+        drawing_style = ui.select(LINE_STYLES, value="solid", label="Styl čáry").props("outlined dense").classes("w-full")
+        with ui.row().classes("tv-settings-actions w-full"):
+            drawing_templates = TemplateMenu(
+                cache,
+                lambda: f"drawing.{(state.get('drawing_settings') or {}).get('kind', '')}",
+                collect_drawing_settings,
+                apply_drawing_template,
+                apply_drawing_factory,
+            )
+            settings_buttons(drawing_settings_dialog, submit_drawing_settings)
 
-    # Settings grafu (pravý klik do grafu → Settings…): zobrazení objemu
-    with ui.dialog() as chart_settings_dialog, ui.card().classes("indicator-dialog"):
-        with ui.column().classes("indicator-dialog-body"):
-            ui.label("Settings grafu").classes("ind-dialog-title")
-            volume_switch = ui.switch("Objem (Volume)", value=show_volume)
-            ui.label("Změna se projeví hned a zůstane uložená.").classes("settings-note")
-            with ui.row().classes("dialog-actions"):
-                ui.button("Zavřít", on_click=chart_settings_dialog.close).props("flat")
+    # Settings grafu (pravý klik do grafu → Settings…): styl svíček, objem, šablony
+    with ui.dialog() as chart_settings_dialog, ui.card().classes("tv-settings"):
+        settings_header(chart_settings_dialog, "Settings")
+        ui.label("Svíčky").classes("tv-settings-section")
+        chart_fields: dict = {
+            "color_by_prev_close": ui.checkbox("Obarvit svíčky podle předchozího závěru"),
+        }
+        # Řádky Tělo / Okraje / Knoty: přepínač + barva růstu a poklesu
+        for toggle_key, prefix, label in (("body", "body", "Tělo"), ("borders", "border", "Okraje"), ("wick", "wick", "Knoty")):
+            with ui.row().classes("tv-settings-row"):
+                chart_fields[toggle_key] = ui.checkbox(label).classes("tv-settings-check")
+                chart_fields[f"{prefix}_up"] = ColorButton(CHART_DEFAULTS[f"{prefix}_up"], title=f"{label} – růst")
+                chart_fields[f"{prefix}_down"] = ColorButton(CHART_DEFAULTS[f"{prefix}_down"], title=f"{label} – pokles")
+        ui.label("Objem").classes("tv-settings-section")
+        volume_checkbox = ui.checkbox("Objem (Volume)")
+        with ui.row().classes("tv-settings-actions w-full"):
+            chart_templates = TemplateMenu(
+                cache,
+                lambda: "chart",
+                collect_chart_values,
+                fill_chart_values,
+                lambda: fill_chart_values({**CHART_DEFAULTS, "volume": True}),
+            )
+            settings_buttons(chart_settings_dialog, submit_chart_settings)
+    # Každá změna pole se hned promítne do grafu (náhled); zavření bez Ok ji vrátí
+    for chart_field in [*chart_fields.values(), volume_checkbox]:
+        chart_field.on_value_change(lambda _event: preview_chart_style())
+    chart_settings_dialog.on_value_change(on_chart_dialog_change)
 
     # Dialog nastavení API klíčů (volitelný zdroj Alpaca)
     with ui.dialog() as settings_dialog, ui.card().classes("settings-dialog"):
@@ -1479,8 +1712,6 @@ async def _build_index(cache: KlineCache) -> None:
     search_input.on("keydown.escape", lambda _e: hide_suggestions())
     timeframe_toggle.on_value_change(lambda event: set_timeframe(event.value))
     theme_switch.on_value_change(lambda event: toggle_theme(bool(event.value)))
-    # Přepínač objemu v Settings grafu
-    volume_switch.on_value_change(lambda event: set_volume_visible(bool(event.value)))
 
     # Průběžné vyzvedávání dokončených kreseb z grafu (viz on_drawing_finished)
     ui.timer(0.5, on_drawing_finished)

@@ -131,7 +131,8 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   (vpravo do budoucna, přes víkendové mezery), mazání
   přes pravoklikové menu („Smazat objekt“), Del nebo koš, magnet na OHLC,
   tužka (nástroj zůstává aktivní), zámek a skrytí kreseb; text i sticker se
-  zadávají v dialogu po kliknutí do grafu; paleta barev nových kreseb; kresby
+  zadávají v dialogu po kliknutí do grafu; tlačítko barvy nových kreseb
+  (výběr barvy ve stylu TradingView, volba se ukládá); kresby
   se ukládají k symbolu a timeframe (přetrvávají restart). Watchlist v levém
   panelu (přidat/odebrat, klik přepne graf a řádek se zvýrazní jako aktuální,
   poslední cena a denní změna – Binance živě po 5 s, Yahoo po 60 s, IBKR po
@@ -155,8 +156,31 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   (barva, šířka a styl čáry, u textu obsah a velikost písma) a „Smazat
   objekt“, dvojklik rovnou Settings; na čáře indikátoru, v jeho panelu nebo na
   řádku legendy menu „Settings…“ (parametry), „Skrýt“, „Odebrat indikátor“,
-  dvojklik rovnou Settings; jinde v grafu „Settings…“ grafu se zapnutím /
-  vypnutím objemu (Volume; uloží se, objem lze skrýt i okem v řádku Vol).
+  dvojklik rovnou Settings; jinde v grafu „Settings…“ grafu: barvy těla,
+  okrajů a knotů svíček pro růst / pokles (každý prvek lze vypnout),
+  obarvení svíček podle předchozího závěru a zobrazení objemu (Volume; objem
+  lze skrýt i okem v řádku Vol). Změny v Settings grafu se hned ukazují
+  v grafu, uloží se tlačítkem Ok, Cancel / zavření je vrátí.
+- Výběr barvy jako v TradingView (Settings grafu, indikátoru, kresby a barva
+  nových kreseb v liště): řada šedých, hlavní barvy, šest řad odstínů,
+  vlastní barvy (tlačítko + otevře systémový výběr; ukládají se v prohlížeči)
+  a průhlednost posuvníkem nebo v % – průhledná barva se ukládá jako
+  `rgba(…)`, plná jako `#rrggbb`.
+- Šablony (Template) jako v TradingView v dialozích Settings grafu,
+  indikátoru (pro typ indikátoru) a kresby (pro typ kresby): „Apply defaults“
+  (výchozí hodnoty), „Save as…“ (pojmenovaná šablona; stejný název přepíše),
+  pod čarou uložené šablony – klik je použije, křížek smaže. U indikátorů
+  navíc „Save as default“ – nově přidaný indikátor daného typu převezme
+  parametry a barvu ze šablony (a „Apply defaults“ ji použije); „Reset
+  default“ vrátí tovární hodnoty. Šablony se ukládají do SQLite.
+- Oblíbené nástroje: ve flyout nabídce nástrojů je u každého nástroje
+  hvězdička, u skupin s jediným nástrojem (kurzor, měřič) pravý klik na
+  tlačítko lišty. Oblíbené nástroje se ukazují v plovoucím panelu nad grafem
+  (výchozí pozice nahoře uprostřed), který lze přetáhnout za úchop ⋮⋮;
+  klik nástroj vybere, pravý klik ho z oblíbených odebere. Tlačítko hvězdy
+  v liště panel skryje / zobrazí. Oblíbené, pozice i viditelnost panelu se
+  ukládají. Lišta má skupiny jako TradingView – čáry, kanály a pitchforky
+  jsou v jedné nabídce rozdělené do sekcí.
 - Kreslení: výběr textu klikem kamkoli do textu (rámeček označení), Del /
   pravý klik ho smaže. Magnet má režimy slabý (přichytí bod k O/H/L/C, když je
   kurzor do 25 px) a silný (vždy na nejbližší O/H/L/C); při kreslení ukazuje
@@ -257,21 +281,30 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
 - `tickview/logic/indicators.py` – definice (kategorie, popis, parametry)
   a výpočet 28 indikátorů přes pandas-ta, payload overlay čar, panelů
   a skupin legendy pro graf, kontrola parametrů a načtení uložených indikátorů
+- `tickview/logic/styles.py` – kontrola barev (`#rrggbb` / `rgba`), styl
+  svíček grafu, šablony nastavení (Template) a oblíbené nástroje
 - `tickview/logic/sessions.py` – filtr hlavní obchodní seance (RTH) a seznam
   časových pásem pro nabídku
 - `tickview/ui/lightweight_chart.py` – vlastní komponenta NiceGUI obalující
   Lightweight Charts (init, výměna dat, inkrementální svíčka, motiv,
   indikátory, kreslení, fronta událostí z grafu)
+- `tickview/ui/color_button.py` + `color_button.js` – tlačítko barvy
+  (vlastní komponenta NiceGUI), které otevírá výběr barvy
+- `tickview/ui/templates.py` – nabídka šablon „Template“ pro dialogy Settings
 - `tickview/ui/main_window.py` – hlavní stránka: vyhledání symbolu, timeframy,
   watchlist, nabídka a Settings indikátorů, lišta kreslení, Settings kreseb
   a grafu, živý stream, stavová lišta se seancí a časovým pásmem
 - `tickview/ui/static/lightweight_chart.js` – JS komponenta grafu (svíčky,
   objem, nadpis a legenda ve stylu TradingView, motivy, časové pásmo,
   inkrementální update, donačítání historie, panely indikátorů, kontextová
-  menu, kreslicí nástroje na překryvném canvasu)
+  menu, kreslicí nástroje na překryvném canvasu, plovoucí panel oblíbených
+  nástrojů, styl svíček)
+- `tickview/ui/static/color_picker.js` – výběr barvy ve stylu TradingView
+  (paleta, vlastní barvy, průhlednost)
 - `tickview/ui/static/style.css` – styly UI
 - `tickview/ui/static/lightweight-charts.standalone.production.js` – vendored
   knihovna TradingView Lightweight Charts 4.2.3 (licence Apache-2.0)
 - `tests/` – unit testy logiky (cache, indikátory, polling, omezovač dotazů,
-  konfigurace, skládání timeframů, seance, časová pásma, forex);
+  konfigurace, skládání timeframů, seance, časová pásma, forex, barvy,
+  šablony a oblíbené nástroje);
   spuštění `python -m unittest`

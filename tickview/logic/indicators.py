@@ -12,6 +12,7 @@ import uuid
 import pandas as pd
 import pandas_ta
 
+from tickview.logic.styles import normalize_color
 from tickview.providers.base import Candle
 
 # Barvy čar indikátorů (cyklicky podle pořadí přidání, pokud uživatel nezvolí vlastní)
@@ -119,17 +120,6 @@ PARAM_LABELS = {
 
 # Horní mez period (delší periody nedávají nad načtenou historií smysl)
 MAX_LENGTH = 1000
-
-
-def normalize_color(value) -> str | None:
-    """Vrátí barvu ve tvaru #rrggbb, jinak None (neplatný vstup z dialogu / nastavení)."""
-    if isinstance(value, str) and len(value) == 7 and value.startswith("#"):
-        try:
-            int(value[1:], 16)
-        except ValueError:
-            return None
-        return value.lower()
-    return None
 
 
 def indicator_color(spec: dict, index: int) -> str:
