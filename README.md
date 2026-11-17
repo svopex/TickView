@@ -141,8 +141,12 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   určuje výchozí šablona typu kresby (viz Šablony); kresby
   se ukládají k symbolu (přetrvávají restart) a jako v TradingView jsou vidět
   na všech timeframech podle záložky Visibility (viz níže). Lišta i nabídky
-  používají vlastní tenké SVG piktogramy ve stylu TradingView. Watchlist
-  v levém panelu (přidat/odebrat, klik kamkoli do řádku – symbol, cena,
+  používají vlastní tenké SVG piktogramy ve stylu TradingView (Long / Short
+  position: tři čáry s kotevními body a písmenem L / S v zóně cíle).
+- Pravý panel jako v TradingView: svislá lišta úplně vpravo přepíná obsah
+  panelu – Watchlist a Alerty (s počtem aktivních alertů); klik na aktivní
+  tlačítko panel skryje, volba se pamatuje. Watchlist
+  v pravém panelu (přidat/odebrat, klik kamkoli do řádku – symbol, cena,
   změna – přepne graf a řádek se zvýrazní jako aktuální, poslední cena
   a denní změna – Binance živě po 5 s, Yahoo po 60 s, IBKR po 30 s, Alpaca
   snapshots po 5 s).
@@ -233,10 +237,17 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   v aplikaci, zvuk a Webhook URL (POST se zprávou; platný JSON jako
   application/json, jinak text/plain – jako v TradingView). Alerty
   vyhodnocuje server na pozadí i bez otevřené stránky (jeden živý stream na
-  symbol a timeframe, po výpadku znovupřipojení). Tlačítko se zvonkem (počet
-  aktivních alertů) otevře seznam alertů (klik přepne graf, pozastavit /
-  spustit znovu, upravit, smazat) a log spuštění s výsledkem odeslání
-  (✓ / ✗ Telegram, webhook; chyba v tooltipu). Aktivní cenové alerty
+  symbol a timeframe, po výpadku znovupřipojení). Panel Alerty v pravém
+  panelu má přepínač Alerty / Log (s počtem záznamů logu). Seznam alertů:
+  tlačítko + (nový alert), hledání, řazení (nejnovější, nejstarší, podle
+  symbolu, podle stavu – pamatuje se) a nabídka ⋯ s hromadnými akcemi
+  (spustit všechny neaktivní, pozastavit všechny, smazat neaktivní / všechny
+  s potvrzením). Řádek ukazuje zprávu, zdroj, symbol, timeframe a stav; klik
+  přepne graf, dvojklik alert upraví, při najetí jsou tlačítka spustit /
+  pozastavit, upravit, smazat a ⋯, pravý klik otevře stejnou nabídku
+  (Upravit…, Klonovat…, Pozastavit / Spustit znovu, Zobrazit v grafu,
+  Smazat). Log spuštění ukazuje výsledek odeslání (✓ / ✗ Telegram, webhook;
+  chyba v tooltipu). Aktivní cenové alerty
   zobrazeného symbolu jsou v grafu oranžové čárkované čáry s popiskem na ose.
 - Telegram pro alerty: ozubené kolečko v horní liště → bot token (od
   @BotFather, příkaz /newbot), po zprávě botovi tlačítko „Zjistit chat ID“
@@ -426,8 +437,9 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
 - `tickview/ui/templates.py` – dialogy Settings (hlavička, tlačítka) a nabídka
   šablon „Template“
 - `tickview/ui/main_window.py` – hlavní stránka: mřížka grafů a Layout
-  setup, aktivní graf, hledání symbolu (dialog), alerty (dialog, seznam, log,
-  Telegram v Settings), timeframy, watchlist, nabídka, šablony a Settings
+  setup, aktivní graf, hledání symbolu (dialog), pravý panel (watchlist,
+  alerty – seznam, log, hledání, hromadné akce), dialog alertu, Telegram
+  v Settings), timeframy, watchlist, nabídka, šablony a Settings
   indikátorů, lišta kreslení, Settings kreseb (Text, Visibility) a grafu,
   stavová lišta se seancí a časovým pásmem
 - `tickview/ui/static/lightweight_chart.js` – JS komponenta grafu (svíčky,

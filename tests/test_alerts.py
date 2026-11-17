@@ -12,6 +12,7 @@ from tickview.logic.alerts import (
     AlertTracker,
     condition_met,
     default_message,
+    filter_alerts,
     is_expired,
     line_price,
     normalize_alert,
@@ -120,6 +121,23 @@ class AlertLogicTest(unittest.TestCase):
         self.assertEqual(webhook_payload("ahoj")[1], "text/plain; charset=utf-8")
 
 
+    def test_filter_and_sort(self) -> None:
+        # Hledání v symbolu i zprávě a řazení seznamu alertů v panelu
+        base = {"condition": "crossing", "target": {"type": "value", "price": 1.0}, "trigger": "once", "timeframe": "1h"}
+        alerts = [
+            dict(base, id=1, symbol="EURUSD", message="Průraz", status="paused"),
+            dict(base, id=2, symbol="AUDNZD", message="Test", status="active"),
+            dict(base, id=3, symbol="BTCUSDT", message="průraz BTC", status="expired"),
+        ]
+        self.assertEqual([a["id"] for a in filter_alerts(alerts)], [3, 2, 1])
+        self.assertEqual([a["id"] for a in filter_alerts(alerts, sort="oldest")], [1, 2, 3])
+        self.assertEqual([a["id"] for a in filter_alerts(alerts, sort="symbol")], [2, 3, 1])
+        self.assertEqual([a["id"] for a in filter_alerts(alerts, sort="status")], [2, 1, 3])
+        self.assertEqual([a["id"] for a in filter_alerts(alerts, "PRŮRAZ")], [3, 1])
+        self.assertEqual([a["id"] for a in filter_alerts(alerts, "audnzd")], [2])
+        self.assertEqual(filter_alerts(alerts, "neexistuje"), [])
+
+
 class PositionStyleTest(unittest.TestCase):
     """Parametry a ceny pozice Long / Short."""
 
@@ -224,6 +242,22 @@ class AlertEngineTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((alert["status"], alert["fire_count"]), ("triggered", 1))
         log = await self.cache.alert_log()
         self.assertEqual(log[0]["delivery"], [{"channel": "webhook", "ok": True, "error": ""}])
+
+    async def test_bulk_alerts(self) -> None:
+        # Hromadné akce panelu Alerty: pozastavit, spustit neaktivní, smazat neaktivní / vše
+        ids = [await self.cache.save_alert(alert_spec()) for _ in range(3)]
+        await self.cache.set_alert_state(ids[0], False, "paused")
+        self.assertEqual(await self.cache.bulk_alerts("restart_inactive"), 1)
+        self.assertTrue(all(a["active"] for a in await self.cache.alerts()))
+        self.assertEqual(await self.cache.bulk_alerts("stop_all"), 3)
+        self.assertEqual({a["status"] for a in await self.cache.alerts()}, {"paused"})
+        await self.cache.set_alert_state(ids[1], True, "active")
+        self.assertEqual(await self.cache.bulk_alerts("remove_inactive"), 2)
+        self.assertEqual([a["id"] for a in await self.cache.alerts()], [ids[1]])
+        self.assertEqual(await self.cache.bulk_alerts("remove_all"), 1)
+        self.assertEqual(await self.cache.alerts(), [])
+        with self.assertRaises(ValueError):
+            await self.cache.bulk_alerts("neznámá")
 
     async def test_drawing_alert_and_missing_drawing(self) -> None:
         drawing_id = await self.cache.add_drawing("fake", "X", "1m", "hline", [{"time": 0, "price": 20.0}])

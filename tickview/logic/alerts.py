@@ -368,3 +368,46 @@ def describe_alert(alert: dict) -> str:
     """Krátký popis alertu do seznamu: „Crossing 1.22547 · Once Per Bar“."""
     condition = CONDITIONS.get(alert.get("condition"), "?")
     return f"{condition} {target_label(alert.get('target') or {})} · {TRIGGERS.get(alert.get('trigger'), '?')}"
+
+
+# Řazení seznamu alertů v pravém panelu (id -> popisek v nabídce řazení)
+ALERT_SORTS: dict[str, str] = {
+    "newest": "Nejnovější první",
+    "oldest": "Nejstarší první",
+    "symbol": "Podle symbolu",
+    "status": "Podle stavu",
+}
+
+# Pořadí stavů při řazení podle stavu (aktivní nahoře jako v TradingView)
+_STATUS_ORDER = {status: index for index, status in enumerate(("active", "triggered", "error", "paused", "expired"))}
+
+
+def filter_alerts(alerts: list[dict], query: str = "", sort: str = "newest") -> list[dict]:
+    """Alerty pro seznam v panelu: hledání podle textu a zvolené řazení.
+
+    Parametry:
+        alerts: alerty z databáze (libovolné pořadí).
+        query: hledaný text (symbol, timeframe, zpráva nebo popis podmínky;
+            bez ohledu na velikost písmen, prázdný = všechny).
+        sort: klíč z ALERT_SORTS (neznámý = "newest").
+    """
+    needle = (query or "").strip().lower()
+    # Hledá se ve všech textech, které řádek alertu zobrazuje
+    if needle:
+        alerts = [
+            alert
+            for alert in alerts
+            if needle in " ".join(
+                (str(alert.get("symbol", "")), str(alert.get("timeframe", "")),
+                 str(alert.get("message", "")), describe_alert(alert))
+            ).lower()
+        ]
+    # Řazení; sekundárně vždy nejnovější první (stabilní pořadí stejných klíčů)
+    by_newest = sorted(alerts, key=lambda alert: alert.get("id") or 0, reverse=True)
+    if sort == "oldest":
+        return by_newest[::-1]
+    if sort == "symbol":
+        return sorted(by_newest, key=lambda alert: (str(alert.get("symbol", "")), str(alert.get("timeframe", ""))))
+    if sort == "status":
+        return sorted(by_newest, key=lambda alert: _STATUS_ORDER.get(alert.get("status"), len(_STATUS_ORDER)))
+    return by_newest

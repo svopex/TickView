@@ -634,6 +634,29 @@ class KlineCache:
         """Smaže alert (záznamy v logu zůstanou)."""
         await self._run(self._execute_sync, "DELETE FROM alerts WHERE id = ?", (alert_id,))
 
+    async def bulk_alerts(self, action: str) -> int:
+        """Hromadná akce nad alerty jedním příkazem; vrátí počet dotčených alertů.
+
+        Parametry:
+            action: restart_inactive (spustí neaktivní), stop_all (pozastaví
+                aktivní), remove_inactive (smaže neaktivní) nebo remove_all.
+        """
+        statements = {
+            "restart_inactive": "UPDATE alerts SET active = 1, status = 'active' WHERE active = 0",
+            "stop_all": "UPDATE alerts SET active = 0, status = 'paused' WHERE active = 1",
+            "remove_inactive": "DELETE FROM alerts WHERE active = 0",
+            "remove_all": "DELETE FROM alerts",
+        }
+        if action not in statements:
+            raise ValueError(f"Neznámá hromadná akce alertů: {action}")
+
+        def bulk_sync() -> int:
+            count = self._conn.execute(statements[action]).rowcount
+            self._conn.commit()
+            return count
+
+        return await self._run(bulk_sync)
+
     async def add_alert_log(self, entry: dict) -> None:
         """Zapíše spuštění alertu do logu.
 

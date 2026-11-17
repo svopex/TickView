@@ -437,7 +437,7 @@
   cursor: crosshair;
 }
 
-/* Layout: hlavní oblast = watchlist panel + obsah */
+/* Layout: hlavní oblast = obsah (lišty + grafy) + pravý panel + pravá lišta */
 .main-area {
   flex: 1 1 auto;
   min-height: 0;
@@ -446,14 +446,55 @@
   flex-wrap: nowrap;
 }
 
-/* Levý panel watchlistu */
+/* Pravý panel (Watchlist / Alerty) jako v TradingView */
+.right-panel {
+  width: 300px;
+  min-width: 300px;
+  min-height: 0;
+  gap: 0 !important;
+  flex-wrap: nowrap;
+  border-left: 1px solid rgba(128, 128, 128, 0.25);
+}
+
+/* Svislá lišta úplně vpravo s tlačítky obsahu pravého panelu */
+.right-bar {
+  width: 46px;
+  min-width: 46px;
+  align-items: center;
+  gap: 4px !important;
+  padding: 6px 0;
+  border-left: 1px solid rgba(128, 128, 128, 0.25);
+}
+
+.right-bar-btn {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  color: inherit;
+}
+
+.right-bar-btn .q-icon {
+  font-size: 22px;
+}
+
+.right-bar-btn.active {
+  background: rgba(128, 128, 128, 0.22);
+}
+
+.right-bar-btn .alerts-badge {
+  top: -2px;
+  right: -4px;
+}
+
+/* Sekce watchlistu v pravém panelu */
 .watchlist-panel {
-  width: 250px;
-  min-width: 250px;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-wrap: nowrap;
   padding: 6px 8px;
   gap: 4px !important;
   overflow-y: auto;
-  border-right: 1px solid rgba(128, 128, 128, 0.25);
 }
 
 .watchlist-header {
@@ -527,7 +568,10 @@
   font-weight: 600;
 }
 
+/* Symbol zabere volné místo, cena a změna jsou tak zarovnané vpravo */
 .watch-symbol {
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: 12px;
   cursor: pointer;
 }
@@ -1113,6 +1157,7 @@
 /* Nabídky šablon, seznamů symbolů, typů grafu a timeframů */
 .tpl-menu,
 .wl-menu,
+.alerts-menu,
 .chart-type-menu,
 .tf-menu {
   min-width: 220px;
@@ -1520,31 +1565,83 @@
   padding: 4px 0;
 }
 
-.alerts-dialog {
-  width: 680px;
-  height: 600px;
-  max-height: 88vh;
-  display: flex;
-  flex-direction: column;
+/* Sekce Alerty v pravém panelu: přepínač, lišta, hledání a seznam */
+.alerts-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-wrap: nowrap;
+  gap: 0 !important;
+}
+
+/* Přepínač Alerty / Log (segmentové tlačítko jako v TradingView) */
+.alerts-switch {
+  flex-wrap: nowrap;
+  gap: 2px !important;
+  align-self: stretch;
+  margin: 8px 8px 4px;
+  padding: 2px;
+  width: auto !important;
+  border-radius: 6px;
+  background: rgba(128, 128, 128, 0.14);
+}
+
+.alerts-switch-btn {
+  flex: 1 1 0;
+  min-height: 28px;
+  border-radius: 5px;
+  font-size: 13px;
+  color: inherit;
+  opacity: 0.75;
+}
+
+.alerts-switch-btn .q-btn__content {
+  gap: 6px;
   flex-wrap: nowrap;
 }
 
-.alerts-panels {
-  flex: 1 1 auto;
-  overflow-y: auto;
-  background: transparent !important;
+.alerts-switch-btn.active {
+  opacity: 1;
+  font-weight: 600;
+  background: rgba(128, 128, 128, 0.3);
+}
+
+/* Počet záznamů logu u přepínače */
+.alerts-count-badge {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  font-size: 10px;
+  line-height: 16px;
+  color: #ffffff;
+  background: #f23645;
+}
+
+.alerts-toolbar {
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 2px !important;
+  padding: 0 6px;
+}
+
+.alert-search {
+  padding: 2px 8px 4px;
 }
 
 .alerts-list {
-  gap: 2px !important;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-wrap: nowrap;
+  overflow-y: auto;
+  gap: 0 !important;
 }
 
 .alert-row {
+  position: relative;
   flex-wrap: nowrap;
   align-items: center;
   gap: 8px !important;
   padding: 8px 10px;
-  border-radius: 4px;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.18);
   cursor: pointer;
 }
 
@@ -1553,39 +1650,85 @@
 }
 
 .alert-text {
-  gap: 1px !important;
+  flex: 1 1 auto;
+  gap: 2px !important;
   min-width: 0;
 }
 
-.alert-symbol {
+/* Zpráva alertu jako titulek řádku (zkrácená na jeden řádek) */
+.alert-title {
+  font-size: 13px;
   font-weight: 600;
-  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.alert-desc {
-  font-size: 12px;
+/* Neaktivní alert má titulek ztlumený jako v TradingView */
+.alert-row-paused .alert-title,
+.alert-row-expired .alert-title,
+.alert-row-triggered .alert-title {
+  opacity: 0.6;
+}
+
+.alert-meta {
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 5px !important;
+  font-size: 11px;
+  opacity: 0.8;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.alert-meta-symbol {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .alert-msg {
-  font-size: 12px;
-  opacity: 0.7;
+  font-size: 11px;
+  opacity: 0.6;
   overflow-wrap: anywhere;
 }
 
-.alert-status {
-  flex: 0 0 auto;
-  font-size: 11px;
-  padding: 1px 6px;
-  border-radius: 3px;
-  background: rgba(128, 128, 128, 0.22);
+.alert-status-text.alert-status-active { color: #089981; }
+.alert-status-text.alert-status-triggered { color: #ff9800; }
+.alert-status-text.alert-status-error { color: #f23645; }
+
+/* Akce u alertu se ukážou při najetí na řádek (překryjí konec řádku) */
+.alert-actions {
+  display: none;
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  flex-wrap: nowrap;
+  gap: 0 !important;
+  padding-left: 12px;
+  border-radius: 4px;
 }
 
-.alert-status-active { background: rgba(8, 153, 129, 0.25); }
-.alert-status-triggered { background: rgba(255, 152, 0, 0.25); }
-.alert-status-error { background: rgba(242, 54, 69, 0.3); }
+.alert-row:hover .alert-actions {
+  display: flex;
+}
+
+/* Pozadí akcí = barva řádku při najetí (šedá 14 % nad pozadím motivu) */
+.body--dark .alert-actions {
+  background: linear-gradient(to right, rgba(34, 38, 47, 0), #22262f 12px);
+}
+
+.body--light .alert-actions {
+  background: linear-gradient(to right, rgba(237, 237, 237, 0), #ededed 12px);
+}
 
 .alert-btn {
   color: inherit;
+}
+
+.alerts-menu .q-item {
+  min-height: 34px;
+  font-size: 13px;
 }
 
 /* Výsledek odeslání notifikace v logu (✓ telegram / ✗ webhook) */
@@ -1598,12 +1741,6 @@
 
 .alert-delivery.ok { background: rgba(8, 153, 129, 0.25); }
 .alert-delivery.failed { background: rgba(242, 54, 69, 0.3); }
-
-.alert-time {
-  flex: 0 0 auto;
-  font-size: 12px;
-  opacity: 0.7;
-}
 
 .alert-empty {
   padding: 20px;

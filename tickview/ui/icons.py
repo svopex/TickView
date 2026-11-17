@@ -39,9 +39,17 @@ _ICON_PATHS: dict[str, str] = {
     "text": '<path d="M8 7h12M14 7v15M11 22h6"/>',
     "sticker": '<circle cx="14" cy="14" r="9"/><path d="M10.5 16.5c2 2.6 5 2.6 7 0"/>'
                '<circle cx="11" cy="11.5" r=".6" fill="currentColor"/><circle cx="17" cy="11.5" r=".6" fill="currentColor"/>',
-    # Long / Short position: obdélník rozdělený čarou vstupu, šipka ke zóně cíle
-    "long": '<rect x="5" y="5" width="18" height="18" rx="1"/><path d="M5 15h18M14 12V7.5M11.5 10 14 7.5l2.5 2.5"/>',
-    "short": '<rect x="5" y="5" width="18" height="18" rx="1"/><path d="M5 13h18M14 16v4.5M11.5 18l2.5 2.5 2.5-2.5"/>',
+    # Long / Short position jako v TradingView: horní a dolní čára s kotevním
+    # bodem vlevo, mezi nimi čára vstupu přes celou šířku; písmeno L leží
+    # v (větší) zóně cíle nad vstupem, písmeno S v zóně cíle pod vstupem
+    "long": '<circle cx="5.5" cy="5" r="1.8"/><path d="M7.3 5H24"/>'
+            '<path d="M4 17h20"/>'
+            '<circle cx="5.5" cy="23" r="1.8"/><path d="M7.3 23H24"/>'
+            '<path d="M12.6 8.3v5.4h3.4"/>',
+    "short": '<circle cx="5.5" cy="5" r="1.8"/><path d="M7.3 5H24"/>'
+             '<path d="M4 11h20"/>'
+             '<circle cx="5.5" cy="23" r="1.8"/><path d="M7.3 23H24"/>'
+             '<path d="M15.8 15.1c-.3-.7-1-1.1-1.8-1.1-1 0-1.8.6-1.8 1.4 0 1.9 3.7 1.1 3.7 3.2 0 .9-.8 1.5-1.9 1.5-.9 0-1.6-.4-1.9-1.2"/>',
     # Měřič: pravítko s dílky
     "measure": '<path d="M4 19 19 4l5 5L9 24z"/><path d="M7.5 15.5l2 2M10.5 12.5l3 3M13.5 9.5l2 2M16.5 6.5l3 3"/>',
     # Magnet (a vypnutý magnet s přeškrtnutím)

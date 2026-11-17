@@ -12,6 +12,7 @@ from nicegui import background_tasks, context, ui
 
 from tickview.config import load_config, update_config_section
 from tickview.logic.alerts import (
+    ALERT_SORTS,
     CONDITIONS,
     DEFAULT_EXPIRATION_MS,
     DEFAULT_NOTIFY,
@@ -20,6 +21,7 @@ from tickview.logic.alerts import (
     TRIGGERS,
     default_message,
     describe_alert,
+    filter_alerts,
     format_price,
     normalize_alert,
 )
@@ -140,6 +142,19 @@ def drawing_scope(kind: str) -> str:
     return f"drawing.{kind}"
 
 
+# Krátké kódy zdrojů (watchlist, hledání, alerty – aby sloupec nebyl široký)
+PROVIDER_CODES = {"binance": "BIN", "yahoo": "YAH", "alpaca": "ALP", "ibkr": "IBK"}
+
+
+def provider_code(source: str) -> str:
+    """Krátký kód zdroje dat; neznámý zdroj = první tři písmena velkými."""
+    return PROVIDER_CODES.get(source, source[:3].upper())
+
+
+# Obsahy pravého panelu ("" = panel skrytý, zůstane jen pravá lišta)
+RIGHT_PANELS = ("watchlist", "alerts", "")
+
+
 def register(cache: KlineCache, alert_engine: AlertEngine) -> None:
     """Registruje hlavní stránku aplikace (volá se z main.py).
 
@@ -193,6 +208,13 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
             "indicators": saved_indicators,
         },
     )
+    # Obsah pravého panelu (Watchlist / Alerty, "" = skrytý) a řazení alertů z minula
+    saved_right_panel = await cache.get_setting("right_panel", "watchlist")
+    if saved_right_panel not in RIGHT_PANELS:
+        saved_right_panel = "watchlist"
+    saved_alerts_sort = await cache.get_setting("alerts_sort", "newest")
+    if saved_alerts_sort not in ALERT_SORTS:
+        saved_alerts_sort = "newest"
     # Handle si držíme: každé volání ui.dark_mode() by vytvořilo nový prvek
     dark_mode = ui.dark_mode(dark)
 
@@ -218,6 +240,13 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
         "active": layout_config["active"],
         # Šablony indikátorů (seznam z nastavení)
         "indicator_templates": load_indicator_templates(await cache.get_setting(INDICATOR_TEMPLATES_KEY)),
+        # Pravý panel (watchlist / alerts, prázdný = skrytý) a seznam alertů v něm
+        "right_panel": saved_right_panel,
+        "alerts_tab": "alerts",
+        "alerts_sort": saved_alerts_sort,
+        "alert_search_open": False,
+        # Naposledy načtené alerty (hledání a řazení filtrují v paměti)
+        "alerts": [],
     }
     # Grafy rozložení v pořadí slotů mřížky
     panes: list[ChartPane] = []
@@ -315,7 +344,7 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
                         "kind": info.kind,
                         "exchange": info.exchange or provider.name,
                         "provider": provider.name,
-                        "code": PROVIDER_CODES.get(provider.id, provider.id[:3].upper()),
+                        "code": provider_code(provider.id),
                     }
                     for info in found[:SEARCH_PER_PROVIDER]
                 ]
@@ -1125,11 +1154,11 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
 
     # ---------- časové pásmo a obchodní seance (stavová lišta) ----------
 
-    def mark_active(items: dict, active_value: str) -> None:
-        # Zvýrazní zvolenou položku nabídky (ostatním zvýraznění odebere)
+    def mark_active(items: dict, active_value: str, css_class: str = "menu-item-active") -> None:
+        # Zvýrazní zvolenou položku (nabídky, přepínače) třídou css_class a ostatním ji odebere
         for value, item in items.items():
             on = value == active_value
-            item.classes(add="menu-item-active" if on else "", remove="" if on else "menu-item-active")
+            item.classes(add=css_class if on else "", remove="" if on else css_class)
 
     def make_timezone_click(value: str):
         async def _handler() -> None:
@@ -1363,9 +1392,6 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
 
     # ---------- watchlist ----------
 
-    # Krátké kódy zdrojů pro watchlist (aby sloupec nebyl široký)
-    PROVIDER_CODES = {"binance": "BIN", "yahoo": "YAH", "alpaca": "ALP", "ibkr": "IBK"}
-
     # Řádky watchlistu: key -> elementy pro aktualizaci cen
     watch_rows: dict = {}
 
@@ -1532,7 +1558,7 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
         with watchlist_body:
             for item in items:
                 key = f"{item['source']}:{item['symbol']}"
-                code = PROVIDER_CODES.get(item["source"], item["source"][:3].upper())
+                code = provider_code(item["source"])
                 # Klik kamkoli do řádku (symbol, cena, změna) přepne graf
                 with ui.row().classes("watch-row w-full").on("click", make_watch_click(key)) as watch_row_element:
                     ui.label(code).classes("watch-code").tooltip(item["source"])
@@ -1939,13 +1965,16 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
         if not alert_form["filling"]:
             alert_form["auto_message"] = False
 
-    async def open_alert_dialog(alert: dict | None = None, price=None, drawing_id: int | None = None) -> None:
+    async def open_alert_dialog(
+        alert: dict | None = None, price=None, drawing_id: int | None = None, clone: bool = False
+    ) -> None:
         """Dialog vytvoření / úpravy alertu.
 
         Parametry:
             alert: upravovaný alert (None = nový alert pro aktuální graf).
             price: počáteční cena nového alertu (None = poslední cena grafu).
             drawing_id: kresba, na kterou se nový alert nastaví (pravý klik na čáru).
+            clone: alert se nepřepíše, ale vytvoří se z něj nový (Klonovat).
         """
         pane = active()
         if alert is None:
@@ -1955,8 +1984,9 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
             source, symbol, timeframe = pane.provider_id, pane.symbol, pane.timeframe
         else:
             source, symbol, timeframe = alert["source"], alert["symbol"], alert["timeframe"]
+        editing = alert is not None and not clone
         alert_form.update(
-            {"id": alert["id"] if alert else None, "source": source, "symbol": symbol, "timeframe": timeframe}
+            {"id": alert["id"] if editing else None, "source": source, "symbol": symbol, "timeframe": timeframe}
         )
         # Cíle: cena a čáry kreseb symbolu a timeframu alertu
         drawings = [d for d in await cache.load_drawings(source, symbol) if d["kind"] in LINE_KINDS]
@@ -1982,9 +2012,12 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
                 "notify": dict(DEFAULT_NOTIFY, telegram=has_telegram),
             }
         else:
-            spec = alert
-        alert_dialog_title.text = f"{'Upravit' if alert else 'Create'} alert on {symbol}, {timeframe}"
-        alert_submit.text = "Save" if alert else "Create"
+            spec = dict(alert)
+            # Klon prošlého alertu dostane novou výchozí expiraci
+            if clone and spec.get("expires_at") and spec["expires_at"] <= utc_now_ms():
+                spec["expires_at"] = utc_now_ms() + DEFAULT_EXPIRATION_MS
+        alert_dialog_title.text = f"{'Upravit' if editing else 'Create'} alert on {symbol}, {timeframe}"
+        alert_submit.text = "Save" if editing else "Create"
         alert_form["filling"] = True
         try:
             alert_condition.value = spec["condition"]
@@ -2066,15 +2099,30 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
         await alert_engine.reload()
         show_status(f"Alert {alert['symbol']} smazán.")
 
-    async def refresh_alerts_ui() -> None:
-        # Počet aktivních alertů v liště, čáry alertů v grafu a otevřený seznam
+    def alerts_visible() -> bool:
+        # Seznam / log alertů je vidět jen při otevřeném panelu Alerty
+        return state["right_panel"] == "alerts"
+
+    async def refresh_alerts_ui(with_log: bool = True) -> None:
+        """Počet aktivních alertů na pravé liště, čáry alertů v grafu a otevřený panel.
+
+        Parametry:
+            with_log: překreslit i log (spuštění alertu ho obnoví samo přes log_changed).
+        """
         alerts = await cache.alerts()
-        active = sum(1 for alert in alerts if alert["active"])
-        alerts_badge.text = str(active)
-        alerts_badge.set_visibility(active > 0)
+        state["alerts"] = alerts
+        active_count = sum(1 for alert in alerts if alert["active"])
+        alerts_badge.text = str(active_count)
+        alerts_badge.set_visibility(active_count > 0)
         await push_alert_lines(alerts)
-        if alerts_dialog.value:
-            render_alerts_list(alerts)
+        await render_alerts_panel(with_log)
+
+    async def render_alerts_panel(with_log: bool = True) -> None:
+        # Seznam (z naposledy načtených alertů) a log otevřeného panelu Alerty
+        if not alerts_visible():
+            return
+        render_alerts_list()
+        if with_log:
             await render_alert_log()
 
     async def push_alert_lines(alerts: list[dict] | None = None) -> None:
@@ -2085,9 +2133,18 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
             pane.push_alert_lines(alerts)
 
     def make_alert_action(action: str, alert: dict):
+        """Handler akce u alertu (řádek, tlačítka při najetí, nabídka ⋯ a pravý klik).
+
+        Parametry:
+            action: edit, clone, pause, resume, delete nebo show (přepnout graf na symbol).
+            alert: alert, kterého se akce týká.
+        """
+
         async def _handler(_event=None):
             if action == "edit":
                 await open_alert_dialog(alert)
+            elif action == "clone":
+                await open_alert_dialog(alert, clone=True)
             elif action == "pause":
                 await set_alert_active(alert, False)
             elif action == "resume":
@@ -2095,43 +2152,91 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
             elif action == "delete":
                 await delete_alert(alert)
             elif action == "show":
-                alerts_dialog.close()
                 await load_symbol(f"{alert['source']}:{alert['symbol']}")
 
         return _handler
 
-    def render_alerts_list(alerts: list[dict]) -> None:
-        # Seznam alertů: symbol a timeframe, podmínka a trigger, zpráva, stav a akce
+    def alert_menu_items(alert: dict) -> None:
+        # Položky nabídky alertu (⋯ i pravý klik) jako v TradingView
+        ui.menu_item("Upravit…", on_click=make_alert_action("edit", alert))
+        ui.menu_item("Klonovat…", on_click=make_alert_action("clone", alert))
+        if alert["active"]:
+            ui.menu_item("Pozastavit", on_click=make_alert_action("pause", alert))
+        else:
+            ui.menu_item("Spustit znovu", on_click=make_alert_action("resume", alert))
+        ui.menu_item("Zobrazit v grafu", on_click=make_alert_action("show", alert))
+        ui.separator()
+        ui.menu_item("Smazat", on_click=make_alert_action("delete", alert)).classes("wl-danger")
+
+    def render_alerts_list() -> None:
+        """Seznam alertů v pravém panelu ve stylu TradingView.
+
+        Řádek: zpráva, pod ní zdroj, symbol, timeframe a stav; při najetí
+        tlačítka spustit / pozastavit, upravit, smazat a nabídka ⋯; pravý klik
+        otevře stejnou nabídku, dvojklik alert upraví, klik přepne graf.
+
+        Vychází z naposledy načtených alertů (state["alerts"]), hledání a
+        řazení tak nečtou databázi.
+        """
+        alerts = state["alerts"]
+        mark_active(alert_sort_items, state["alerts_sort"])
+        shown = filter_alerts(alerts, alert_search.value or "", state["alerts_sort"])
         alerts_list.clear()
         with alerts_list:
             if not alerts:
-                ui.label("Žádné alerty – vytvořte je tlačítkem Alert nebo pravým klikem do grafu.").classes("alert-empty")
-            for alert in alerts:
+                ui.label("Žádné alerty – vytvořte je tlačítkem + nebo pravým klikem do grafu.").classes("alert-empty")
+            elif not shown:
+                ui.label("Hledání neodpovídá žádný alert.").classes("alert-empty")
+            for alert in shown:
                 status = alert["status"] if alert["status"] in STATUSES else "active"
-                with ui.row().classes("alert-row w-full").on("click", make_alert_action("show", alert)):
+                code = provider_code(alert["source"])
+                with (
+                    ui.row()
+                    .classes(f"alert-row alert-row-{status} w-full")
+                    .on("click", make_alert_action("show", alert))
+                    .on("dblclick", make_alert_action("edit", alert))
+                ):
                     with ui.column().classes("alert-text"):
-                        ui.label(f"{alert['symbol']}, {alert['timeframe']}").classes("alert-symbol")
-                        ui.label(describe_alert(alert)).classes("alert-desc")
-                        ui.label(alert["message"]).classes("alert-msg")
+                        ui.label(alert["message"]).classes("alert-title").tooltip(describe_alert(alert))
+                        with ui.row().classes("alert-meta"):
+                            ui.label(code).classes("watch-code").tooltip(alert["source"])
+                            ui.label(f"{alert['symbol']}, {alert['timeframe']}").classes("alert-meta-symbol")
+                            ui.label("·")
+                            ui.label(STATUSES[status]).classes(f"alert-status-text alert-status-{status}")
                         details = []
                         if alert.get("expires_at"):
                             details.append(f"vyprší {format_local_time(alert['expires_at'])}")
                         if alert.get("fire_count"):
-                            details.append(f"spuštěno {alert['fire_count']}×, naposledy {format_local_time(alert['last_fired_at'])}")
+                            details.append(f"spuštěno {alert['fire_count']}×")
                         if details:
                             ui.label(" · ".join(details)).classes("alert-msg")
-                    ui.space()
-                    ui.label(STATUSES[status]).classes(f"alert-status alert-status-{status}")
-                    # Akce nesmí zároveň přepnout graf (.stop zastaví klik řádku)
-                    toggle = ("pause", "pause", "Pozastavit") if alert["active"] else ("resume", "play_arrow", "Spustit znovu")
-                    for action, icon, tooltip in (toggle, ("edit", "edit", "Upravit"), ("delete", "close", "Smazat")):
-                        ui.button(icon=icon, color=None).props("flat dense round size=sm").classes("alert-btn").tooltip(
-                            tooltip
-                        ).on("click.stop", make_alert_action(action, alert))
+                    # Akce při najetí; nesmí zároveň přepnout graf ani alert otevřít
+                    # (kontejner zastaví klik i dvojklik v prohlížeči)
+                    with ui.row().classes("alert-actions").on(
+                        "click", js_handler="(e) => e.stopPropagation()"
+                    ).on("dblclick", js_handler="(e) => e.stopPropagation()"):
+                        toggle = (
+                            ("pause", "pause", "Pozastavit") if alert["active"] else ("resume", "play_arrow", "Spustit znovu")
+                        )
+                        for action, icon, tooltip in (toggle, ("edit", "edit", "Upravit"), ("delete", "close", "Smazat")):
+                            ui.button(
+                                icon=icon, color=None, on_click=make_alert_action(action, alert)
+                            ).props("flat dense round size=sm").classes("alert-btn").tooltip(tooltip)
+                        with ui.button(icon="more_horiz", color=None).props("flat dense round size=sm").classes(
+                            "alert-btn"
+                        ):
+                            with ui.menu().classes("alerts-menu"):
+                                alert_menu_items(alert)
+                    # Pravý klik na řádek: stejná nabídka jako ⋯
+                    with ui.context_menu().classes("alerts-menu"):
+                        alert_menu_items(alert)
 
     async def render_alert_log() -> None:
-        # Log spuštěných alertů s výsledkem odeslání notifikací
+        # Log spuštěných alertů s výsledkem odeslání notifikací; počet záznamů
+        # ukazuje odznak u přepínače Log
         entries = await cache.alert_log()
+        log_badge.text = str(len(entries))
+        log_badge.set_visibility(bool(entries))
         alert_log_list.clear()
         with alert_log_list:
             if not entries:
@@ -2139,31 +2244,106 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
             for entry in entries:
                 with ui.row().classes("alert-row w-full"):
                     with ui.column().classes("alert-text"):
-                        ui.label(f"{entry['symbol']}, {entry['timeframe']} · {format_price(entry['price'])}").classes(
-                            "alert-symbol"
-                        )
-                        ui.label(entry["message"]).classes("alert-msg")
-                    ui.space()
-                    for result in entry["delivery"]:
-                        chip = ui.label(("✓ " if result["ok"] else "✗ ") + result["channel"]).classes(
-                            "alert-delivery " + ("ok" if result["ok"] else "failed")
-                        )
-                        if result.get("error"):
-                            chip.tooltip(result["error"])
-                    ui.label(format_local_time(entry["fired_at"], with_date=False)).classes("alert-time")
+                        ui.label(entry["message"]).classes("alert-title")
+                        with ui.row().classes("alert-meta"):
+                            ui.label(f"{entry['symbol']}, {entry['timeframe']}").classes("alert-meta-symbol")
+                            ui.label("·")
+                            ui.label(format_price(entry["price"]))
+                            ui.label("·")
+                            ui.label(format_local_time(entry["fired_at"]))
+                        if entry["delivery"]:
+                            with ui.row().classes("alert-meta"):
+                                for result in entry["delivery"]:
+                                    chip = ui.label(("✓ " if result["ok"] else "✗ ") + result["channel"]).classes(
+                                        "alert-delivery " + ("ok" if result["ok"] else "failed")
+                                    )
+                                    if result.get("error"):
+                                        chip.tooltip(result["error"])
 
     async def clear_alert_log() -> None:
         await cache.clear_alert_log()
         await render_alert_log()
 
-    async def open_alerts_dialog() -> None:
-        # Správa alertů: seznam a log spuštění
-        render_alerts_list(await cache.alerts())
-        await render_alert_log()
-        alerts_dialog.open()
+    def set_alerts_tab(tab: str) -> None:
+        """Přepne obsah panelu Alerty mezi seznamem alertů a logem spuštění."""
+        state["alerts_tab"] = tab
+        paint_alerts_tab()
+
+    def paint_alerts_tab() -> None:
+        # Zvýraznění přepínače a viditelnost lišt a seznamů podle záložky
+        on_alerts = state["alerts_tab"] == "alerts"
+        mark_active(alerts_tab_buttons, state["alerts_tab"], "active")
+        alerts_toolbar.set_visibility(on_alerts)
+        alerts_list.set_visibility(on_alerts)
+        alert_search.set_visibility(on_alerts and state["alert_search_open"])
+        log_toolbar.set_visibility(not on_alerts)
+        alert_log_list.set_visibility(not on_alerts)
+
+    def toggle_alert_search() -> None:
+        # Pole hledání pod lištou; zavření hledání zruší i filtr
+        state["alert_search_open"] = not state["alert_search_open"]
+        if not state["alert_search_open"]:
+            alert_search.value = ""
+        paint_alerts_tab()
+        if state["alert_search_open"]:
+            alert_search.run_method("focus")
+
+    def make_alert_sort(sort: str):
+        # Volba řazení seznamu alertů (pamatuje se v nastavení)
+        async def _handler() -> None:
+            state["alerts_sort"] = sort
+            render_alerts_list()
+            await cache.set_setting("alerts_sort", sort)
+
+        return _handler
+
+    # Potvrzovací texty hromadných akcí nabídky ⋯ (mazání se nejdřív potvrdí)
+    BULK_ALERT_CONFIRMS = {
+        "remove_inactive": "Smazat všechny neaktivní alerty",
+        "remove_all": "Smazat všechny alerty",
+    }
+
+    def make_bulk_alerts(action: str):
+        # Spuštění / pozastavení proběhne hned, mazání až po potvrzení
+        async def _handler() -> None:
+            confirm_text = BULK_ALERT_CONFIRMS.get(action)
+            if confirm_text:
+                state["alerts_bulk"] = action
+                alerts_confirm_text.text = f"{confirm_text}? Akci nelze vrátit."
+                alerts_confirm_dialog.open()
+            else:
+                await run_bulk_alerts(action)
+
+        return _handler
+
+    async def run_bulk_alerts(action: str) -> None:
+        """Provede hromadnou akci nad alerty (cache.bulk_alerts) a přenačte engine."""
+        count = await cache.bulk_alerts(action)
+        await alert_engine.reload()
+        show_status(f"Hromadná akce: {plural(count, 'alert', 'alerty', 'alertů')}.")
+
+    async def submit_alerts_confirm() -> None:
+        alerts_confirm_dialog.close()
+        await run_bulk_alerts(state.get("alerts_bulk", ""))
+
+    async def toggle_right_panel(panel: str) -> None:
+        """Tlačítko pravé lišty: zobrazí panel, opětovný klik na aktivní ho skryje."""
+        state["right_panel"] = "" if state["right_panel"] == panel else panel
+        await cache.set_setting("right_panel", state["right_panel"])
+        paint_right_panel()
+        await render_alerts_panel()
+
+    def paint_right_panel() -> None:
+        # Viditelnost panelu a jeho sekcí, zvýraznění tlačítek pravé lišty
+        current = state["right_panel"]
+        right_panel.set_visibility(bool(current))
+        watchlist_section.set_visibility(current == "watchlist")
+        alerts_section.set_visibility(current == "alerts")
+        mark_active(right_buttons, current, "active")
+        paint_alerts_tab()
 
     async def open_alert_for_chart() -> None:
-        # Tlačítko Alert v liště: alert na poslední cenu zobrazeného symbolu
+        # Tlačítko Alert v liště / + v panelu: alert na poslední cenu zobrazeného symbolu
         await open_alert_dialog()
 
     def on_alert_event(event: dict) -> None:
@@ -2172,7 +2352,7 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
         event_type = event.get("type")
         if event_type == "log_changed":
             # Nový záznam logu mění jen otevřený log (seznam ani čáry ne)
-            if alerts_dialog.value:
+            if alerts_visible():
                 background_tasks.create(render_alert_log())
             return
         if event_type == "fired":
@@ -2188,6 +2368,9 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
                     )
                 if event.get("sound") and panes:
                     active().chart.play_sound()
+            # Log obnoví následná událost log_changed
+            background_tasks.create(refresh_alerts_ui(with_log=False))
+            return
         background_tasks.create(refresh_alerts_ui())
 
     # ---------- rozložení více grafů (Layout setup jako v TradingView) ----------
@@ -2481,15 +2664,10 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
                 ):
                     template_menu = ui.menu().classes("tpl-set-menu")
                 template_quick = ui.row().classes("tpl-quick")
-            # Alerty: vytvoření alertu pro graf a správa alertů s počtem aktivních
+            # Alert: vytvoření alertu pro graf (seznam alertů je v pravém panelu)
             ui.button("Alert", icon="alarm_add", color=None, on_click=open_alert_for_chart).props(
                 "flat dense no-caps"
             ).classes("topbar-btn").tooltip("Vytvořit alert pro aktuální symbol")
-            with ui.button(icon="notifications", color=None, on_click=open_alerts_dialog).props(
-                "flat dense round"
-            ).classes("topbar-btn").tooltip("Alerty a jejich log"):
-                alerts_badge = ui.badge("0").props("floating").classes("alerts-badge")
-                alerts_badge.set_visibility(False)
             source_badge = ui.badge("—").classes("source-badge")
             # Layout setup jako v TradingView: počet a uspořádání grafů, synchronizace
             layout_items: dict = {}
@@ -2523,20 +2701,6 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
                 "settings-button"
             )
         with ui.row().classes("main-area w-full"):
-            with ui.column().classes("watchlist-panel"):
-                with ui.row().classes("watchlist-header w-full"):
-                    # Název aktivního seznamu s nabídkou seznamů (jako v TradingView)
-                    with ui.button("Watchlist", color=None).props(
-                        "flat dense no-caps icon-right=expand_more"
-                    ).classes("watchlist-title") as watchlist_button:
-                        watchlist_menu = ui.menu().classes("wl-menu")
-                    ui.space()
-                    ui.button(icon="playlist_add", on_click=watchlist_add_current).props(
-                        "flat dense size=sm"
-                    ).classes("watch-add")
-                # Rychlé přepínání seznamů (kulatá tlačítka s iniciálou názvu)
-                watchlist_quick = ui.row().classes("wl-quick w-full")
-                watchlist_body = ui.column().classes("watchlist-body w-full")
             with ui.column().classes("content-col"):
                 with ui.row().classes("chart-area w-full"):
                     with ui.column().classes("drawing-toolbar"):
@@ -2600,6 +2764,96 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
                             for tz_value, tz_label in timezone_options():
                                 timezone_items[tz_value] = ui.menu_item(tz_label, on_click=make_timezone_click(tz_value))
                     timezone_button.tooltip("Časové pásmo grafu")
+            # Pravý panel jako v TradingView: obsah podle tlačítka pravé lišty
+            # (Watchlist / Alerty); opětovný klik na aktivní tlačítko panel skryje
+            with ui.column().classes("right-panel") as right_panel:
+                with ui.column().classes("watchlist-panel w-full") as watchlist_section:
+                    with ui.row().classes("watchlist-header w-full"):
+                        # Název aktivního seznamu s nabídkou seznamů (jako v TradingView)
+                        with ui.button("Watchlist", color=None).props(
+                            "flat dense no-caps icon-right=expand_more"
+                        ).classes("watchlist-title") as watchlist_button:
+                            watchlist_menu = ui.menu().classes("wl-menu")
+                        ui.space()
+                        ui.button(icon="playlist_add", on_click=watchlist_add_current).props(
+                            "flat dense size=sm"
+                        ).classes("watch-add").tooltip("Přidat symbol grafu do seznamu")
+                    # Rychlé přepínání seznamů (kulatá tlačítka s iniciálou názvu)
+                    watchlist_quick = ui.row().classes("wl-quick w-full")
+                    watchlist_body = ui.column().classes("watchlist-body w-full")
+                with ui.column().classes("alerts-panel w-full") as alerts_section:
+                    # Přepínač Alerts / Log (log s počtem záznamů) jako v TradingView
+                    with ui.row().classes("alerts-switch w-full"):
+                        alerts_tab_buttons = {
+                            "alerts": ui.button("Alerty", color=None, on_click=lambda: set_alerts_tab("alerts")).props(
+                                "flat dense no-caps"
+                            ).classes("alerts-switch-btn"),
+                        }
+                        with ui.button(color=None, on_click=lambda: set_alerts_tab("log")).props(
+                            "flat dense no-caps"
+                        ).classes("alerts-switch-btn") as log_switch_button:
+                            ui.label("Log")
+                            log_badge = ui.label("0").classes("alerts-count-badge")
+                            log_badge.set_visibility(False)
+                        alerts_tab_buttons["log"] = log_switch_button
+                    # Lišta seznamu alertů: nový alert, hledání, řazení, hromadné akce
+                    with ui.row().classes("alerts-toolbar w-full") as alerts_toolbar:
+                        ui.button(icon="add", color=None, on_click=open_alert_for_chart).props(
+                            "flat dense round size=sm"
+                        ).classes("alert-btn").tooltip("Vytvořit alert pro aktuální symbol")
+                        ui.space()
+                        ui.button(icon="search", color=None, on_click=toggle_alert_search).props(
+                            "flat dense round size=sm"
+                        ).classes("alert-btn").tooltip("Hledat v alertech")
+                        with ui.button(icon="sort", color=None).props("flat dense round size=sm").classes(
+                            "alert-btn"
+                        ).tooltip("Řazení alertů"):
+                            with ui.menu().classes("alerts-menu"):
+                                alert_sort_items = {
+                                    sort_key: ui.menu_item(sort_label, on_click=make_alert_sort(sort_key))
+                                    for sort_key, sort_label in ALERT_SORTS.items()
+                                }
+                        with ui.button(icon="more_horiz", color=None).props("flat dense round size=sm").classes(
+                            "alert-btn"
+                        ).tooltip("Další akce"):
+                            with ui.menu().classes("alerts-menu"):
+                                ui.menu_item("Spustit všechny neaktivní", on_click=make_bulk_alerts("restart_inactive"))
+                                ui.menu_item("Pozastavit všechny", on_click=make_bulk_alerts("stop_all"))
+                                ui.separator()
+                                ui.menu_item(
+                                    "Smazat všechny neaktivní", on_click=make_bulk_alerts("remove_inactive")
+                                ).classes("wl-danger")
+                                ui.menu_item("Smazat všechny", on_click=make_bulk_alerts("remove_all")).classes(
+                                    "wl-danger"
+                                )
+                    # Lišta logu: vymazání logu
+                    with ui.row().classes("alerts-toolbar w-full") as log_toolbar:
+                        ui.space()
+                        with ui.button(icon="more_horiz", color=None).props("flat dense round size=sm").classes(
+                            "alert-btn"
+                        ).tooltip("Další akce"):
+                            with ui.menu().classes("alerts-menu"):
+                                ui.menu_item("Vymazat log", on_click=clear_alert_log).classes("wl-danger")
+                    alert_search = ui.input(placeholder="Hledat").props(
+                        "dense outlined clearable debounce=250"
+                    ).classes("alert-search w-full")
+                    alert_search.on_value_change(lambda _event: render_alerts_list())
+                    alert_search.set_visibility(False)
+                    alerts_list = ui.column().classes("alerts-list w-full")
+                    alert_log_list = ui.column().classes("alerts-list w-full")
+            # Svislá lišta úplně vpravo: přepínání obsahu pravého panelu
+            with ui.column().classes("right-bar"):
+                right_buttons = {}
+                for panel, icon, tooltip in (("watchlist", "format_list_bulleted", "Watchlist"), ("alerts", "alarm", "Alerty")):
+                    with ui.button(color=None, on_click=lambda panel=panel: toggle_right_panel(panel)).props(
+                        "flat dense"
+                    ).classes("right-bar-btn").tooltip(tooltip) as bar_button:
+                        ui.icon(icon)
+                        # Počet aktivních alertů na tlačítku Alerty
+                        if panel == "alerts":
+                            alerts_badge = ui.badge("0").props("floating").classes("alerts-badge")
+                            alerts_badge.set_visibility(False)
+                    right_buttons[panel] = bar_button
 
     # Dialog názvu seznamu symbolů (nový / přejmenování / kopie)
     with ui.dialog() as watchlist_name_dialog, ui.card().classes("tpl-name-dialog"):
@@ -2615,6 +2869,13 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
         watchlist_confirm_text = ui.label("")
         with ui.row().classes("tv-settings-actions w-full"):
             settings_buttons(watchlist_confirm_dialog, submit_watchlist_confirm)
+
+    # Potvrzení hromadného mazání alertů (nabídka ⋯ v panelu Alerty)
+    with ui.dialog() as alerts_confirm_dialog, ui.card().classes("tpl-name-dialog"):
+        settings_header(alerts_confirm_dialog, "Alerty")
+        alerts_confirm_text = ui.label("")
+        with ui.row().classes("tv-settings-actions w-full"):
+            settings_buttons(alerts_confirm_dialog, submit_alerts_confirm)
 
     # Dialog pro výběr stickeru (emoji)
     with ui.dialog() as sticker_dialog, ui.card().classes("settings-dialog"):
@@ -2910,23 +3171,6 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
     alert_webhook_url.bind_visibility_from(alert_notify_webhook, "value")
     alert_expiration.bind_visibility_from(alert_open_ended, "value", backward=lambda value: not value)
 
-    # Správa alertů: seznam (pozastavit, upravit, smazat) a log spuštění
-    with ui.dialog() as alerts_dialog, ui.card().classes("tv-settings alerts-dialog"):
-        settings_header(alerts_dialog, "Alerty")
-        with ui.tabs().classes("alerts-tabs w-full") as alerts_tabs:
-            alerts_tab = ui.tab("Alerty")
-            log_tab = ui.tab("Log")
-        with ui.tab_panels(alerts_tabs, value=alerts_tab).classes("alerts-panels w-full"):
-            with ui.tab_panel(alerts_tab):
-                alerts_list = ui.column().classes("alerts-list w-full")
-            with ui.tab_panel(log_tab):
-                alert_log_list = ui.column().classes("alerts-list w-full")
-                with ui.row().classes("w-full"):
-                    ui.space()
-                    ui.button("Vymazat log", icon="delete_sweep", color=None, on_click=clear_alert_log).props(
-                        "flat dense no-caps"
-                    )
-
     # ---------- vazby ----------
     timeframe_toggle.on_value_change(lambda event: set_timeframe(event.value))
     theme_switch.on_value_change(lambda event: toggle_theme(bool(event.value)))
@@ -2936,6 +3180,8 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
         panes.append(create_pane(pane_config))
     paint_layout()
     render_indicator_templates()
+    # Pravý panel z minula (Watchlist / Alerty / skrytý)
+    paint_right_panel()
 
     # Průběžné vyzvedávání událostí všech grafů (viz process_chart_events)
     ui.timer(0.5, process_chart_events)
