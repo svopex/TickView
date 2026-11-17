@@ -215,6 +215,72 @@ class IndicatorsTest(unittest.TestCase):
         self.assertFalse(loaded[1]["style"]["tables"])
         self.assertFalse(loaded[1]["visibility"]["days"]["enabled"])
 
+    def test_plot_style_normalization(self) -> None:
+        from tickview.logic.styles import normalize_indicator_style, normalize_plot_style
+
+        # Výstup si drží jen platné změny; bool není tloušťka, neznámý druh se zahodí
+        self.assertEqual(
+            normalize_plot_style({"visible": False, "color": "#FF0000", "width": True, "lineStyle": "wavy",
+                                  "type": "cross", "priceLine": True}),
+            {"visible": False, "priceLine": True, "color": "#ff0000"},
+        )
+        style = normalize_indicator_style({"precision": 9, "plots": {"A": {"width": 3}, "B": {"width": 7}, 1: {}}})
+        self.assertEqual((style["precision"], style["plots"]), (None, {"A": {"width": 3}}))
+        self.assertTrue(style["labels_on_scale"] and style["values_in_status"])
+        self.assertEqual(normalize_indicator_style({"precision": 0})["precision"], 0)
+
+    def test_plot_style_payload(self) -> None:
+        from tickview.indicators.api import Line, Result
+        from tickview.indicators.compute import plot_defaults, sample_lines
+        from tickview.indicators.registry import get_indicator
+
+        candles = [make_candle(i * 60_000, close=1 + (i % 7) * 0.1) for i in range(100)]
+        # Styl výstupu SMA: schodovitá čárkovaná čára, cenová linka, bez popisku na ose, přesnost 2
+        spec = {"id": "x", "kind": "sma", "params": {"length": 5}, "style": {
+            "precision": 2, "labels_on_scale": False, "values_in_status": False,
+            "plots": {"SMA": {"type": "step", "width": 3, "lineStyle": "dashed", "color": "#123456",
+                              "priceLine": True}}}}
+        payload = compute_indicators([spec], candles)
+        overlay = payload["overlays"][0]
+        self.assertEqual((overlay["type"], overlay["color"]), ("step", "#123456"))
+        self.assertEqual(
+            {key: overlay["options"][key] for key in ("lineWidth", "lineStyle", "lineType", "priceLineVisible",
+                                                       "lastValueVisible")},
+            {"lineWidth": 3, "lineStyle": 2, "lineType": 1, "priceLineVisible": True, "lastValueVisible": False},
+        )
+        self.assertEqual((payload["groups"][0]["precision"], payload["groups"][0]["values"]), (2, False))
+        # MACD: histogram jako sloupce jedné barvy, skrytý signál
+        macd = {"id": "m", "kind": "macd", "params": {"fast": 12, "slow": 26, "signal": 9}, "style": {
+            "plots": {"Histogram": {"type": "columns", "color": "#00ff00"}, "Signál": {"visible": False}}}}
+        series = {item["name"]: item for item in compute_indicators([macd], candles)["panes"][0]["series"]}
+        self.assertEqual((series["Histogram"]["type"], series["Histogram"]["options"]["color"]), ("columns", "#00ff00"))
+        self.assertNotIn("color", series["Histogram"]["data"][-1])
+        self.assertFalse(series["Signál"]["visible"])
+        # Bez změn se histogram barví podle znaménka
+        plain = compute_indicators([{**macd, "style": None}], candles)["panes"][0]["series"][0]
+        self.assertIn("color", plain["data"][-1])
+        # Mezery uvnitř řady: Line je přemostí, Line with breaks ne; začátek zůstane prázdný
+        indicator = get_indicator("sma")
+        original = indicator.compute
+        values = [float("nan")] * 3 + [1.0, float("nan"), 3.0] + [4.0] * 94
+        indicator.compute = lambda df, params, ctx: Result(lines=[Line("SMA", values)])
+        try:
+            line = compute_indicators([{"id": "g", "kind": "sma", "params": {}}], candles)["overlays"][0]
+            broken = compute_indicators([{"id": "g", "kind": "sma", "params": {},
+                                          "style": {"plots": {"SMA": {"type": "linebr"}}}}], candles)["overlays"][0]
+        finally:
+            indicator.compute = original
+        self.assertEqual((line["data"][0], line["data"][4]["value"]), ({"time": 0}, 2.0))
+        self.assertNotIn("value", broken["data"][4])
+        # Výstupy pro záložku Style a jejich výchozí vzhled (SAR body, Supertrend s přerušením)
+        self.assertEqual([item.name for item in sample_lines(get_indicator("macd"), {"fast": 12, "slow": 26,
+                                                                                       "signal": 9})],
+                         ["Histogram", "MACD", "Signál"])
+        sar = sample_lines(get_indicator("psar"), {"af": 0.02, "max_af": 0.2})[0]
+        self.assertEqual(plot_defaults(sar, "#2962ff")["type"], "circles")
+        histogram = Line("H", [], None, "histogram")
+        self.assertIsNone(plot_defaults(histogram, "#2962ff")["color"])
+
     def test_series_keep_candle_count(self) -> None:
         candles = [make_candle(i * 60_000, close=1 + (i % 7) * 0.1) for i in range(100)]
         payload = compute_indicators(self.SPECS, candles)

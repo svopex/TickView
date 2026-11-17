@@ -569,7 +569,10 @@ window.TickViewChart = (function () {
     row.appendChild(el('span', 'legend-ind-title', group.title));
     const values = [];
     for (const spec of series) {
-      const value = el('span', 'legend-ind-val');
+      // Hodnota výstupu se v legendě neukáže při vypnutém „Values in status line“
+      // nebo u skrytého výstupu (záložka Style)
+      const hidden = group.values === false || spec.visible === false;
+      const value = el('span', 'legend-ind-val' + (hidden ? ' legend-ind-val-hidden' : ''));
       value.style.color = spec.color || '';
       row.appendChild(value);
       values.push(value);
@@ -610,7 +613,7 @@ window.TickViewChart = (function () {
       } else {
         s.legendEls.indicators.appendChild(built.row);
       }
-      s.indicatorRows.push({ group: group.id, values: built.values });
+      s.indicatorRows.push({ group: group.id, values: built.values, precision: group.precision });
     }
     renderIndicatorValues(s, null);
   }
@@ -623,7 +626,7 @@ window.TickViewChart = (function () {
       const maps = s.indicatorValues.get(row.group) || [];
       row.values.forEach((node, index) => {
         const value = maps[index] && at !== null ? maps[index].get(at) : undefined;
-        node.textContent = value === undefined ? '' : formatIndicatorValue(s, value);
+        node.textContent = value === undefined ? '' : formatIndicatorValue(s, value, row.precision);
       });
     }
   }
@@ -634,11 +637,45 @@ window.TickViewChart = (function () {
     return magnitude >= 10 ? 2 : Math.max(2, s.priceDecimals || 2);
   }
 
-  // Hodnota indikátoru: velké hodnoty (OBV) zkráceně, ostatní s indicatorDecimals
-  function formatIndicatorValue(s, value) {
+  // Hodnota indikátoru: s přesností ze záložky Style (Precision), jinak velké
+  // hodnoty (OBV) zkráceně a ostatní s indicatorDecimals
+  function formatIndicatorValue(s, value, precision) {
+    if (precision !== null && precision !== undefined) return formatFixed(value, precision);
     const magnitude = Math.abs(value);
     if (magnitude >= 1e5) return (value < 0 ? '−' : '') + formatVolume(magnitude);
     return formatFixed(value, indicatorDecimals(s, magnitude));
+  }
+
+  // Krytí výplně plochy (Area) indikátoru vůči barvě čáry
+  const AREA_FILL_ALPHA = 0.3;
+
+  // Formát cen série indikátoru: přesnost ze záložky Style, jinak výchozí počet míst
+  function indicatorPriceFormat(precision, fallback) {
+    const digits = precision !== null && precision !== undefined ? precision : fallback;
+    return { type: 'price', precision: digits, minMove: Math.pow(10, -digits) };
+  }
+
+  // Největší absolutní hodnota sérií panelu (přesnost cenové osy panelu)
+  function paneMagnitude(pane) {
+    let magnitude = 0;
+    for (const spec of pane.series) {
+      for (const point of spec.data) {
+        if (point.value !== undefined) magnitude = Math.max(magnitude, Math.abs(point.value));
+      }
+    }
+    return magnitude;
+  }
+
+  // Formát cen sérií panelu: Precision ze záložky Style, jinak podle velikosti
+  // hodnot (MACD na forexu potřebuje 5 míst, RSI 2)
+  function panePriceFormat(s, pane) {
+    return indicatorPriceFormat(pane.precision, indicatorDecimals(s, paneMagnitude(pane)));
+  }
+
+  // Formát cen overlay série: Precision skupiny, jinak přesnost instrumentu
+  function overlayPriceFormat(s, payload, groupId) {
+    const group = (payload.groups || []).find((g) => g.id === groupId);
+    return indicatorPriceFormat(group ? group.precision : null, s.priceDecimals || 2);
   }
 
   // Zapamatuje si hodnoty sérií indikátorů podle času (pro legendu);
@@ -1798,30 +1835,31 @@ window.TickViewChart = (function () {
     s.paneUnderPointer = null;
   }
 
-  // Vytvoří sérii indikátoru (čára nebo histogram) v daném grafu; volby
-  // série z payloadu (styl čáry, tečky u SAR…) mají přednost před výchozími
-  function createIndicatorSeries(chart, spec, visible) {
-    if (spec.type === 'histogram') {
-      return chart.addHistogramSeries({
-        priceFormat: { type: 'price' },
-        lastValueVisible: false,
-        priceLineVisible: false,
-        visible: visible,
-      });
+  // Volby série indikátoru: volby z payloadu (barva, tloušťka, styl, popisek na
+  // ose, cenová linka podle záložky Style), viditelnost skupiny i výstupu a formát cen
+  function indicatorSeriesOptions(spec, visible, priceFormat) {
+    const options = Object.assign({}, spec.options || {}, { visible: visible && spec.visible !== false });
+    // Plocha: výplň z barvy čáry, průhlednost klesá k dolnímu okraji
+    if (spec.series === 'area' && spec.color) {
+      options.topColor = withAlpha(spec.color, AREA_FILL_ALPHA);
+      options.bottomColor = withAlpha(spec.color, 0);
     }
-    return chart.addLineSeries(
-      Object.assign(
-        {
-          color: spec.color,
-          lineWidth: 1,
-          priceLineVisible: false,
-          lastValueVisible: false,
-          crosshairMarkerVisible: false,
-          visible: visible,
-        },
-        spec.options || {}
-      )
-    );
+    if (priceFormat) options.priceFormat = priceFormat;
+    return options;
+  }
+
+  // Vytvoří sérii indikátoru v daném grafu podle druhu série z payloadu:
+  // sloupce (Histogram, Columns), plocha (Area) nebo čára (čáry, schody, body);
+  // starší payload bez druhu série rozlišuje jen histogram a čáru
+  function createIndicatorSeries(chart, spec, visible, priceFormat) {
+    const options = indicatorSeriesOptions(spec, visible, priceFormat);
+    const kind = spec.series || (spec.type === 'histogram' ? 'histogram' : 'line');
+    if (kind === 'histogram') {
+      return chart.addHistogramSeries(Object.assign({ lastValueVisible: false, priceLineVisible: false }, options));
+    }
+    const base = { lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false };
+    if (kind === 'area') return chart.addAreaSeries(Object.assign(base, options));
+    return chart.addLineSeries(Object.assign(base, { color: spec.color }, options));
   }
 
   // Viditelnost skupiny indikátoru podle payloadu (skrytý = oko v legendě)
@@ -1849,24 +1887,13 @@ window.TickViewChart = (function () {
       timeScale: { borderColor: theme.border, visible: false },
     });
 
-    // Přesnost cenové osy panelu podle velikosti hodnot (MACD na forexu
-    // potřebuje 5 míst, RSI 2)
-    let magnitude = 0;
-    for (const spec of pane.series) {
-      for (const point of spec.data) {
-        if (point.value !== undefined) magnitude = Math.max(magnitude, Math.abs(point.value));
-      }
-    }
-    const precision = indicatorDecimals(s, magnitude);
-    const priceFormat = { type: 'price', precision: precision, minMove: Math.pow(10, -precision) };
-
+    const priceFormat = panePriceFormat(s, pane);
     const created = [];
     let baseSeries = null;
     for (const spec of pane.series) {
-      const series = createIndicatorSeries(chart, spec, visible);
-      series.applyOptions({ priceFormat: priceFormat });
+      const series = createIndicatorSeries(chart, spec, visible, priceFormat);
       series.setData(spec.data);
-      if (!baseSeries && spec.type !== 'histogram') baseSeries = series;
+      if (!baseSeries && spec.series !== 'histogram' && spec.type !== 'histogram') baseSeries = series;
       created.push(series);
     }
 
@@ -2026,22 +2053,29 @@ window.TickViewChart = (function () {
   // vrací false, když zkrácený payload k jiné sadě indikátorů nelze použít
   function applyIndicatorPayload(s, payload, structure, lastTime) {
     if (structure === s.indicatorStructure) {
-      const apply = (series, spec, visible) => {
+      const apply = (series, spec, visible, priceFormat) => {
         if (payload.tail) {
           spec.data.filter((point) => point.time >= lastTime).forEach((point) => series.update(point));
           return;
         }
         series.setData(spec.data);
-        const options = { visible: visible };
-        if (spec.type !== 'histogram' && spec.color) options.color = spec.color;
-        series.applyOptions(options);
+        // Volby ze záložky Style (barva, tloušťka, popisky, přesnost…) se mění bez přestavby
+        series.applyOptions(indicatorSeriesOptions(spec, visible, priceFormat));
       };
       (payload.overlays || []).forEach((overlay, index) =>
-        apply(s.overlaySeries[index], overlay, groupVisible(payload, overlay.group))
+        apply(
+          s.overlaySeries[index],
+          overlay,
+          groupVisible(payload, overlay.group),
+          payload.tail ? null : overlayPriceFormat(s, payload, overlay.group)
+        )
       );
       for (const pane of payload.panes || []) {
         const existing = s.panesMap.get(pane.paneId);
-        pane.series.forEach((spec, index) => apply(existing.series[index], spec, groupVisible(payload, pane.group)));
+        const priceFormat = payload.tail ? null : panePriceFormat(s, pane);
+        pane.series.forEach((spec, index) =>
+          apply(existing.series[index], spec, groupVisible(payload, pane.group), priceFormat)
+        );
       }
     } else if (payload.tail) {
       // Zkrácený payload k jiné sadě indikátorů (mezitím změněné) nelze použít
@@ -2082,7 +2116,12 @@ window.TickViewChart = (function () {
       const index = perGroup.get(overlay.group) || 0;
       perGroup.set(overlay.group, index + 1);
       s.overlayMeta.push({ group: overlay.group, index: index });
-      const series = createIndicatorSeries(s.chart, overlay, groupVisible(payload, overlay.group));
+      const series = createIndicatorSeries(
+        s.chart,
+        overlay,
+        groupVisible(payload, overlay.group),
+        overlayPriceFormat(s, payload, overlay.group)
+      );
       series.setData(overlay.data);
       s.overlaySeries.push(series);
     }

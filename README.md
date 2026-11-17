@@ -286,8 +286,21 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   v titulku panelu) má při najetí myší oko (skrýt/zobrazit), ozubené kolečko
   (Settings) a křížek (odebrat). Dialog Settings má u každého indikátoru
   jako v TradingView záložky Inputs, Style a Visibility; přepnutí záložky
-  nemění velikost okna (zvětší se jen, když se obsah nevejde). Style: barva (jen
-  u indikátorů s hlavní barvou), Graphic objects – Lines (úsečky indikátoru,
+  nemění velikost okna (zvětší se jen, když se obsah nevejde). Style jako
+  v TradingView: u každého výstupu (čáry, histogramu) zaškrtávátko zobrazení,
+  tlačítko barvy (paleta, průhlednost, Thickness 1–4 a Line style plná /
+  čárkovaná / tečkovaná) a tlačítko druhu vykreslení s přepínačem Price line
+  (vodorovná linka u poslední hodnoty) a volbou Line, Line with breaks, Step
+  line, Step line with breaks, Step line with diamonds (body jsou kulaté),
+  Histogram, Area, Area with breaks, Columns a Circles (Line, Step line
+  a Area mezery bez hodnot přemostí, varianty „with breaks“ je přeruší; Cross
+  Lightweight Charts neumí). Output values: Precision (Default nebo 0–8
+  desetinných míst; platí pro hodnoty v legendě a pro osu panelu – popisky
+  čar přes hlavní graf ukazuje Lightweight Charts vždy v přesnosti
+  instrumentu), Labels on price scale (popisek poslední hodnoty na cenové ose,
+  výchozí zapnuto) a Values in status line (hodnoty v legendě). Výstupy
+  a Output values se ukážou jen u indikátorů, které čáry vrací (Svopex TTW
+  je nemá). Dál Graphic objects – Lines (úsečky indikátoru,
   např. trendové linky Svopex TTW) a Tables (tabulka scanneru) jen
   u indikátorů, které je kreslí, a Input values – Inputs in status line
   (vypnuté = v legendě jen název bez hodnot vstupů). Visibility: timeframy,
@@ -309,7 +322,10 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   a pandas/numpy, dostane svíčky, parametry a `Context` (druh instrumentu,
   tick, pásmo burzy, timeframe) a vrátí `Result`: čáry, úrovně panelu,
   úsečky, značky u svíček a signály pro scanner (indikátor s úsečkami
-  nastaví `has_lines = True`, aby Style nabídl přepínač Lines). Nový indikátor = nový
+  nastaví `has_lines = True`, aby Style nabídl přepínač Lines). Výchozí druh
+  vykreslení čáry určuje `Line.type` (`"line"`, `"histogram"` nebo jiný druh
+  záložky Style, např. `"linebr"`, `"circles"`), výchozí tloušťku a styl volby
+  `lineWidth` a `lineStyle`; uživatel je v záložce Style změní. Nový indikátor = nový
   adresář, odebrání = smazání adresáře. Chyba importu nebo jiná verze
   rozhraní (`API_VERSION`) se zapíše do logu a ukáže v kategorii Vlastní,
   ostatní indikátory fungují dál.
@@ -531,7 +547,9 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   vlastních z `custom/<název>/indicator.py` s izolací chyb
 - `tickview/indicators/compute.py` – instance indikátorů (kontrola, načtení
   uložených, zachování nenačtených), kontext výpočtu (tick, druh
-  instrumentu) a payload pro graf (čáry, panely, úsečky, značky, legenda)
+  instrumentu), payload pro graf (čáry, panely, úsečky, značky, legenda)
+  se vzhledem výstupů podle záložky Style a výstupy indikátoru pro záložku
+  Style (výpočet nad umělými svíčkami)
 - `tickview/indicators/custom/svopex_ttw/` – indikátor Svopex TTW
   (`indicator.py`) a verze jeho Pine skriptu (`pine/`)
 - `tickview/logic/scanner.py` – logika scanneru: úlohy ze vstupů instancí
@@ -577,6 +595,10 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   šablon „Template“
 - `tickview/ui/param_form.py` – formulář parametrů indikátoru ze schématu
   (záložka Inputs v Settings indikátoru, pole symbolu s hledáním)
+- `tickview/ui/plot_style_fields.py` – výstupy a Output values v záložce
+  Style Settings indikátoru (zobrazení, druh vykreslení, Price line, přesnost)
+- `tickview/ui/plot_style_button.py` + `plot_style_button.js` – tlačítko
+  stylu výstupu (barva s průhledností, Thickness, Line style)
 - `tickview/ui/visibility_fields.py` – pole záložky Visibility (kresby
   i indikátory)
 - `tickview/ui/reminders_dialog.py` – dialog Časové připomínky
@@ -599,7 +621,8 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   nástrojů, styl svíček; více grafů na stránce – aktivní graf, společná
   lišta a klávesnice, synchronizace crosshairu a času)
 - `tickview/ui/static/color_picker.js` – výběr barvy ve stylu TradingView
-  (paleta, vlastní barvy, průhlednost)
+  (paleta, vlastní barvy, průhlednost, u výstupu indikátoru i tloušťka
+  a styl čáry)
 - `tickview/ui/static/dialog_tabs.js` – stálá velikost dialogů Settings
   při přepínání záložek
 - `tickview/ui/static/style.css` – styly UI

@@ -10,6 +10,7 @@ indikátoru nastavení nezmizí.
 import json
 import logging
 import math
+import random
 import uuid
 from typing import Optional
 
@@ -17,14 +18,25 @@ import pandas as pd
 
 from tickview.indicators.api import (
     DOWN_COLOR,
+    LINE_DASHED,
+    LINE_DOTTED,
+    LINE_SOLID,
     PALETTE,
     UP_COLOR,
     Context,
     Indicator,
+    Line,
     Result,
 )
 from tickview.indicators.registry import get_indicator
-from tickview.logic.styles import normalize_color, normalize_indicator_style, normalize_visibility, timeframe_visible
+from tickview.logic.styles import (
+    PLOT_TYPES,
+    PLOT_WIDTHS,
+    normalize_color,
+    normalize_indicator_style,
+    normalize_visibility,
+    timeframe_visible,
+)
 from tickview.providers.base import TIMEFRAME_MS, Candle
 
 logger = logging.getLogger(__name__)
@@ -35,6 +47,21 @@ MIN_HISTORY_BARS = 300
 # Kolik posledních bodů každé série posílá živý přepočet (předchozí svíčka se
 # mohla uzavřít, poslední je rozpracovaná; starší hodnoty se nemění)
 TAIL_POINTS = 3
+
+# Styl čáry v API (LINE_*) <-> styl výstupu v záložce Style
+LINE_STYLE_NAMES = {LINE_SOLID: "solid", LINE_DOTTED: "dotted", LINE_DASHED: "dashed"}
+LINE_STYLE_VALUES = {name: value for value, name in LINE_STYLE_NAMES.items()}
+# Druh série Lightweight Charts podle druhu vykreslení (ostatní druhy = "line");
+# JS podle něj sérii vytvoří
+PLOT_SERIES = {"histogram": "histogram", "columns": "histogram", "area": "area", "areabr": "area"}
+# Druhy, které mezery bez hodnoty přemostí: lineárně (čára, plocha), nebo
+# předchozí hodnotou (schodovitá čára); schodovité čáry a druhy s body
+LINEAR_BRIDGED_PLOT_TYPES = ("line", "area")
+STEP_BRIDGED_PLOT_TYPES = ("step", "stepdiamond")
+STEP_PLOT_TYPES = ("step", "stepbr", "stepdiamond")
+POINT_PLOT_TYPES = ("circles", "stepdiamond")
+# Počet umělých svíček, nad kterými se zjišťují výstupy indikátoru pro záložku Style
+SAMPLE_BARS = 1200
 
 
 # ---------- instance ----------
@@ -267,25 +294,140 @@ def _points(times, values) -> list[dict]:
     ]
 
 
-def _series_payload(line, color: str, times) -> dict:
-    """Jedna série pro JS graf: čára (barva instance, není-li vlastní) nebo histogram podle znaménka."""
-    points = _points(times, line.values)
-    if line.type == "histogram":
-        # Histogram obarvený podle znaménka (prázdné body zůstanou bez barvy)
-        points = [
-            {**point, "color": UP_COLOR if point["value"] >= 0 else DOWN_COLOR} if "value" in point else point
-            for point in points
-        ]
-        series_color = line.color
+def plot_defaults(line: Line, color: str) -> dict:
+    """Výchozí vzhled výstupu indikátoru (řádek záložky Style) podle jeho deklarace.
+
+    Parametry:
+        line: výstup indikátoru (Line).
+        color: barva instance (pro výstup bez vlastní barvy).
+
+    Vrací {"visible", "color", "width", "lineStyle", "type", "priceLine"};
+    histogram bez vlastní barvy má color None (barví se podle znaménka).
+    """
+    options = line.options or {}
+    plot_type = line.type if line.type in PLOT_TYPES else "line"
+    width = options.get("lineWidth", 1)
+    return {
+        "visible": True,
+        "color": line.color if PLOT_SERIES.get(plot_type) == "histogram" else line.color or color,
+        "width": width if width in PLOT_WIDTHS else 1,
+        "lineStyle": LINE_STYLE_NAMES.get(options.get("lineStyle", LINE_SOLID), "solid"),
+        "type": plot_type,
+        "priceLine": False,
+    }
+
+
+def resolve_plot(line: Line, color: str, changes: Optional[dict]) -> dict:
+    """Vzhled výstupu: výchozí podle deklarace (plot_defaults) + změny ze záložky Style.
+
+    Parametry:
+        line: výstup indikátoru.
+        color: barva instance.
+        changes: uložené změny výstupu (normalize_plot_style) nebo None.
+    """
+    return {**plot_defaults(line, color), **(changes or {})}
+
+
+def _plot_values(values, plot_type: str):
+    """Hodnoty výstupu podle druhu vykreslení: mezery uvnitř řady přemostí čára a plocha
+    (lineárně) i schodovitá čára (předchozí hodnotou); začátek a konec bez hodnot zůstane prázdný.
+    """
+    if plot_type not in LINEAR_BRIDGED_PLOT_TYPES + STEP_BRIDGED_PLOT_TYPES:
+        return values
+    series = pd.Series(values, dtype="float64")
+    # Řada bez mezer (běžný případ při živém přepočtu) se nepřepočítává
+    if not series.isna().any():
+        return series
+    if plot_type in LINEAR_BRIDGED_PLOT_TYPES:
+        return series.interpolate(limit_area="inside")
+    # Předchozí hodnota jen do poslední platné hodnoty (konec řady zůstane prázdný)
+    return series.ffill().where(series.bfill().notna())
+
+
+def _series_payload(line: Line, plot: dict, instance_color: str, times, labels_on_scale: bool) -> dict:
+    """Jedna série pro JS graf podle vzhledu výstupu (záložka Style).
+
+    Parametry:
+        line: výstup indikátoru.
+        plot: vzhled výstupu (plot_defaults + změny uživatele).
+        instance_color: barva instance (výstup bez barvy, který není histogram).
+        times: časy svíček v s UTC.
+        labels_on_scale: popisek poslední hodnoty na cenové ose (Labels on price scale).
+
+    Vrací {"name", "color", "type", "series", "visible", "options", "data"};
+    series je druh série Lightweight Charts ("line", "area", "histogram"),
+    options její volby pro daný druh vykreslení.
+    """
+    plot_type = plot["type"]
+    series_kind = PLOT_SERIES.get(plot_type, "line")
+    bars = series_kind == "histogram"
+    color = plot["color"] or (None if bars else instance_color)
+    points = _points(times, _plot_values(line.values, plot_type))
+    options: dict = {"priceLineVisible": plot["priceLine"], "lastValueVisible": labels_on_scale}
+    line_style = LINE_STYLE_VALUES[plot["lineStyle"]]
+    if bars:
+        if color:
+            options["color"] = color
+        else:
+            # Histogram obarvený podle znaménka (prázdné body zůstanou bez barvy)
+            points = [
+                {**point, "color": UP_COLOR if point["value"] >= 0 else DOWN_COLOR} if "value" in point else point
+                for point in points
+            ]
+    elif series_kind == "area":
+        # Plocha: čára s výplní k dolnímu okraji (výplň z barvy čáry dopočítá JS graf)
+        options.update(lineColor=color, lineWidth=plot["width"], lineStyle=line_style)
     else:
-        series_color = line.color or color
+        # Čáry a body: volby z deklarace výstupu, nad nimi vzhled ze záložky Style –
+        # schodovitá čára (lineType 1), body bez čáry, kosočtverce schodovité čáry
+        # jako body na čáře (Lightweight Charts kreslí body kulaté)
+        options.update(line.options or {})
+        options.update(
+            color=color,
+            lineWidth=plot["width"],
+            lineStyle=line_style,
+            lineType=1 if plot_type in STEP_PLOT_TYPES else 0,
+            lineVisible=plot_type != "circles",
+            pointMarkersVisible=plot_type in POINT_PLOT_TYPES,
+            pointMarkersRadius=plot["width"] + (0.5 if plot_type == "circles" else 1.5),
+        )
     return {
         "name": line.name,
-        "color": series_color,
-        "type": line.type,
-        "options": line.options,
+        "color": color,
+        "type": plot_type,
+        "series": series_kind,
+        "visible": plot["visible"],
+        "options": options,
         "data": points,
     }
+
+
+def sample_lines(indicator: Indicator, params: dict) -> list[Line]:
+    """Výstupy indikátoru pro záložku Style – výpočet nad umělými svíčkami.
+
+    Záložka Style potřebuje znát výstupy (názvy, barvy, druhy) i na timeframu,
+    kde se indikátor nepočítá; chyba výpočtu = žádné výstupy.
+
+    Parametry:
+        indicator: indikátor.
+        params: parametry instance (počet svíček se řídí i required_bars).
+    """
+    count = max(SAMPLE_BARS, indicator.required_bars(params) + 100)
+    # Náhodná procházka s pevným semínkem (stejné výstupy při každém otevření)
+    rng = random.Random(7)
+    price = 100.0
+    candles = []
+    for index in range(count):
+        open_price = price
+        price = max(1.0, price * (1 + rng.gauss(0, 0.01)))
+        high = max(open_price, price) * (1 + abs(rng.gauss(0, 0.003)))
+        low = min(open_price, price) * (1 - abs(rng.gauss(0, 0.003)))
+        candles.append(Candle(index * 3_600_000, open_price, high, low, price, rng.uniform(100, 1000)))
+    try:
+        return list(indicator.compute(candles_frame(candles), params, make_context("", "", "1h", candles)).lines)
+    except Exception:
+        logger.exception("Výstupy indikátoru %s pro záložku Style nelze zjistit", indicator.id)
+        return []
 
 
 def _finite(*values: float) -> bool:
@@ -320,8 +462,10 @@ def compute_indicators(indicators: list[dict], candles: list[Candle], ctx: Optio
         color = indicator_color(spec, index)
         style = normalize_indicator_style(spec.get("style"))
         title = indicator_title(spec, style)
+        # Skupina pro legendu: přesnost a zobrazení hodnot podle Output values (záložka Style)
         group = {"id": spec["id"], "title": title, "visible": spec.get("visible", True) is not False, "pane": None,
-                 "signals": bool(indicator and indicator.has_signals)}
+                 "signals": bool(indicator and indicator.has_signals), "precision": style["precision"],
+                 "values": style["values_in_status"]}
         groups.append(group)
         if indicator is None or not candles or not timeframe_visible(spec.get("visibility"), ctx.timeframe):
             continue
@@ -333,12 +477,17 @@ def compute_indicators(indicators: list[dict], candles: list[Candle], ctx: Optio
             logger.exception("Výpočet indikátoru %s selhal", spec["kind"])
             group["title"] = f"{title} (chyba výpočtu)"
             continue
-        payloads = [_series_payload(line, color, df["time"]) for line in result.lines]
+        # Vzhled každého výstupu: výchozí podle deklarace + změny ze záložky Style
+        payloads = [
+            _series_payload(line, resolve_plot(line, color, style["plots"].get(line.name)), color, df["time"],
+                            style["labels_on_scale"])
+            for line in result.lines
+        ]
         if payloads and not indicator.overlay:
             pane_id = f"pane-{spec['id']}"
             group["pane"] = pane_id
             panes.append({"paneId": pane_id, "group": spec["id"], "kind": spec["kind"], "title": title,
-                          "series": payloads, "levels": list(result.levels)})
+                          "series": payloads, "levels": list(result.levels), "precision": style["precision"]})
         else:
             overlays.extend({**payload, "group": spec["id"]} for payload in payloads)
         # Úsečky jen se zapnutými Lines (záložka Style) a s platnými souřadnicemi

@@ -85,6 +85,18 @@ _ICON_PATHS: dict[str, str] = {
     "chart_baseline": '<path d="M3 14h22" stroke-dasharray="2 2"/><path d="M4 19l5-8 5 6 5-9 5 4"/>',
     "chart_columns": '<rect x="5" y="15" width="4" height="8" rx=".5"/><rect x="12" y="8" width="4" height="15" rx=".5"/>'
                      '<rect x="19" y="12" width="4" height="11" rx=".5"/>',
+    # Druhy vykreslení výstupu indikátoru (Plot type v záložce Style)
+    "plot_line": '<path d="M4 17c3-5 5-5 7-2s4 3 6-1 4-4 7-1"/>',
+    "plot_linebr": '<path d="M4 18l4-5M11 11l2-2M16 10l3 3M22 11l2-2"/><path d="M14 4v20" stroke-dasharray="1.5 2"/>',
+    "plot_step": '<path d="M5 22v-8h5V6h6v10h5v-6h3"/>',
+    "plot_stepbr": '<path d="M5 22v-8h5V6h3M16 6v10h5v-6h3"/><path d="M14.5 4v20" stroke-dasharray="1.5 2"/>',
+    "plot_stepdiamond": '<path d="M7 23V7h7v13h4"/><path d="M18 17.5l2.5 2.5-2.5 2.5-2.5-2.5z"/>',
+    "plot_histogram": '<path d="M5 23v-6M8 23v-9M11 23v-4M14 23v-11M17 23v-7M20 23v-10M23 23v-5"/>',
+    "plot_area": '<path d="M4 22V14l5-4 5 3 5-6 5 3v12z"/>',
+    "plot_areabr": '<path d="M4 22v-8l5-4 3 2v10zM17 22V9l2-2 5 3v12z"/><path d="M14.5 4v20" stroke-dasharray="1.5 2"/>',
+    "plot_columns": '<rect x="5" y="15" width="4" height="8"/><rect x="12" y="8" width="4" height="15"/>'
+                    '<rect x="19" y="12" width="4" height="11"/>',
+    "plot_circles": '<circle cx="7" cy="18" r="2.2"/><circle cx="14" cy="9" r="2.2"/><circle cx="21" cy="15" r="2.2"/>',
     # Hvězda (panel oblíbených zobrazen / skryt)
     "star": '<path fill="currentColor" d="M14 4.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L14 19.4l-5.9 3.1 1.2-6.5-4.8-4.6 6.6-.9z"/>',
     "star_border": '<path d="M14 4.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L14 19.4l-5.9 3.1 1.2-6.5-4.8-4.6 6.6-.9z"/>',

@@ -128,7 +128,6 @@ class SvopexTTW(Indicator):
     title = "Svopex TTW"
     name = "Svopex TTW"
     description = "Trendové linky, šablony a double bottom/top u formací ONE / ENG / STAR (převod z Pine)."
-    uses_color = False
     has_signals = True
     has_lines = True
     # V legendě jen název (parametrů je mnoho)

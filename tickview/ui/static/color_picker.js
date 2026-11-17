@@ -4,7 +4,9 @@
  * odstínů, vlastní barvy (tlačítko + otevře systémový výběr) a posuvník
  * průhlednosti s polem v procentech. Panel otevírá Vue komponenta
  * ColorButton (color_button.js); výsledná barva je #rrggbb, nebo
- * rgba(r, g, b, a), když průhlednost není 100 %.
+ * rgba(r, g, b, a), když průhlednost není 100 %. Tlačítko stylu výstupu
+ * indikátoru (plot_style_button.js) přidá pod průhlednost volbu tloušťky
+ * (Thickness) a stylu čáry (Line style) jako v TradingView.
  */
 window.TickViewColorPicker = (function () {
   'use strict';
@@ -205,7 +207,62 @@ window.TickViewColorPicker = (function () {
     popup.appendChild(alphaRow);
     current.alphaRange = range;
     current.alphaInput = input;
+    if (current.line) renderLineOptions(popup);
     sync();
+  }
+
+  // Skupina přepínacích tlačítek (Thickness / Line style) s náhledem čáry;
+  // values = hodnoty tlačítek, selected = zvolená, preview(node, hodnota) =
+  // vzhled náhledu, onPick(hodnota) = volba uživatele
+  function segmented(values, selected, preview, onPick) {
+    const group = el('div', 'tv-cp-segmented');
+    const buttons = values.map((value) => {
+      const button = el('button', 'tv-cp-segment' + (value === selected ? ' selected' : ''));
+      button.type = 'button';
+      const line = el('span', 'tv-cp-line-preview');
+      preview(line, value);
+      button.appendChild(line);
+      button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        buttons.forEach((node) => node.classList.toggle('selected', node === button));
+        onPick(value);
+      });
+      group.appendChild(button);
+      return button;
+    });
+    return group;
+  }
+
+  // Tloušťka a styl čáry výstupu indikátoru pod průhledností; změna jde přes
+  // current.line.onChange({width, lineStyle}) do komponenty tlačítka
+  function renderLineOptions(popup) {
+    const line = current.line;
+    const notify = () => line.onChange({ width: line.width, lineStyle: line.lineStyle });
+    popup.appendChild(el('div', 'tv-cp-sep'));
+    popup.appendChild(el('div', 'tv-cp-label', 'Thickness'));
+    popup.appendChild(
+      segmented(
+        line.widths,
+        line.width,
+        (node, width) => node.style.setProperty('--tv-cp-line-width', width + 'px'),
+        (width) => {
+          line.width = width;
+          notify();
+        }
+      )
+    );
+    popup.appendChild(el('div', 'tv-cp-label', 'Line style'));
+    popup.appendChild(
+      segmented(
+        line.lineStyles,
+        line.lineStyle,
+        (node, style) => node.classList.add('tv-line-' + style),
+        (style) => {
+          line.lineStyle = style;
+          notify();
+        }
+      )
+    );
   }
 
   // Umístí panel pod kotvu (případně nad ni), aby nepřetekl okraj okna
@@ -237,12 +294,21 @@ window.TickViewColorPicker = (function () {
 
   // Otevře panel u kotvy.
   // Parametry: anchor – tlačítko barvy, value – aktuální barva,
-  // onChange(barva) – nová barva, onClose() – panel se zavřel
-  function open(anchor, value, onChange, onClose) {
+  // onChange(barva) – nová barva, onClose() – panel se zavřel,
+  // line – volitelně volby čáry {width, widths, lineStyle, lineStyles, onChange({width, lineStyle})}
+  // (panel pak nabídne i Thickness a Line style)
+  function open(anchor, value, onChange, onClose, line) {
     close();
     const popup = el('div', 'tv-color-picker');
     const parsed = parseColor(value) || { r: 41, g: 98, b: 255, a: 1 };
-    current = { popup: popup, anchor: anchor, onChange: onChange, onClose: onClose, color: parsed };
+    current = {
+      popup: popup,
+      anchor: anchor,
+      onChange: onChange,
+      onClose: onClose,
+      color: parsed,
+      line: line ? Object.assign({}, line) : null,
+    };
     // V dialogu vkládáme panel do jeho vnitřku – Quasar jinak vrací fokus do
     // dialogu (pole procent by nešlo upravit); mimo dialog do body
     const host = anchor.closest('.q-dialog__inner') || document.body;

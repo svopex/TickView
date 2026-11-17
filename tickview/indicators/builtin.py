@@ -124,13 +124,14 @@ def _columns(frame, specs: list[tuple]) -> list[Line]:
     Parametry:
         frame: DataFrame z pandas-ta (nebo None při krátké historii).
         specs: [(prefix, název, barva[, typ[, volby]])] – barva None = barva
-            instance, výchozí typ "line" bez voleb.
+            instance, výchozí typ "line" bez voleb (typy viz Line.type).
     """
     if frame is None:
         return []
     lines = []
     for spec in specs:
-        prefix, name, color, kind, options = (*spec, "line", {})[:5]
+        # Chybějící typ a volby doplníme výchozími (spec má 3–5 položek)
+        prefix, name, color, kind, options = (*spec, *("line", {})[len(spec) - 3:])
         column = _find_column(frame, prefix)
         if column is not None:
             lines.append(Line(name, frame[column], color, kind, dict(options)))
@@ -163,8 +164,7 @@ def _psar(df: pd.DataFrame, p: dict):
     if frame is None:
         return [], []
     values = frame[_find_column(frame, "PSARl")].fillna(frame[_find_column(frame, "PSARs")])
-    dots = {"lineVisible": False, "pointMarkersVisible": True, "pointMarkersRadius": 1.5}
-    return [Line("SAR", values, None, "line", dots)], []
+    return [Line("SAR", values, None, "circles")], []
 
 
 def _ichimoku(df: pd.DataFrame, p: dict):
@@ -245,9 +245,10 @@ BUILTIN_INDICATORS: list[Indicator] = [
     BuiltinIndicator(
         "supertrend", "Supertrend", "Supertrend", "trend", "Trendová linie z ATR; zelená = růst, červená = pokles.",
         [_length(10), _positive("mult", 3.0, "Násobek")],
-        # Rostoucí a klesající větev zvlášť (každá svou barvou, mezery = whitespace)
+        # Rostoucí a klesající větev zvlášť (každá svou barvou, čára přerušená
+        # tam, kde větev nemá hodnotu)
         lambda df, p: (_columns(pandas_ta.supertrend(*_hlc(df), length=p["length"], multiplier=p["mult"]), [
-            ("SUPERTl", "Růst", UP_COLOR), ("SUPERTs", "Pokles", DOWN_COLOR),
+            ("SUPERTl", "Růst", UP_COLOR, "linebr"), ("SUPERTs", "Pokles", DOWN_COLOR, "linebr"),
         ]), []),
     ),
     BuiltinIndicator(

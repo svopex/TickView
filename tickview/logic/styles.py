@@ -205,19 +205,90 @@ def drawing_visible(options, timeframe: str) -> bool:
     return timeframe_visible(options.get("visibility") if isinstance(options, dict) else None, timeframe)
 
 
-# Záložka Style instance indikátoru jako v TradingView: grafické objekty
-# (Lines = úsečky, Tables = tabulka scanneru) a vstupy v legendě (status line)
-INDICATOR_STYLE_DEFAULTS: dict[str, bool] = {"lines": True, "tables": True, "inputs_in_status": True}
+# Záložka Style instance indikátoru jako v TradingView – přepínače: grafické
+# objekty (Lines = úsečky, Tables = tabulka scanneru), Output values (popisky
+# hodnot na cenové ose, hodnoty v legendě) a vstupy v legendě (status line)
+INDICATOR_STYLE_DEFAULTS: dict[str, bool] = {
+    "lines": True,
+    "tables": True,
+    "labels_on_scale": True,
+    "values_in_status": True,
+    "inputs_in_status": True,
+}
+
+# Druhy vykreslení výstupu (Plot type v TradingView) – klíč -> popisek nabídky.
+# „…br“ = s přerušením v místech bez hodnoty, ostatní čáry mezery přemostí
+PLOT_TYPES: dict[str, str] = {
+    "line": "Line",
+    "linebr": "Line with breaks",
+    "step": "Step line",
+    "stepbr": "Step line with breaks",
+    "stepdiamond": "Step line with diamonds",
+    "histogram": "Histogram",
+    "area": "Area",
+    "areabr": "Area with breaks",
+    "columns": "Columns",
+    "circles": "Circles",
+}
+# Tloušťky čáry výstupu (Thickness) a styly čáry (Line style) jako v TradingView
+PLOT_WIDTHS = (1, 2, 3, 4)
+PLOT_LINE_STYLES = tuple(DRAWING_LINE_STYLES)
+# Přesnost hodnot (Precision): None = výchozí podle instrumentu, jinak počet desetinných míst
+PLOT_PRECISIONS = tuple(range(9))
+
+
+def normalize_plot_style(data) -> dict:
+    """Změny stylu jednoho výstupu indikátoru (čáry) proti jeho výchozímu vzhledu.
+
+    Ukládají se jen změněné klíče, výchozí hodnoty určuje až výstup indikátoru
+    (barva, typ, tloušťka); neplatné hodnoty se vynechají.
+
+    Parametry:
+        data: {"visible"?, "color"?, "width"?, "lineStyle"?, "type"?, "priceLine"?}
+            (jiný typ = žádné změny).
+    """
+    source = data if isinstance(data, dict) else {}
+    style: dict = {}
+    # Přepínače: zobrazení výstupu a cenová linka u poslední hodnoty
+    for key in ("visible", "priceLine"):
+        if isinstance(source.get(key), bool):
+            style[key] = source[key]
+    if color := normalize_color(source.get("color")):
+        style["color"] = color
+    # Výčtové hodnoty jen z povolených voleb (bool je podtřída int – vyloučíme)
+    width = source.get("width")
+    if width in PLOT_WIDTHS and not isinstance(width, bool):
+        style["width"] = width
+    if source.get("lineStyle") in PLOT_LINE_STYLES:
+        style["lineStyle"] = source["lineStyle"]
+    if source.get("type") in PLOT_TYPES:
+        style["type"] = source["type"]
+    return style
 
 
 def normalize_indicator_style(data) -> dict:
-    """Přepínače záložky Style instance indikátoru s výchozími hodnotami (vše zapnuto).
+    """Záložka Style instance indikátoru s výchozími hodnotami.
 
     Parametry:
-        data: {"lines", "tables", "inputs_in_status"} – může být neúplný nebo None.
+        data: {"lines", "tables", "labels_on_scale", "values_in_status",
+            "inputs_in_status", "precision", "plots": {název výstupu: změny}}
+            – může být neúplný nebo None.
+
+    Vrací přepínače INDICATOR_STYLE_DEFAULTS (výchozí zapnuto), "precision"
+    (None = výchozí, jinak 0–8) a "plots" jen s výstupy, které mají nějakou změnu.
     """
     source = data if isinstance(data, dict) else {}
-    return {key: source.get(key, default) is not False for key, default in INDICATOR_STYLE_DEFAULTS.items()}
+    style: dict = {key: source.get(key, default) is not False for key, default in INDICATOR_STYLE_DEFAULTS.items()}
+    precision = source.get("precision")
+    style["precision"] = precision if precision in PLOT_PRECISIONS and not isinstance(precision, bool) else None
+    plots = source.get("plots") if isinstance(source.get("plots"), dict) else {}
+    # Výstupy bez platné změny se vynechají (výchozí vzhled se neukládá)
+    style["plots"] = {
+        name: plot_style
+        for name, value in plots.items()
+        if isinstance(name, str) and (plot_style := normalize_plot_style(value))
+    }
+    return style
 
 
 def normalize_drawing_style(values, kind: str | None = None) -> dict:

@@ -270,8 +270,12 @@ class Line:
         name: název série (legenda).
         values: hodnoty, stejná délka jako svíčky (NaN = bez hodnoty).
         color: barva (None = barva instance; histogram se barví podle znaménka).
-        type: "line" nebo "histogram".
-        options: volby série Lightweight Charts (lineStyle, pointMarkersVisible…).
+        type: výchozí druh vykreslení – "line" nebo "histogram", případně další
+            druh z PLOT_TYPES ("linebr" = čára přerušená v místech bez hodnoty,
+            "circles" = jen body, "step", "area", "columns"…); uživatel ho může
+            v záložce Style změnit.
+        options: volby série Lightweight Charts; výchozí tloušťku a styl čáry
+            v záložce Style určují "lineWidth" (1–4) a "lineStyle" (LINE_*).
     """
 
     name: str
@@ -362,7 +366,6 @@ class Indicator:
         params: schéma parametrů.
         title_params: parametry, jejichž hodnoty se připojí k názvu v legendě
             (None = všechny číselné).
-        uses_color: instance má hlavní barvu (pole Barva v dialogu).
         has_signals: indikátor vrací signály (alert na signál, scanner).
         has_lines: indikátor vrací úsečky (Result.segments) – záložka Style
             nabídne přepínač Lines.
@@ -377,7 +380,6 @@ class Indicator:
     overlay: bool = True
     params: list[Param] = []
     title_params: Optional[tuple] = None
-    uses_color: bool = True
     has_signals: bool = False
     has_lines: bool = False
     api_version: int = API_VERSION

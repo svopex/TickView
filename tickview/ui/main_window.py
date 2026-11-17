@@ -51,6 +51,8 @@ from tickview.indicators.compute import (
     load_saved_indicators,
     new_indicator,
     normalize_params,
+    plot_defaults,
+    sample_lines,
 )
 from tickview.indicators.registry import all_indicators, get_indicator, load_errors
 from tickview.logic.layouts import (
@@ -115,6 +117,7 @@ from tickview.ui.chart_pane import ChartPane
 from tickview.ui.color_button import ColorButton
 from tickview.ui.icons import ICONS, svg
 from tickview.ui.param_form import ParamForm
+from tickview.ui.plot_style_fields import PlotStyleFields
 from tickview.ui.reminders_dialog import RemindersDialog
 from tickview.ui.templates import TemplateMenu, load_default_template, settings_buttons, settings_header
 from tickview.ui.visibility_fields import VisibilityFields
@@ -1966,33 +1969,39 @@ async def _build_index(
         render_indicator_menu()
         indicator_dialog.open()
 
-    # Upravovaná instance indikátoru (pole parametrů drží settings_form)
-    settings_state: dict = {"id": None}
+    # Upravovaná instance indikátoru (pole parametrů drží settings_form): id,
+    # barva instance (výchozí barva výstupů bez vlastní barvy) a výstupy indikátoru
+    settings_state: dict = {"id": None, "color": None, "lines": []}
 
     def fill_indicator_settings(kind: str, params: dict, options: dict | None = None) -> None:
         """Vyplní záložky Inputs / Style / Visibility dialogu nastavení indikátoru.
 
         Záložky Style a Visibility má každý indikátor (jako v TradingView).
-        Style ukazuje Barvu (hlavní barva instance) a grafické objekty Lines
-        (úsečky) / Tables (tabulka scanneru) jen u indikátorů, které je mají;
-        Inputs in status line (hodnoty vstupů v legendě) vždy.
+        Style ukazuje výstupy (zobrazení, barva, tloušťka a styl čáry, druh
+        vykreslení, cenová linka) a Output values jen u indikátorů s výstupy,
+        grafické objekty Lines (úsečky) / Tables (tabulka scanneru) jen
+        u indikátorů, které je mají; Inputs in status line (hodnoty vstupů
+        v legendě) vždy.
 
         Parametry:
             kind: id indikátoru.
             params: hodnoty parametrů (chybějící = výchozí).
-            options: instance nebo šablona s klíči "style"? (přepínače Style,
-                chybějící = vše zapnuto) a "visibility"? (chybějící = všude).
+            options: instance nebo šablona s klíči "style"? (Style, chybějící =
+                výchozí vzhled) a "visibility"? (chybějící = všude).
         """
         indicator = get_indicator(kind)
         settings_form.fill(indicator, params)
         options = options or {}
-        for key, value in normalize_indicator_style(options.get("style")).items():
-            settings_style_checks[key].value = value
+        style = normalize_indicator_style(options.get("style"))
+        for key, check in settings_style_checks.items():
+            check.value = style[key]
+        # Výchozí vzhled výstupů podle deklarace indikátoru a barvy instance
+        plot_fields.fill(
+            [(line.name, plot_defaults(line, settings_state["color"])) for line in settings_state["lines"]], style
+        )
         settings_visibility.fill(options.get("visibility"))
-        uses_color = bool(indicator and indicator.uses_color)
         has_lines = bool(indicator and indicator.has_lines)
         has_tables = bool(indicator and indicator.has_scanner)
-        settings_color_row.set_visibility(uses_color)
         settings_style_checks["lines"].set_visibility(has_lines)
         settings_style_checks["tables"].set_visibility(has_tables)
         settings_objects.set_visibility(has_lines or has_tables)
@@ -2011,12 +2020,13 @@ async def _build_index(
             show_status(f"Indikátor {spec['kind']} se nenačetl – zkontrolujte jeho soubor.", error=True)
             return
         settings_state["id"] = indicator_id
+        settings_state["color"] = indicator_color(spec, active().indicators.index(spec))
+        # Výstupy indikátoru pro záložku Style (výpočet nad umělými svíčkami mimo smyčku událostí)
+        settings_state["lines"] = await asyncio.to_thread(sample_lines, indicator, spec["params"])
         # Titulek jako v TradingView: název, zkratka jen když se liší
         settings_title.text = indicator.name if indicator.title == indicator.name else f"{indicator.name} ({indicator.title})"
         settings_ind_tabs.value = inputs_tab
         fill_indicator_settings(spec["kind"], spec["params"], spec)
-        index = active().indicators.index(spec)
-        settings_color.value = indicator_color(spec, index)
         await indicator_templates.refresh()
         indicator_settings_dialog.open()
 
@@ -2027,9 +2037,9 @@ async def _build_index(
         if not spec:
             return
         params = values.get("params") if isinstance(values.get("params"), dict) else {}
-        fill_indicator_settings(spec["kind"], params, values)
         palette_color = indicator_color({}, active().indicators.index(spec))
-        settings_color.value = normalize_color(values.get("color")) or palette_color
+        settings_state["color"] = normalize_color(values.get("color")) or palette_color
+        fill_indicator_settings(spec["kind"], params, values)
 
     def reset_indicator_settings() -> None:
         # „Apply defaults“ bez uložené výchozí šablony: tovární parametry a barva
@@ -2046,9 +2056,9 @@ async def _build_index(
             ui.notify(str(exc), type="warning")
             return None
         # Styl a viditelnost jen se změnou proti výchozímu stavu (jako v instanci)
-        style = {key: check.value for key, check in settings_style_checks.items()}
+        style = {key: check.value for key, check in settings_style_checks.items()} | plot_fields.values()
         values: dict = {"params": params, **instance_options({"style": style, "visibility": settings_visibility.values()})}
-        if color := normalize_color(settings_color.value):
+        if color := normalize_color(settings_state["color"]):
             values["color"] = color
         return values
 
@@ -3172,11 +3182,10 @@ async def _build_index(
             with ui.tab_panel(inputs_tab).classes("tv-tab-panel"):
                 settings_form = ParamForm(ui.column().classes("indicator-dialog-params w-full"), pick_symbol)
             with ui.tab_panel(settings_style).classes("tv-tab-panel"):
-                with ui.row().classes("param-row w-full") as settings_color_row:
-                    ui.label("Barva").classes("param-label")
-                    settings_color = ColorButton(indicator_color({}, 0), title="Barva indikátoru")
+                # Výstupy indikátoru (čáry, histogramy) a Output values
+                plot_fields = PlotStyleFields()
                 # Grafické objekty indikátoru (úsečky, tabulka scanneru) a hodnoty vstupů v legendě
-                # Přepínače podle klíčů INDICATOR_STYLE_DEFAULTS
+                # – přepínače podle klíčů INDICATOR_STYLE_DEFAULTS (Output values má plot_fields)
                 settings_style_checks: dict = {}
                 with ui.column().classes("indicator-style-group w-full") as settings_objects:
                     ui.label("Graphic objects").classes("tv-settings-section param-group")
