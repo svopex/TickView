@@ -4,9 +4,12 @@ import asyncio
 import tempfile
 import time
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
+from eventkit import Event
+from ib_async import BarData, BarDataList
 
 from tickview.config import update_config_section
 from tickview.logic.cache import KlineCache, fetch_history, uncovered_ranges
@@ -21,13 +24,14 @@ from tickview.logic.sessions import filter_session, timezone_options, utc_offset
 from tickview.providers.base import (
     TIMEFRAME_MS,
     Candle,
+    FailureLatch,
     RateLimiter,
     StreamStatus,
     aggregate_candles,
     poll_latest_candles,
     utc_now_ms,
 )
-from tickview.providers.ibkr import forex_parts, forex_suggestions
+from tickview.providers.ibkr import IbkrProvider, forex_parts, forex_suggestions
 
 
 def make_candle(open_time: int, close: float = 1.0) -> Candle:
@@ -314,6 +318,58 @@ class ProvidersBaseTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(items[2], StreamStatus(True, "zdroj opět odpovídá"))
         # Konečná podoba předchozí svíčky i nová svíčka
         self.assertEqual(items[3:], [make_candle(1, 2.0), make_candle(2, 3.0)])
+
+
+class FakeIB:
+    """Náhrada připojení k TWS pro test průběžných barů (jen události a rušení)."""
+
+    def __init__(self) -> None:
+        self.errorEvent = Event("errorEvent")
+        self.disconnectedEvent = Event("disconnectedEvent")
+        self.cancelled: list[BarDataList] = []
+
+    def isConnected(self) -> bool:
+        return True
+
+    def cancelHistoricalData(self, bars: BarDataList) -> None:
+        self.cancelled.append(bars)
+
+
+def make_bar(minute: int, close: float) -> BarData:
+    """Minutový bar TWS v daném čase (minuty od epochy) se závěrečnou cenou."""
+    date = datetime.fromtimestamp(minute * 60, tz=timezone.utc)
+    return BarData(date=date, open=close, high=close + 1, low=close - 1, close=close, volume=10)
+
+
+class IbkrStreamTest(unittest.IsolatedAsyncioTestCase):
+    """Průběžné bary IBKR (keepUpToDate): stav, změny svíček a ukončení odběru."""
+
+    async def test_follow_bars(self) -> None:
+        ib = FakeIB()
+        bars = BarDataList([make_bar(1, 1.0), make_bar(2, 2.0)])
+        bars.reqId = 7
+        stream = IbkrProvider._follow_bars(ib, bars, False, FailureLatch())
+        next_item = stream.__anext__
+
+        # Nejdřív stav s informací o zpožděných datech, pak jen poslední svíčka
+        self.assertEqual((await next_item()).live, False)
+        self.assertEqual((await next_item()).open_time, 120_000)
+        # Změna poslední svíčky a pak nová svíčka v jedné dávce: pošle se
+        # konečná podoba předchozí i nová svíčka
+        bars[-1] = make_bar(2, 2.5)
+        bars.append(make_bar(3, 3.0))
+        bars.updateEvent.emit(bars, True)
+        self.assertEqual((await next_item()).close, 2.5)
+        self.assertEqual((await next_item()).open_time, 180_000)
+        # Varování 21xx odběr neukončí, chyba našeho reqId ano
+        ib.errorEvent.emit(7, 2104, "farm OK", None)
+        ib.errorEvent.emit(7, 162, "query cancelled", None)
+        status = await next_item()
+        self.assertEqual(status.connected, False)
+        self.assertIn("162", status.message)
+        with self.assertRaises(StopAsyncIteration):
+            await stream.__anext__()
+        self.assertEqual(ib.cancelled, [bars])
 
 
 class ConfigTest(unittest.TestCase):

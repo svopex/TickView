@@ -17,12 +17,17 @@ from ib_async import IB, Contract, Forex, Stock
 
 from tickview.config import load_config
 from tickview.providers.base import (
+    TIMEFRAME_MS,
     US_EQUITY_SESSION,
     Candle,
     DataProvider,
+    FailureLatch,
+    FreshCandles,
     RateLimiter,
     StreamItem,
+    StreamStatus,
     SymbolInfo,
+    poll_seconds_for,
 )
 
 # Výchozí napojení na TWS (demo): host, port a clientId
@@ -35,6 +40,23 @@ RECONNECT_COOLDOWN_S = 60.0
 CLIENT_ID_ATTEMPTS = 5
 # Jak často se obnovují ceny watchlistu (throttle kvůli TWS pacing)
 TICKER_TTL_S = 30.0
+
+# Typy tržních dat TWS (reqMarketDataType / Ticker.marketDataType)
+MARKET_DATA_DELAYED = 3
+MARKET_DATA_DELAYED_FROZEN = 4
+# Jak dlouho se po přihlášení k tickům čeká na první tick / typ dat (sekundy)
+MARKET_DATA_PROBE_S = 4.0
+# Chyby reqMktData, které znamenají chybějící předplatné živých dat
+# (354 nepředplaceno, 10089 vyžaduje předplatné, 10167 zobrazuje se
+# zpožděně, 10168 nepředplaceno a zpožděná data nejsou povolena)
+NOT_SUBSCRIBED_CODES = frozenset({354, 10089, 10167, 10168})
+# Kolik posledních svíček se stáhne při přihlášení k průběžným barům
+STREAM_SEED_BARS = 5
+# Pauza před novým přihlášením k průběžným barům po chybě odběru (sekundy)
+STREAM_RETRY_S = 5.0
+# Kódy TWS, které odběr průběžných barů neukončí: 165 informační zpráva
+# historických dat, 2100–2199 varování o stavu datových farem
+IGNORED_STREAM_CODES = frozenset({165, *range(2100, 2200)})
 
 # Měny forexu IDEALPRO v pořadí, ve kterém je IB řadí v páru (dřívější = základní
 # měna: EUR.USD, GBP.USD, USD.JPY, EUR.CZK…); slouží k sestavení páru z dotazu
@@ -113,12 +135,13 @@ BAR_SIZES = {
 
 
 class IbkrProvider(DataProvider):
-    """Interactive Brokers (TWS/Gateway) – historie a polling živých dat."""
+    """Interactive Brokers (TWS/Gateway) – historie a průběžně aktualizované bary."""
 
     id = "ibkr"
     name = "IBKR"
     supports_stream = True
-    # Živá data se z TWS dotazují pollingem v intervalu (ne stream) → štítek „zpožděno“
+    # Zda jsou data živá, se zjistí až podle předplatného při otevření streamu
+    # (StreamStatus.live); do té doby štítek ukazuje „zpožděno“
     is_live = False
 
     def __init__(self) -> None:
@@ -136,6 +159,9 @@ class IbkrProvider(DataProvider):
         self._describe_cache: dict[str, dict] = {}
         # Cache cen pro watchlist (symbol -> (čas, data))
         self._ticker_cache: dict[str, tuple[float, dict]] = {}
+        # Zda TWS posílá pro kontrakt živá data (conId -> bool); předplatné se
+        # za běhu nemění, sonda se tak dělá jen jednou za kontrakt
+        self._live_cache: dict[int, bool] = {}
         # Omezovač dotazů kvůli TWS pacing limitům
         self._limiter = RateLimiter(min_interval=0.35)
 
@@ -166,6 +192,9 @@ class IbkrProvider(DataProvider):
             ib = IB()
             try:
                 await ib.connectAsync(self._host, self._port, clientId=client_id, timeout=6)
+                # Typ 3 pro celé spojení: s předplatným živé ticky, bez něj
+                # zpožděné místo chyby (využívá sonda _probe_live_data)
+                ib.reqMarketDataType(MARKET_DATA_DELAYED)
             except Exception as exc:
                 last_error = exc
                 self._disconnect_quietly(ib)
@@ -317,55 +346,243 @@ class IbkrProvider(DataProvider):
         # qualifyContracts doplní conId a ověří, že kontrakt existuje
         contract = (await ib.qualifyContractsAsync(contract))[0]
         delta_seconds = max(60, (end_ms - start_ms) // 1000)
-        duration = self._duration(delta_seconds)
         end_dt = datetime.fromtimestamp(end_ms / 1000, tz=timezone.utc)
-        await self._limiter.acquire()
-        # Kratší timeout: při chybě validace TWS (např. neplatná duration) totiž
-        # ib_async čeká na odpověď, která nikdy nepřijde, a UI by zamrzlo
-        bars = await ib.reqHistoricalDataAsync(
-            contract,
-            endDateTime=end_dt,
-            durationStr=duration,
-            barSizeSetting=self.timeframes[timeframe],
-            whatToShow=self._what_to_show(symbol),
-            useRTH=False,
-            formatDate=2,
-            timeout=20,
+        bars = await self._request_bars(
+            ib, contract, symbol, timeframe, end_dt, self._duration(delta_seconds)
         )
-        candles: list[Candle] = []
-        for bar in bars:
-            # ib_async 2.x: intraday bary mají datetime (UTC aware), denní/weekly
-            # bary vrací datetime.date → považujeme za UTC půlnoc
-            bar_time = getattr(bar, "date", None) or getattr(bar, "time", None)
-            if isinstance(bar_time, datetime):
-                if bar_time.tzinfo is None:
-                    bar_time = bar_time.replace(tzinfo=timezone.utc)
-            else:
-                bar_time = datetime.combine(bar_time, datetime.min.time(), tzinfo=timezone.utc)
-            if not all(
-                math.isfinite(value) for value in (bar.open, bar.high, bar.low, bar.close)
-            ):
-                continue
-            candles.append(
-                Candle(
-                    open_time=int(bar_time.timestamp() * 1000),
-                    open=float(bar.open),
-                    high=float(bar.high),
-                    low=float(bar.low),
-                    close=float(bar.close),
-                    # Forex (MIDPOINT) objem nemá – TWS posílá -1
-                    volume=max(0.0, float(bar.volume or 0)),
-                )
-            )
+        candles = [candle for bar in bars if (candle := self._bar_to_candle(bar))]
         # TWS může vrátit data mimo požadovaný interval – ořízneme a seřadíme
         candles = [c for c in candles if start_ms <= c.open_time <= end_ms]
         candles.sort(key=lambda c: c.open_time)
         return candles
 
+    async def _request_bars(
+        self, ib: IB, contract: Contract, symbol: str, timeframe: str,
+        end, duration: str, keep_up_to_date: bool = False,
+    ):
+        """Požadavek na bary TWS se společnými parametry (vč. mimo hlavní hodiny).
+
+        Parametry:
+            ib, contract: připojení a kvalifikovaný kontrakt.
+            symbol, timeframe: určují whatToShow a barSizeSetting.
+            end: konec intervalu (datetime), "" = současnost (nutné pro keepUpToDate).
+            duration: délka intervalu ve formátu TWS ("3600 S", "5 D"…).
+            keep_up_to_date: True = průběžně aktualizovaný odběr poslední svíčky.
+        """
+        await self._limiter.acquire()
+        # Kratší timeout: při chybě validace TWS (např. neplatná duration) totiž
+        # ib_async čeká na odpověď, která nikdy nepřijde, a UI by zamrzlo
+        return await ib.reqHistoricalDataAsync(
+            contract,
+            endDateTime=end,
+            durationStr=duration,
+            barSizeSetting=self.timeframes[timeframe],
+            whatToShow=self._what_to_show(symbol),
+            useRTH=False,
+            formatDate=2,
+            keepUpToDate=keep_up_to_date,
+            timeout=20,
+        )
+
+    @staticmethod
+    def _bar_to_candle(bar) -> Optional[Candle]:
+        """Převede bar TWS na Candle; bar s neplatnou cenou (NaN) vrátí jako None."""
+        # ib_async 2.x: intraday bary mají datetime (UTC aware), denní/weekly
+        # bary vrací datetime.date → považujeme za UTC půlnoc
+        bar_time = getattr(bar, "date", None) or getattr(bar, "time", None)
+        if isinstance(bar_time, datetime):
+            if bar_time.tzinfo is None:
+                bar_time = bar_time.replace(tzinfo=timezone.utc)
+        else:
+            bar_time = datetime.combine(bar_time, datetime.min.time(), tzinfo=timezone.utc)
+        if not all(math.isfinite(value) for value in (bar.open, bar.high, bar.low, bar.close)):
+            return None
+        return Candle(
+            open_time=int(bar_time.timestamp() * 1000),
+            open=float(bar.open),
+            high=float(bar.high),
+            low=float(bar.low),
+            close=float(bar.close),
+            # Forex (MIDPOINT) objem nemá – TWS posílá -1
+            volume=max(0.0, float(bar.volume or 0)),
+        )
+
+    async def _probe_live_data(self, ib: IB, contract: Contract) -> bool:
+        """Zjistí, zda TWS pro kontrakt posílá živá (předplacená) data.
+
+        Krátce se přihlásí k tickům (spojení má typ dat 3 = zpožděná, když
+        chybí předplatné) a přečte Ticker.marketDataType, případně chybu
+        o chybějícím předplatném. Snapshot se nepoužívá, protože ho IB
+        u nepředplacených dat zpoplatňuje. Výsledek se cachuje podle conId.
+
+        Vrací False = zpožděná data / bez předplatného, jinak True (i když se
+        v limitu nic nedozvíme – TWS průběžné bary přijala).
+        """
+        if contract.conId in self._live_cache:
+            return self._live_cache[contract.conId]
+        ticker = ib.reqMktData(contract, "", False, False)
+        decided = asyncio.Event()
+        not_subscribed = False
+
+        def on_error(_req_id: int, code: int, _message: str, error_contract) -> None:
+            # Chyba o chybějícím předplatném pro náš kontrakt (jiný odběr ticků
+            # k němu během sondy neběží)
+            nonlocal not_subscribed
+            if code in NOT_SUBSCRIBED_CODES and getattr(error_contract, "conId", 0) == contract.conId:
+                not_subscribed = True
+                decided.set()
+
+        def on_ticker_update(_ticker) -> None:
+            # TWS posílá typ dat před prvními ticky (výchozí hodnota Tickeru je 1),
+            # takže stačí počkat na první cenový tick (živý i zpožděný)
+            if math.isfinite(ticker.marketPrice()) or math.isfinite(ticker.close):
+                decided.set()
+
+        ib.errorEvent += on_error
+        ticker.updateEvent += on_ticker_update
+        try:
+            await asyncio.wait_for(decided.wait(), MARKET_DATA_PROBE_S)
+        except asyncio.TimeoutError:
+            pass
+        finally:
+            ib.errorEvent -= on_error
+            ticker.updateEvent -= on_ticker_update
+            ib.cancelMktData(contract)
+        live = not not_subscribed and ticker.marketDataType not in (
+            MARKET_DATA_DELAYED, MARKET_DATA_DELAYED_FROZEN
+        )
+        if decided.is_set():
+            self._live_cache[contract.conId] = live
+        return live
+
     def stream(self, symbol: str, timeframe: str) -> AsyncIterator[StreamItem]:
-        """Živá aktualizace dotazováním TWS v intervalu (výpadek TWS řeší cooldown
-        v _ensure_connected, polling to zkusí znovu v dalším kole)."""
-        return self._poll_history(symbol, timeframe)
+        """Živý stream průběžně aktualizovaných barů z TWS (keepUpToDate)."""
+        return self._stream_bars(symbol, timeframe)
+
+    async def _stream_bars(self, symbol: str, timeframe: str) -> AsyncIterator[StreamItem]:
+        """Přihlásí se k průběžným barům TWS a posílá změny poslední svíčky.
+
+        Při každém (znovu)přihlášení pošle StreamStatus s live podle
+        předplatného (sonda běží souběžně s přihlášením k barům). Když TWS
+        průběžné bary odmítne (bez předplatného, nepodporovaná velikost
+        baru), přepne se na polling historie se štítkem „zpožděno“. Výpadek
+        TWS ohlásí jednou a přihlásí se znovu (připojení hlídá cooldown
+        v _connect, proto tu není exponenciální backoff jako u websocketů).
+        """
+        step_s = TIMEFRAME_MS[timeframe] // 1000
+        latch = FailureLatch()
+        while True:
+            # Přihlášení: připojení, kontrakt a souběžně sonda typu dat a odběr barů
+            try:
+                ib = await self._ensure_connected()
+                contract = (await ib.qualifyContractsAsync(self._contract(symbol)))[0]
+                live, bars = await asyncio.gather(
+                    self._probe_live_data(ib, contract),
+                    self._request_bars(
+                        ib, contract, symbol, timeframe, "",
+                        self._duration(STREAM_SEED_BARS * step_s), keep_up_to_date=True,
+                    ),
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                # Výpadek TWS hlásíme jen jednou, dokud se neobnoví
+                if status := latch.fail(f"TWS neodpovídá: {exc}"):
+                    yield status
+                await asyncio.sleep(poll_seconds_for(timeframe))
+                continue
+            # Přihlášení uspělo – stav (i obnovení po výpadku) ohlásí _follow_bars
+            latch.reset()
+
+            if not bars:
+                # TWS odběr odmítla (chyba ukončí požadavek prázdným výsledkem)
+                # → zrušíme registraci odběru a zůstaneme u pollingu historie
+                self._cancel_bars(ib, bars)
+                yield StreamStatus(
+                    True,
+                    "TWS odmítla průběžné bary (chybí předplatné živých dat?) – "
+                    "data se obnovují v intervalu",
+                    live=False,
+                )
+                async for item in self._poll_history(symbol, timeframe):
+                    yield item
+                return
+
+            async for item in self._follow_bars(ib, bars, live, latch):
+                yield item
+            # Odběr skončil chybou nebo odpojením → krátká pauza a nové přihlášení
+            await asyncio.sleep(STREAM_RETRY_S)
+
+    @staticmethod
+    async def _follow_bars(ib: IB, bars, live: bool, latch: FailureLatch) -> AsyncIterator[StreamItem]:
+        """Posílá změny průběžných barů jednoho keepUpToDate odběru.
+
+        Nejdřív pošle stav (live) a poslední svíčku, pak každou změnu; při
+        nové svíčce i konečnou podobu předchozí. Skončí po chybě odběru nebo
+        odpojení TWS (výpadek ohlásí přes latch); odběr vždy zruší.
+
+        Parametry:
+            ib: připojená instance IB, ke které odběr patří.
+            bars: BarDataList z reqHistoricalData(keepUpToDate=True).
+            live: zda jde o živá (předplacená) data – pro štítek v UI.
+            latch: stav výpadků streamu (výpadek se hlásí jen jednou).
+        """
+        # Callbacky ib_async jen nastaví příznak změny, případně důvod konce
+        # odběru; více aktualizací mezi průchody smyčky se tak sloučí
+        changed = asyncio.Event()
+        end_reason: Optional[str] = None
+
+        def finish(reason: str) -> None:
+            nonlocal end_reason
+            end_reason = reason
+            changed.set()
+
+        def on_update(_bars, _has_new_bar: bool) -> None:
+            changed.set()
+
+        def on_error(req_id: int, code: int, message: str, _contract) -> None:
+            # Chyba našeho odběru; informační zprávy a varování farem ignorujeme
+            if req_id == bars.reqId and code not in IGNORED_STREAM_CODES:
+                finish(f"chyba {code}: {message}")
+
+        def on_disconnect() -> None:
+            finish("TWS se odpojila")
+
+        bars.updateEvent += on_update
+        ib.errorEvent += on_error
+        ib.disconnectedEvent += on_disconnect
+        try:
+            yield StreamStatus(
+                True,
+                "živá data z TWS" if live else "TWS posílá zpožděná data (chybí předplatné)",
+                live=live,
+            )
+            fresh_candles = FreshCandles()
+            while True:
+                recent = [IbkrProvider._bar_to_candle(bar) for bar in bars[-STREAM_SEED_BARS:]]
+                for candle in fresh_candles.take([c for c in recent if c]):
+                    yield candle
+                if end_reason is not None:
+                    break
+                await changed.wait()
+                changed.clear()
+            if status := latch.fail(f"průběžné bary přerušeny – {end_reason}"):
+                yield status
+        finally:
+            bars.updateEvent -= on_update
+            ib.errorEvent -= on_error
+            ib.disconnectedEvent -= on_disconnect
+            IbkrProvider._cancel_bars(ib, bars)
+
+    @staticmethod
+    def _cancel_bars(ib: IB, bars) -> None:
+        # Zrušení keepUpToDate odběru; po odpojení TWS ho ib_async uklidil sám
+        if not ib.isConnected():
+            return
+        try:
+            ib.cancelHistoricalData(bars)
+        except Exception:
+            pass
 
     async def tickers(self, symbols: list[str]) -> dict[str, dict]:
         """Vrátí poslední cenu a denní změnu (%) z posledních dvou denních barů."""

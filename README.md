@@ -211,9 +211,16 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
 - Forex IDEALPRO: dotaz typu `EURUSD`, `EUR/USD` nebo jen `EUR` nabídne
   páry IBKR (symbol `EUR.USD`, data MIDPOINT, bez objemu) – návrhy fungují
   i bez běžící TWS, data se pak stahují z TWS.
-- Historie, vyhledávání (matching symbols) i ceny watchlistu jdou přes TWS;
-  živá data se dotazují v intervalu (15 s intraday, 60 s denní), proto má
-  zdroj štítek „zpožděno“. Když TWS neběží, zdroj to nahlásí a ostatní zdroje
+- Historie, vyhledávání (matching symbols) i ceny watchlistu jdou přes TWS.
+  Živá svíčka se odebírá průběžně (`reqHistoricalData` s `keepUpToDate`,
+  aktualizace zhruba po 5 s); po výpadku TWS se odběr obnoví sám.
+- Štítek „živě / zpožděno“ odpovídá předplatnému: při prvním otevření grafu
+  instrumentu se zdroj krátce přihlásí k tickům (`reqMarketDataType(3)` +
+  `reqMktData`, ne placený snapshot) a podle `marketDataType` / chyby
+  o chybějícím předplatném pozná, zda TWS posílá živá, nebo zpožděná data;
+  výsledek si do ukončení aplikace pamatuje. Když TWS průběžné bary odmítne,
+  zdroj přejde na dotazování v intervalu (15 s intraday, 60 s denní) se
+  štítkem „zpožděno“. Když TWS neběží, zdroj to nahlásí a ostatní zdroje
   fungují dál.
 - Když nastavený clientId už používá jiný klient (např. druhá instance
   aplikace, chyba 326), zkusí se automaticky následující clientId (až 4 další).
@@ -228,7 +235,7 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   konfigurace `config.yaml` a zápis sekce se zachováním komentářů
 - `tickview/providers/base.py` – rozhraní DataProvider (search/history/stream/
   tickers/describe/close, pásmo burzy, hlavní seance), Candle, StreamStatus
-  (výpadek/obnovení streamu), SymbolInfo, kanonické timeframy, skládání
+  (výpadek/obnovení streamu, případně živá/zpožděná data), SymbolInfo, kanonické timeframy, skládání
   2m/10m z kratších svíček (historie i živě), omezovač dotazů a společná
   smyčka pollingu živých dat
 - `tickview/providers/binance.py` – zdroj Binance: vyhledání symbolů + historie
@@ -238,7 +245,8 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   indexy, forex; historie v to_thread, živá aktualizace pollingem
 - `tickview/providers/ibkr.py` – zdroj Interactive Brokers (TWS API, ib_async):
   americké akcie a forex IDEALPRO; napojení na TWS 127.0.0.1:7497, clientId
-  30 (při obsazení další), polling živých dat
+  30 (při obsazení další), průběžné bary keepUpToDate a zjištění živých /
+  zpožděných dat podle předplatného
 - `tickview/providers/alpaca.py` – volitelný zdroj Alpaca (americké akcie):
   historie feed=iex, sdílený živý websocket IEX (1m) / polling (delší
   timeframy), aktivace po zadání klíčů

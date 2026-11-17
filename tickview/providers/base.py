@@ -3,7 +3,7 @@
 import asyncio
 import time as time_module
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import AsyncIterator, Awaitable, Callable, Optional, Union
 
 # Kanonické timeframy aplikace; každý zdroj si je mapuje na vlastní API hodnoty
@@ -63,6 +63,34 @@ class FailureLatch:
         self.failing = False
         return StreamStatus(True, message)
 
+    def reset(self) -> None:
+        """Spojení funguje a obnovení ohlásí volající sám (bez zprávy z latche)."""
+        self.failing = False
+
+
+class FreshCandles:
+    """Vybírá svíčky k odeslání ve živém streamu z posledních známých svíček.
+
+    Poprvé vybere jen poslední svíčku, dál všechny od té naposledy vybrané
+    (tedy i konečnou podobu předchozí svíčky, když mezitím začala nová), a to
+    jen pokud jsou nové nebo se změnily.
+    """
+
+    def __init__(self) -> None:
+        # Kopie naposledy vybrané svíčky (konzument může původní objekt měnit)
+        self.last: Optional["Candle"] = None
+
+    def take(self, candles: list["Candle"]) -> list["Candle"]:
+        """Vrátí nové/změněné svíčky; candles musí být vzestupně podle času."""
+        if self.last is None:
+            candidates = candles[-1:]
+        else:
+            candidates = [c for c in candles if c.open_time >= self.last.open_time]
+        fresh = [c for c in candidates if c != self.last]
+        if fresh:
+            self.last = replace(fresh[-1])
+        return fresh
+
 
 def aggregate_candles(candles: list["Candle"], step_ms: int) -> list["Candle"]:
     """Sloučí kratší svíčky do delšího timeframu (např. 1m → 2m, 5m → 10m).
@@ -102,7 +130,7 @@ async def poll_latest_candles(
 
     Při prvním dotazu pošle jen poslední svíčku, dál všechny svíčky od té
     naposledy poslané (tedy i konečnou podobu předchozí svíčky, když mezitím
-    začala nová), a to jen pokud jsou nové nebo se změnila jejich cena.
+    začala nová), a to jen pokud jsou nové nebo změněné (FreshCandles).
     Výpadek zdroje ohlásí jednou jako StreamStatus(connected=False) a zkusí to
     znovu v dalším kole; po obnovení pošle StreamStatus(connected=True).
     Generátor běží, dokud ho konzument nezruší (CancelledError).
@@ -111,8 +139,7 @@ async def poll_latest_candles(
         fetch: async funkce vracející posledních pár svíček vzestupně podle času.
         poll_seconds: pauza mezi dotazy v sekundách.
     """
-    last_open_time = -1
-    last_close: Optional[float] = None
+    fresh_candles = FreshCandles()
     latch = FailureLatch()
     while True:
         try:
@@ -126,17 +153,8 @@ async def poll_latest_candles(
         else:
             if status := latch.ok("zdroj opět odpovídá"):
                 yield status
-            # První kolo: jen poslední svíčka; další kola: vše od poslední poslané
-            fresh = candles[-1:] if last_open_time < 0 else [
-                c for c in candles if c.open_time >= last_open_time
-            ]
-            for candle in fresh:
-                if candle.open_time > last_open_time or (
-                    candle.open_time == last_open_time and candle.close != last_close
-                ):
-                    last_open_time = candle.open_time
-                    last_close = candle.close
-                    yield candle
+            for candle in fresh_candles.take(candles):
+                yield candle
         await asyncio.sleep(poll_seconds)
 
 
@@ -196,10 +214,13 @@ class StreamStatus:
     Atributy:
         connected: True = spojení obnoveno, False = výpadek (čeká se na znovupřipojení).
         message: popis pro stavovou lištu.
+        live: True/False = zdroj upřesňuje, zda posílá živá data (např. IBKR
+              podle předplatného); None = platí DataProvider.is_live_for.
     """
 
     connected: bool
     message: str
+    live: Optional[bool] = None
 
 
 # Položka živého streamu: nová/aktualizovaná svíčka nebo změna stavu spojení

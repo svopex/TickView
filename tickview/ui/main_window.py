@@ -377,7 +377,10 @@ async def _build_index(cache: KlineCache) -> None:
                     # Mezitím se přepnulo zobrazení – stream ukončíme
                     return
                 if isinstance(item, StreamStatus):
-                    # Výpadek / obnovení spojení se zdrojem
+                    # Výpadek / obnovení spojení se zdrojem; zdroj může zároveň
+                    # upřesnit, zda jsou data živá (IBKR podle předplatného)
+                    if item.live is not None:
+                        live = item.live
                     set_badge(live if item.connected else False)
                     if item.connected:
                         show_status(f"{symbol}: {item.message}")
