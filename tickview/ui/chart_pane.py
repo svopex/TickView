@@ -527,7 +527,7 @@ class ChartPane:
     async def ensure_history(self) -> None:
         """Donačte starší svíčky, dokud jich graf nemá tolik, kolik potřebují indikátory.
 
-        Volá se po přidání nebo změně indikátoru (např. Svopex TTW potřebuje
+        Volá se po přidání nebo změně indikátoru (některé indikátory potřebují
         stovky svíček); končí, když starší data nepřibývají. Indikátory
         nepřepočítává – to udělá volající jednou na konci.
         """

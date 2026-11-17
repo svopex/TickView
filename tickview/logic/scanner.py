@@ -1,6 +1,6 @@
 """Logika scanneru: úlohy ze vstupů indikátoru, stav symbolu ze signálů, texty a alert.
 
-Scanner se nastavuje jako v Pine skriptu Svopex TTW přímo ve vstupech
+Scanner se nastavuje přímo ve vstupech
 indikátoru (skupiny Scanner – viz scanner_params v tickview/indicators/api.py).
 Každá instance takového indikátoru v rozložení grafů je jedna úloha: pro
 každý vyplněný symbol spočítá indikátor se stejnými parametry na timeframu
@@ -99,7 +99,7 @@ def layout_jobs(layout: dict) -> tuple[dict[str, dict], list[Optional[str]]]:
 
     Vrací (klíč -> úloha, klíč úlohy tabulky pro každý graf v pořadí rozložení
     nebo None); graf ukazuje tabulku první instance, která ji má zobrazit
-    (jako table v Pine skriptu – víc tabulek by se v jednom rohu překrývalo).
+    (jako table v Pine – víc tabulek by se v jednom rohu překrývalo).
     """
     jobs: dict[str, dict] = {}
     tables: list[Optional[str]] = []
@@ -186,7 +186,7 @@ def row_label(row: dict, strip_prefix: bool) -> str:
 def overview_payload(job: dict, results: Optional[dict], progress: Optional[tuple[int, int]] = None) -> Optional[dict]:
     """Data tabulky scanneru pro graf; None = tabulka se nezobrazuje.
 
-    Tabulka jako v Pine skriptu: hlavička „Svopex TTW (1h) | Signál (svíčka)“,
+    Tabulka jako table v Pine: hlavička „<název indikátoru> (1h) | Signál (svíčka)“,
     řádky symbol + stav (barva podle směru); místo řádků poznámka, když
     výsledek ještě není nebo žádný trh nemá signál.
 
@@ -250,10 +250,10 @@ def bar_hits(rows: list[dict], strip_prefix: bool = True) -> list[tuple[str, str
 
 
 def alert_message(title: str, timeframe: str, minutes: int, hits: list[tuple[str, str]]) -> str:
-    """Souhrnná zpráva alertu, např. „Svopex TTW 1h | 10 min do zavření svíčky | 2 trhy: EURUSD LONG, …“.
+    """Souhrnná zpráva alertu, např. „<název indikátoru> 1h | 10 min do zavření svíčky | 2 trhy: EURUSD LONG, …“.
 
     V textu je nastavený práh, ne dopočítaný zbytek – alert odejde až pod
-    prahem a dopočet by ukazoval o minutu méně (stejně jako v Pine v7).
+    prahem a dopočet by ukazoval o minutu méně.
     """
     listing = ", ".join(f"{symbol} {direction}" for symbol, direction in hits)
     markets = plural(len(hits), "trh", "trhy", "trhů")
@@ -263,8 +263,7 @@ def alert_message(title: str, timeframe: str, minutes: int, hits: list[tuple[str
 class CloseAlertWindow:
     """Stav alertu před zavřením svíčky: každý ze dvou prahů nejvýš jednou za svíčku.
 
-    Odpovídá varip proměnným v Pine (alertPosledniBar, alertOdeslan1/2):
-    při přechodu na novou svíčku se oba prahy povolí znovu.
+    Při přechodu na novou svíčku se oba prahy povolí znovu (jako varip proměnné v Pine).
     """
 
     def __init__(self) -> None:
@@ -277,7 +276,7 @@ class CloseAlertWindow:
         """Má se teď poslat alert? Vrací práh (minuty) do textu zprávy, nebo None.
 
         Oba prahy jsou nezávislé; když se na jedné kontrole překročí oba,
-        odejde jen jedna zpráva (s prahem 1, jako v Pine).
+        odejde jen jedna zpráva (s prahem 1).
 
         Parametry:
             bar_close: zavření běžící svíčky (ms UTC).

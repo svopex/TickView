@@ -1428,7 +1428,7 @@ window.TickViewChart = (function () {
     const group = (payload.groups || []).find((item) => item.id === groupId);
     const push = (action) => () => s.finishedQueue.push({ type: 'indicator', action: action, id: groupId });
     const items = [['Settings…', push('settings'), 'settings']];
-    // Indikátor se signály (Svopex TTW) nabízí alert na signál
+    // Indikátor se signály (has_signals) nabízí alert na signál
     if (group && group.signals) items.push(['Přidat alert…', push('alert'), 'alarm_add']);
     items.push([visible ? 'Skrýt' : 'Zobrazit', push('toggle'), visible ? 'visibility_off' : 'visibility']);
     items.push(['Odebrat indikátor', push('remove'), 'delete', 'danger']);
@@ -2256,7 +2256,7 @@ window.TickViewChart = (function () {
     ctx.restore();
   }
 
-  // Přehled scanneru v grafu (tabulka jako v Pine skriptu Svopex TTW): hlavička,
+  // Přehled scanneru v grafu (tabulka jako table v Pine): hlavička,
   // řádky symbol + stav obarvené podle směru, nebo poznámka; null = skrýt
   function setOverview(id, data) {
     const s = state.get(id);

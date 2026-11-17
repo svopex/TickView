@@ -127,7 +127,7 @@ class SessionSettingsFields:
         ui.label("Automatická pauza přehrávání").classes("tv-settings-section")
         self.pause_fill = ui.checkbox("Po naplnění příkazu")
         self.pause_exit = ui.checkbox("Po uzavření obchodu (SL / TP)")
-        self.pause_signal = ui.checkbox("Při signálu indikátoru (např. Svopex TTW) na uzavřené svíčce")
+        self.pause_signal = ui.checkbox("Při signálu indikátoru na uzavřené svíčce")
 
     def fill(self, settings: dict) -> None:
         """Vyplní pole hodnotami nastavení."""

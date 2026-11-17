@@ -174,8 +174,8 @@ class FakeSignals(Indicator):
     def compute(self, df, params, ctx: Context) -> Result:
         if ctx.symbol != "HIT":
             return Result()
-        return Result(signals=[Signal(int(df["time"].iloc[-1]), "long", 0, "ONE"),
-                               Signal(int(df["time"].iloc[-2]), "short", 1, "ENG")])
+        return Result(signals=[Signal(int(df["time"].iloc[-1]), "long", 0, "P1"),
+                               Signal(int(df["time"].iloc[-2]), "short", 1, "P2")])
 
 
 def register_fake_signals(test: unittest.TestCase) -> None:
@@ -196,7 +196,7 @@ class ScannerLogicTest(unittest.TestCase):
         register_fake_signals(self)
 
     def test_symbol_row(self) -> None:
-        signals = [Signal(3, "long", 3), Signal(1, "long", 1, "ENG"), Signal(0, "short", 0, "ONE")]
+        signals = [Signal(3, "long", 3), Signal(1, "long", 1, "P2"), Signal(0, "short", 0, "P1")]
         row = symbol_row("y", "EURUSD", signals, 2, 1000)
         self.assertEqual((row["long"], row["short"]), (1, 0))
         self.assertEqual(status_text(row), "LONG(1) + SHORT(0)")
@@ -212,8 +212,8 @@ class ScannerLogicTest(unittest.TestCase):
         rows = [{"last_open": 3_600_000}, {"last_open": 7_200_000}, {"last_open": None}]
         self.assertEqual(current_bar_close(rows, 3_600_000, 0), 10_800_000)
         self.assertEqual(current_bar_close([], 3_600_000, 5_000_000), 7_200_000)
-        message = alert_message("Svopex TTW", "1h", 10, [("EURUSD", "LONG"), ("XAUUSD", "SHORT")])
-        self.assertEqual(message, "Svopex TTW 1h | 10 min do zavření svíčky | 2 trhy: EURUSD LONG, XAUUSD SHORT")
+        message = alert_message("Signals", "1h", 10, [("EURUSD", "LONG"), ("XAUUSD", "SHORT")])
+        self.assertEqual(message, "Signals 1h | 10 min do zavření svíčky | 2 trhy: EURUSD LONG, XAUUSD SHORT")
 
     def test_close_alert_window(self) -> None:
         window = CloseAlertWindow()
@@ -469,12 +469,12 @@ class SignalAlertTest(unittest.TestCase):
 
         hour = 3_600_000
         bar = Candle(10 * hour, 1, 1, 1, 1, 1)
-        long0, short1 = Signal(0, "long", 0, "ENG"), Signal(0, "short", 1, "ONE")
+        long0, short1 = Signal(0, "long", 0, "P2"), Signal(0, "short", 1, "P1")
         # before_close: přepočet jen v posledních 10 minutách svíčky, spustí jednou
         tracker = SignalAlertTracker("signal", "before_close", hour, 10)
         self.assertFalse(tracker.wants_compute(bar, 10 * hour + 30 * 60_000))
         self.assertTrue(tracker.wants_compute(bar, 10 * hour + 52 * 60_000))
-        self.assertEqual(tracker.update([long0], bar), "LONG ENG")
+        self.assertEqual(tracker.update([long0], bar), "LONG P2")
         self.assertFalse(tracker.wants_compute(bar, 10 * hour + 55 * 60_000))
         # Směr podmínky: short alert nereaguje na long signál
         short_tracker = SignalAlertTracker("signal_short", "per_bar", hour)
@@ -484,7 +484,7 @@ class SignalAlertTest(unittest.TestCase):
         self.assertFalse(close_tracker.wants_compute(bar, 10 * hour))
         nxt = Candle(11 * hour, 1, 1, 1, 1, 1)
         self.assertTrue(close_tracker.wants_compute(nxt, 11 * hour + 1000))
-        self.assertEqual(close_tracker.update([short1], nxt), "SHORT ONE")
+        self.assertEqual(close_tracker.update([short1], nxt), "SHORT P1")
         self.assertIsNone(close_tracker.update([short1], nxt))
 
 
@@ -547,12 +547,12 @@ class IndicatorAlertEngineTest(unittest.IsolatedAsyncioTestCase):
                 await engine._on_candle(("fake", "HIT", "1h"), Candle(now - now % step, 1, 2, 0.5, 1.5, 1))
                 fired = [event for event in events if event["type"] == "fired"]
                 self.assertEqual(len(fired), 1)
-                self.assertEqual(fired[0]["message"], "HIT, 1h Signals LONG ONE")
+                self.assertEqual(fired[0]["message"], "HIT, 1h Signals LONG P1")
                 # Alert scanneru nemá stream ani tracker; spouští ho scanner zprávou
                 call = normalize_alert({
                     "source": "fake", "symbol": "HIT", "timeframe": "1h", "condition": "alert_call",
                     "trigger": "alert_call", "target": {"type": "indicator", "kind": FakeSignals.id},
-                    "message": "TTW: {{message}}", "notify": {"telegram": False, "toast": True},
+                    "message": "Scan: {{message}}", "notify": {"telegram": False, "toast": True},
                 })
                 call_id = await cache.save_alert(call)
                 await engine.reload()
@@ -562,7 +562,7 @@ class IndicatorAlertEngineTest(unittest.IsolatedAsyncioTestCase):
                 await engine.fire_message(call_alert, "2 trhy", symbol="Scanner Signals", timeframe="1h")
                 fired = [event for event in events if event["type"] == "fired"]
                 self.assertEqual((fired[-1]["message"], fired[-1]["symbol"], fired[-1]["price"]),
-                                 ("TTW: 2 trhy", "Scanner Signals", None))
+                                 ("Scan: 2 trhy", "Scanner Signals", None))
                 self.assertEqual(engine.alert_call_alerts(FakeSignals.id)[0]["id"], call_id)
             finally:
                 await asyncio.sleep(0)

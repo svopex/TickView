@@ -110,9 +110,9 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   kategorie Vše / Akcie / Fondy / Futures / Forex / Krypto / Indexy /
   Komodity, výběr zdroje, u výsledku logo, symbol, název, druh, burza
   a zkratka zdroje (Yahoo nabízí i futures `GC=F`, `CL=F`, fondy a krypto);
-  zadání ve tvaru „zdroj:SYMBOL“ (např. `yahoo:GC=F`, `ibkr:XAUUSD`, jako ve
-  vstupech Svopex TTW) hledá jen v daném zdroji a symbol nabídne, i když ho
-  hledání zdroje nevrátí;
+  zadání ve tvaru „zdroj:SYMBOL“ (např. `yahoo:GC=F`, `ibkr:XAUUSD`, jako
+  v polích symbolů ve vstupech indikátorů) hledá jen v daném zdroji a symbol
+  nabídne, i když ho hledání zdroje nevrátí;
   klik nebo Enter načte graf (cenová osa se po přepnutí symbolu nebo
   timeframu vrátí do automatického měřítka, i když byla ručně roztažená),
   šipky posouvají výběr, Esc zavře, tlačítko +
@@ -291,7 +291,7 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   se ukládají. K dispozici SMA, EMA, WMA, HMA, VWMA, VWAP, Bollinger
   Bands, Keltner, Donchian, Ichimoku, Parabolic SAR, Supertrend, ADX, RSI,
   MACD, Stochastic, Stoch RSI, CCI, Williams %R, Momentum, ROC, Awesome
-  Oscillator, TRIX, TSI, ATR, OBV, MFI, CMF a vlastní Svopex TTW. Řádek indikátoru v legendě (i
+  Oscillator, TRIX, TSI, ATR, OBV, MFI, CMF a vlastní indikátory. Řádek indikátoru v legendě (i
   v titulku panelu) má při najetí myší oko (skrýt/zobrazit), ozubené kolečko
   (Settings) a křížek (odebrat). Najetí myší na čáru indikátoru (v grafu
   i v panelu) nebo na jeho řádek v legendě ho zvýrazní jako v TradingView:
@@ -313,10 +313,9 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   čar přes hlavní graf ukazuje Lightweight Charts vždy v přesnosti
   instrumentu), Labels on price scale (popisek poslední hodnoty na cenové ose,
   výchozí zapnuto) a Values in status line (hodnoty v legendě). Výstupy
-  a Output values se ukážou jen u indikátorů, které čáry vrací (Svopex TTW
-  je nemá). Dál Graphic objects – Lines (úsečky indikátoru,
-  např. trendové linky Svopex TTW) a Tables (tabulka scanneru) jen
-  u indikátorů, které je kreslí, a Input values – Inputs in status line
+  a Output values se ukážou jen u indikátorů, které čáry vrací. Dál
+  Graphic objects – Lines (úsečky indikátoru, např. trendové linky)
+  a Tables (tabulka scanneru) jen u indikátorů, které je kreslí, a Input values – Inputs in status line
   (vypnuté = v legendě jen název bez hodnot vstupů). Visibility: timeframy,
   na kterých se indikátor počítá a kreslí včetně tabulky scanneru (v legendě
   zůstává). Styl a viditelnost se ukládají s instancí (jen změněné proti
@@ -346,36 +345,23 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   `lineWidth` a `lineStyle`; uživatel je v záložce Style změní. Nový indikátor = nový
   adresář, odebrání = smazání adresáře. Chyba importu nebo jiná verze
   rozhraní (`API_VERSION`) se zapíše do logu a ukáže v kategorii Vlastní,
-  ostatní indikátory fungují dál.
-- Svopex TTW (`custom/svopex_ttw/`): převod výpočetního jádra Pine skriptu
-  (`pine/svopex_ttw_v9.pine`, původně MQL5 SvpTomTheWizard) 1:1 včetně
-  zvláštností z MQL – formace ONE / ENG / STAR, swingy, trendlinky
-  a šablony, double bottom / top, vynechání půlnočních svíček; kreslí úsečky
-  do grafu a vrací signály (LONG / SHORT s indexem svíčky). Potřebuje aspoň
-  tolik svíček, kolik je „Počet svíček, které se zpracovávají“ (výchozí 360),
-  jinak nic nevykreslí (jako v TradingView). Hodina půlnoční svíčky se počítá
-  v nastaveném pásmu (výchozí Europe/Prague; v Pine je to pásmo burzy
-  symbolu – pro shodu s TradingView je potřeba zvolit pásmo, ve kterém má
-  rolloverová svíčka nastavenou hodinu). U forexu na 1h se minimální
-  a maximální velikost svíčky počítá z ticku (forex z Yahoo 0.00001, u JPY
-  párů 0.001; ostatní zdroje odhad z dat).
-  Noční upozornění z Pine skriptu jsou v TickView obecné Časové připomínky.
-- Scanner je jako v Pine skriptu součástí vstupů indikátoru (Svopex TTW,
-  skupiny Scanner – obecně `scanner_params` z rozhraní indikátorů): timeframe
-  scanu, počet posledních svíček pro signál, pozice tabulky (top_right,
-  top_left, middle_right, bottom_right, bottom_left, nezobrazovat), jen trhy
-  se signálem, velikost textu, skrytí prefixu zdroje; alert před zavřením
-  svíčky (ve výchozím stavu zapnutý) – dva nezávislé prahy v minutách (výchozí 10 a 5), každý nejvýš
-  jednou za svíčku, jedna souhrnná zpráva se seznamem trhů se signálem na
-  běžící svíčce; a 40 polí symbolů
-  ve tvaru „zdroj:SYMBOL“ (bez prefixu = zdroj grafu). Výchozí symboly jsou
-  symboly z Pine skriptu, vše z Interactive Brokers kromě bitcoinu
-  (Binance): forexové páry (EUR.USD…), zlato a stříbro (XAUUSD, XAGUSD),
-  indexová CFD (IBUST100, IBUS500, IBUS30, IBDE40), ropa WTI (IBUSOIL)
-  a Russell 2000 jako ETF IWM; navíc proti Pine ropa Brent (IBUKOIL). Pro každý symbol se spočítá indikátor se stejnými parametry na
-  timeframu scanu a v grafu s indikátorem se ukáže tabulka jako v Pine
-  („Svopex TTW (1h) | Signál (svíčka)“, LONG(0) / SHORT(1) … – 0 = běžící
-  svíčka; zelená long, červená short, oranžová oba). Při „jen se signálem“
+  ostatní indikátory fungují dál. Popis konkrétního indikátoru (výpočet,
+  výchozí nastavení, zvláštnosti) je v `README.md` v jeho adresáři.
+- Scanner je součástí vstupů indikátoru, který k parametrům připojí vstupy
+  scanneru (skupiny Scanner – `scanner_params` z rozhraní indikátorů,
+  jako `request.security` a `table` v Pine) a vrací signály
+  (`has_signals = True`, `Result.signals`): timeframe scanu (výchozí 1h),
+  počet posledních svíček pro signál, pozice tabulky (top_right, top_left,
+  middle_right, bottom_right, bottom_left, nezobrazovat), jen trhy se
+  signálem, velikost textu, skrytí prefixu zdroje; alert před zavřením
+  svíčky (výchozí vypnutý, indikátor ho může zapnout) – dva nezávislé prahy
+  v minutách (výchozí 10 a 5), každý nejvýš jednou za svíčku, jedna souhrnná
+  zpráva se seznamem trhů se signálem na běžící svíčce; a 40 polí symbolů ve
+  tvaru „zdroj:SYMBOL“ (bez prefixu = zdroj grafu; výchozí prázdná, indikátor
+  může předvyplnit své symboly). Pro každý symbol se spočítá indikátor se
+  stejnými parametry na timeframu scanu a v grafu s indikátorem se ukáže
+  tabulka („<zkratka indikátoru> (1h) | Signál (svíčka)“, LONG(0) / SHORT(1) …
+  – 0 = běžící svíčka; zelená long, červená short, oranžová oba). Při „jen se signálem“
   se symboly bez dat (např. neběžící TWS) sloučí do jednoho řádku. Scanner
   běží na serveru i bez otevřené stránky nad instancemi indikátorů
   v uloženém rozložení grafů (shodné instance ve více grafech se počítají
@@ -385,19 +371,19 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   z IB) může trvat několik minut, další průchody stahují jen novou svíčku.
   Zpráva scanneru odejde jako v TradingView jen přes alert na indikátor
   s podmínkou „Any alert() function call (scanner)“ (Alert → Condition:
-  Svopex TTW); notifikace (Telegram, toast, zvuk, webhook) se nastavují
-  v tomto alertu, ne ve vstupech indikátoru. Alert zůstává aktivní (každá
+  zkratka indikátoru); notifikace (Telegram, toast, zvuk, webhook) se
+  nastavují v tomto alertu, ne ve vstupech indikátoru. Alert zůstává aktivní (každá
   zpráva ho spustí), zpráva alertu má zástupný text `{{message}}` (výchozí
   zpráva = jen text scanneru). Alert patří ke druhu indikátoru – posílá
-  zprávy všech instancí Svopex TTW v rozložení se zapnutým alertem.
+  zprávy všech instancí indikátoru v rozložení se zapnutým alertem.
 - Alert na signál indikátoru (jako v TradingView): v dialogu alertu je první
-  pole zdroj podmínky – cena, nebo indikátor se signály v grafu (Svopex TTW
-  s parametry instance; alert si je uloží). Podmínka Signál Long / Short /
-  Long nebo Short, spouštění „X min před zavřením svíčky“ (signál na běžící
-  svíčce, jako alert Pine skriptu), Once Per Bar Close (signál na uzavřené
+  pole zdroj podmínky – cena, nebo indikátor v grafu, který vrací signály
+  (alert si uloží parametry instance). Podmínka Signál Long / Short / Long
+  nebo Short, spouštění „X min před zavřením svíčky“ (signál na běžící
+  svíčce, jako `alert()` v Pine), Once Per Bar Close (signál na uzavřené
   svíčce), Once Per Bar nebo Only Once. Zpráva má zástupný text `{{signal}}`
-  (např. „LONG ENG“). Alert lze vytvořit i pravým klikem na indikátor
-  (legenda) → „Přidat alert…“. Vyhodnocuje server na pozadí: historie
+  (směr a štítek signálu od indikátoru, např. „LONG <štítek>“). Alert lze
+  vytvořit i pravým klikem na indikátor (legenda) → „Přidat alert…“. Vyhodnocuje server na pozadí: historie
   symbolu se načte jednou, dál se doplňuje živými svíčkami a indikátor se
   přepočítá jen tehdy, když může alert spustit.
 - Časové připomínky (panel Alerty → ⋯ → Časové připomínky…): opakovaná
@@ -415,8 +401,8 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   zastíní); dál měna účtu, počáteční zůstatek, jednotek v lotu (forex
   100 000, jinak 1), krok lotu, tick, spread a skluz v tickách, komise za lot
   a stranu, pevný kurz k měně účtu (0 = automaticky) a automatická pauza
-  (po naplnění příkazu, po uzavření obchodu, při signálu indikátoru – např.
-  Svopex TTW – na uzavřené svíčce; ve výchozím stavu vše vypnuté). Přesnost simulace = základní timeframe:
+  (po naplnění příkazu, po uzavření obchodu, při signálu indikátoru na
+  uzavřené svíčce; ve výchozím stavu vše vypnuté). Přesnost simulace = základní timeframe:
   automaticky nejjemnější, pro který má zdroj data (Binance 1m roky
   zpátky, Yahoo 1m jen ~30 dní, pak 5m / 15m / 1h / 1D), nebo zvolený.
   Grafy se symbolem session přejdou do replaye (fialová tečka v nadpisu,
@@ -639,10 +625,9 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   instrumentu), payload pro graf (čáry, panely, úsečky, značky, legenda)
   se vzhledem výstupů podle záložky Style a výstupy indikátoru pro záložku
   Style (výpočet nad umělými svíčkami)
-- `tickview/indicators/custom/svopex_ttw/` – indikátor Svopex TTW
-  (`indicator.py`), verze jeho Pine skriptu (`pine/`) a jeho testy
-  (`tests/`: porovnání s doslovným přepisem Pine v `ttw_reference.py`,
-  signály, napojení na TickView)
+- `tickview/indicators/custom/<název>/` – vlastní indikátory: `indicator.py`,
+  `README.md` s popisem indikátoru, testy (`tests/`) a další soubory (např.
+  verze Pine skriptu)
 - `tickview/logic/scanner.py` – logika scanneru: úlohy ze vstupů instancí
   indikátorů v rozložení, řádky ze signálů, data tabulky v grafu, texty
   a alert před zavřením svíčky (CloseAlertWindow)

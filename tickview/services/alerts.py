@@ -326,7 +326,7 @@ class AlertEngine(Listeners):
 
         Parametry:
             alert, price, now_ms: spuštěný alert, cena a čas spuštění.
-            signal: popis signálu indikátoru („LONG ENG“) pro zástupný text {{signal}}.
+            signal: popis signálu indikátoru („LONG <štítek>“) pro zástupný text {{signal}}.
         """
         context = message_context(alert, price, self._exchange_name(alert), now_ms, signal)
         message = render_message(alert["message"], context)
@@ -341,7 +341,7 @@ class AlertEngine(Listeners):
         Parametry:
             alert: aktivní alert s podmínkou alert_call.
             message: souhrnná zpráva scanneru.
-            symbol, timeframe: popis do logu a Telegramu („Scanner Svopex TTW“, timeframe scanu).
+            symbol, timeframe: popis do logu a Telegramu („Scanner <název indikátoru>“, timeframe scanu).
         """
         now_ms = utc_now_ms()
         if is_expired(alert, now_ms):

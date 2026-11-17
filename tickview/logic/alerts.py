@@ -11,7 +11,7 @@ Alert je slovník:
 kde target je {"type": "value", "price": cena},
 {"type": "drawing", "id": id kresby, "kind": druh kresby} nebo
 {"type": "indicator", "kind": id indikátoru, "params": parametry, "minutes": předstih}
-(alert na signál indikátoru, např. Svopex TTW). Podmínka "alert_call" na
+(alert na signál indikátoru s has_signals). Podmínka "alert_call" na
 indikátoru se scannerem je kanál pro alert scanneru před zavřením svíčky
 (jako „Any alert() function call“ v TradingView): alert sám nic nevyhodnocuje,
 scanner (tickview/services/scanner.py) přes něj posílá své zprávy.
@@ -72,7 +72,7 @@ INDICATOR_CONDITIONS: dict[str, str] = {
 _CONDITION_DIRECTIONS = {"signal": ("long", "short"), "signal_long": ("long",), "signal_short": ("short",)}
 
 # Spouštění alertu na signál indikátoru: X minut před zavřením svíčky (jako
-# alert Pine skriptu Svopex TTW) nebo triggery cenových alertů
+# alert() v Pine) nebo triggery cenových alertů
 INDICATOR_TRIGGERS: dict[str, str] = {
     "before_close": "X min před zavřením svíčky",
     "per_bar_close": "Once Per Bar Close",
@@ -249,7 +249,7 @@ class AlertTracker:
 
 
 class SignalAlertTracker:
-    """Stav vyhodnocení alertu na signál indikátoru (např. Svopex TTW).
+    """Stav vyhodnocení alertu na signál indikátoru.
 
     Signál na běžící svíčce (bars_ago 0) se může během svíčky objevit
     i zmizet, proto se podle triggeru hlídá:
@@ -298,7 +298,7 @@ class SignalAlertTracker:
         return True
 
     def update(self, signals: list, candle: Candle) -> Optional[str]:
-        """Vyhodnotí signály přepočteného indikátoru; vrátí popis signálu („LONG ENG“), nebo None.
+        """Vyhodnotí signály přepočteného indikátoru; vrátí popis signálu („LONG <štítek>“), nebo None.
 
         Parametry:
             signals: signály indikátoru (Signal s bars_ago, direction, label).
@@ -368,7 +368,7 @@ def default_message(symbol: str, timeframe: str, condition: str, target: dict) -
     """Výchozí zpráva alertu, např. „AUDNZD, 1m Crossing Horizontal ray“.
 
     U alertu na signál indikátoru obsahuje zástupný text {{signal}} (směr
-    a typ formace se doplní při spuštění): „EURUSD, 1h Svopex TTW {{signal}}“.
+    a štítek signálu se doplní při spuštění): „EURUSD, 1h <název indikátoru> {{signal}}“.
     Alert scanneru má jen zástupný text zprávy scanneru {{message}}.
     """
     if condition == ALERT_CALL:
@@ -458,7 +458,7 @@ def normalize_target(values) -> dict:
         kind = source.get("kind")
         indicator = get_indicator(kind) if isinstance(kind, str) else None
         if indicator is None or not indicator.has_signals:
-            raise ValueError("Alert lze nastavit jen na indikátor se signály (např. Svopex TTW).")
+            raise ValueError("Alert lze nastavit jen na indikátor se signály.")
         minutes = source.get("minutes", DEFAULT_ALERT_MINUTES)
         if isinstance(minutes, bool):
             minutes = None
@@ -535,7 +535,7 @@ def normalize_alert(data: dict) -> dict:
 
 
 def describe_alert(alert: dict) -> str:
-    """Krátký popis alertu do seznamu: „Crossing 1.22547 · Once Per Bar“ nebo „Svopex TTW: Signál Long · 10 min před zavřením“."""
+    """Krátký popis alertu do seznamu: „Crossing 1.22547 · Once Per Bar“ nebo „<název indikátoru>: Signál Long · 10 min před zavřením“."""
     target = alert.get("target") or {}
     if target.get("type") == "indicator":
         condition = indicator_conditions(target.get("kind", "")).get(alert.get("condition"), "?")

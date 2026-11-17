@@ -408,7 +408,7 @@ async def _build_index(
         search_state["seq"] += 1
         seq = search_state["seq"]
         providers = [p for p in PROVIDERS if search_state["source"] in ("all", p.id)]
-        # Přímo zadaný "zdroj:SYMBOL" (např. symbol ze vstupů Svopex TTW): hledá se
+        # Přímo zadaný "zdroj:SYMBOL" (např. symbol ze vstupů scanneru indikátoru): hledá se
         # jen v tom zdroji a symbol se nabídne i tehdy, když ho hledání zdroje nevrátí
         direct = provider_symbol(query)
         direct_row = None
@@ -1845,7 +1845,7 @@ async def _build_index(
     # ---------- indikátory ----------
 
     def push_overview(targets: list[ChartPane] | None = None) -> None:
-        """Tabulka scanneru do grafů s viditelným indikátorem se vstupy scanneru (např. Svopex TTW).
+        """Tabulka scanneru do grafů s viditelným indikátorem se vstupy scanneru.
 
         Tabulku grafu určuje scanner podle uloženého rozložení (pořadí grafů).
         """

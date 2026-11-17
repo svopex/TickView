@@ -2421,7 +2421,7 @@
   gap: 0 !important;
 }
 
-/* Tabulka scanneru v grafu (jako v Pine skriptu Svopex TTW); myš
+/* Tabulka scanneru v grafu (jako table v Pine); myš
    prochází do grafu, vpravo nechává místo cenové ose, dole časové */
 .lwchart-overview {
   position: absolute;

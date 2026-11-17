@@ -2,9 +2,8 @@
 
 Připomínka nezávisí na cenách ani signálech – hlídá jen čas. V okně od–do
 (místní čas zvoleného pásma, ve zvolené dny) se posílá v pravidelném
-rozestupu. Odpovídá nočnímu upozornění Pine skriptu Svopex TTW. Modul
-obsahuje jen čisté funkce a stav připomínky bez I/O; odesílání řeší
-tickview/services/reminders.py.
+rozestupu. Modul obsahuje jen čisté funkce a stav připomínky bez I/O;
+odesílání řeší tickview/services/reminders.py.
 """
 
 import json
@@ -21,7 +20,7 @@ from tickview.logic.alerts import DEFAULT_NOTIFY, MAX_MESSAGE_LENGTH, normalize_
 REMINDERS_SETTINGS_KEY = "reminders"
 # Dny v týdnu (0 = pondělí) pro výběr v dialogu
 WEEKDAYS = ("Po", "Út", "St", "Čt", "Pá", "So", "Ne")
-# Výchozí připomínka (noční upozornění z Pine skriptu Svopex TTW)
+# Výchozí připomínka (upozornění na uzavření pozic před noční seancí)
 DEFAULT_REMINDER: dict = {
     "name": "Uzavření pozic",
     "start": "22:30",
@@ -57,7 +56,7 @@ def normalize_reminder(data) -> dict:
     start, end = parse_hhmm(data.get("start")), parse_hhmm(data.get("end"))
     if start is None or end is None:
         raise ValueError("Začátek a konec okna zadejte ve tvaru HH:MM.")
-    # Okno nepřechází přes půlnoc (stejně jako v Pine)
+    # Okno nepřechází přes půlnoc
     if end < start:
         raise ValueError("Konec okna musí být stejně nebo později než začátek (okno nesmí přecházet přes půlnoc).")
     interval = _INTERVAL.normalize(data.get("interval"))

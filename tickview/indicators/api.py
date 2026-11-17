@@ -181,7 +181,7 @@ def _fmt(number: float) -> str:
     return f"{number:g}"
 
 
-# ---------- vstupy scanneru (jako skupina Scanner v Pine skriptu Svopex TTW) ----------
+# ---------- vstupy scanneru (jako request.security a table v Pine) ----------
 
 # Skupiny vstupů scanneru v dialogu nastavení
 G_SCANNER = "Scanner"
@@ -201,7 +201,7 @@ def scanner_params(default_symbols: Sequence[str] = (), timeframe: str = "1h", a
     Scanner (TickView, tickview/services/scanner.py) spočítá indikátor se
     stejnými parametry pro každý vyplněný symbol na timeframu scanu, ukáže
     tabulku v grafu s indikátorem a volitelně pošle alert před zavřením
-    svíčky – stejně jako request.security a table v Pine skriptu.
+    svíčky – stejně jako request.security a table v Pine.
 
     Parametry:
         default_symbols: výchozí symboly ("zdroj:SYMBOL"), zbylá pole jsou prázdná.
@@ -325,7 +325,7 @@ class Signal:
         time: čas svíčky signálu (s UTC).
         direction: "long" nebo "short".
         bars_ago: index svíčky od konce (0 = poslední, rozpracovaná).
-        label: krátký popis (např. typ formace).
+        label: krátký popis (např. název vzoru).
     """
 
     time: int

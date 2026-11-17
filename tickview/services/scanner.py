@@ -1,6 +1,6 @@
 """Scanner na pozadí serveru: signály indikátoru přes symboly z jeho vstupů a alert před zavřením svíčky.
 
-Úlohy scanneru jsou instance indikátorů se vstupy scanneru (Svopex TTW)
+Úlohy scanneru jsou instance indikátorů se vstupy scanneru (scanner_params)
 v rozložení grafů (viz logic.scanner.make_job). ScannerService každou úlohu
 přepočítá jednou za SCAN_INTERVAL_S (novou úlohu hned): pro každý symbol ze
 vstupů stáhne historii timeframu scanu (přes cache, ze sítě jen chybějící
