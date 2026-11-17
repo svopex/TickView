@@ -366,9 +366,36 @@
   overflow-y: auto;
 }
 
-.drawing-toolbar .drawing-btn {
+/* Tlačítka s SVG piktogramem: lišta kreslení a typ grafu v horní liště */
+.drawing-toolbar .drawing-btn,
+.chart-type-btn {
   min-height: 36px;
   min-width: 36px;
+  padding: 2px;
+}
+
+/* Barva piktogramů podle motivu (tlačítka nemají barvu Quasaru) */
+.body--dark .drawing-toolbar .drawing-btn,
+.body--dark .chart-type-btn {
+  color: #d1d4dc;
+}
+
+.body--light .drawing-toolbar .drawing-btn,
+.body--light .chart-type-btn {
+  color: #131722;
+}
+
+/* SVG piktogram (icons.py): 28×28, tah v barvě textu */
+.tv-icon-wrap {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+}
+
+.tv-icon-wrap svg {
+  width: 100%;
+  height: 100%;
 }
 
 .toolbar-sep {
@@ -376,14 +403,10 @@
   align-self: center;
 }
 
-.drawing-btn-active {
+.drawing-btn-active,
+.drawing-toolbar .drawing-btn.drawing-btn-active {
   background: rgba(41, 98, 255, 0.15);
   color: #2962ff;
-}
-
-/* Tlačítko barvy nových kreseb v liště nástrojů */
-.toolbar-color {
-  margin: 4px 0;
 }
 
 /* Překryvný canvas pro kreslení: průchodný myši, v módě kreslení zachytává kliky.
@@ -426,9 +449,34 @@
   gap: 8px !important;
 }
 
+/* Název aktivního seznamu (tlačítko s nabídkou seznamů) */
 .watchlist-title {
   font-weight: 600;
   font-size: 14px;
+  color: inherit;
+  padding: 0 4px;
+}
+
+.wl-item {
+  align-items: center;
+}
+
+.wl-name {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Počet symbolů seznamu vpravo */
+.wl-count {
+  margin-left: 16px;
+  color: #808080;
+  font-size: 12px;
+}
+
+.wl-danger {
+  color: #f23645;
 }
 
 .watchlist-body {
@@ -436,6 +484,7 @@
 }
 
 .watch-row {
+  cursor: pointer;
   align-items: center;
   gap: 6px !important;
   padding: 3px 4px;
@@ -541,7 +590,8 @@
 }
 
 .tool-flyout-icon {
-  font-size: 18px !important;
+  width: 24px;
+  height: 24px;
 }
 
 /* Nápověda pod položkami flyoutu (např. Ctrl u magnetu) */
@@ -1027,12 +1077,15 @@
   color: inherit;
 }
 
-/* Nabídka šablon */
-.tpl-menu {
+/* Nabídky šablon, seznamů symbolů a typů grafu */
+.tpl-menu,
+.wl-menu,
+.chart-type-menu {
   min-width: 220px;
 }
 
-.tpl-item {
+.tpl-item,
+.wl-item {
   min-height: 36px;
   font-size: 14px;
 }
@@ -1072,9 +1125,9 @@
 
 /* Hvězdička oblíbeného nástroje vpravo v položce flyoutu */
 .tool-flyout-star {
+  width: 20px;
+  height: 20px;
   margin-left: auto;
-  padding-left: 16px;
-  font-size: 18px !important;
   color: #808080;
   opacity: 0;
 }
@@ -1152,10 +1205,6 @@
   color: #131722;
 }
 
-.fav-tool .material-icons {
-  font-size: 20px;
-}
-
 .fav-tool:hover {
   background: rgba(128, 128, 128, 0.2);
 }
@@ -1163,4 +1212,13 @@
 .fav-tool.active {
   background: rgba(41, 98, 255, 0.18);
   color: #2962ff;
+}
+
+/* ---------- Typ grafu (nabídka v horní liště) ---------- */
+
+.chart-type-item {
+  align-items: center;
+  gap: 12px;
+  min-height: 38px;
+  font-size: 14px;
 }

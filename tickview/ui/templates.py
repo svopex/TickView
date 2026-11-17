@@ -7,8 +7,8 @@ from nicegui import ui
 
 from tickview.logic.cache import KlineCache
 from tickview.logic.styles import (
-    MAX_TEMPLATE_NAME,
-    clean_template_name,
+    MAX_NAME_LENGTH,
+    clean_name,
     default_template_key,
     delete_template,
     load_templates,
@@ -79,7 +79,9 @@ class TemplateMenu:
         apply: promítne hodnoty šablony do dialogu.
         apply_factory: nastaví v dialogu tovární výchozí hodnoty.
         allow_default: nabízet „Save as default“ (nové instance pak převezmou
-            uloženou výchozí šablonu – indikátory).
+            uloženou výchozí šablonu – indikátory, kresby).
+        on_default_change: async callback po uložení / zrušení výchozí šablony
+            (např. předání výchozího stylu nových kreseb do grafu).
     """
 
     def __init__(
@@ -90,6 +92,7 @@ class TemplateMenu:
         apply: Callable[[dict], None],
         apply_factory: Callable[[], None],
         allow_default: bool = False,
+        on_default_change: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self._cache = cache
         self._get_scope = get_scope
@@ -97,6 +100,7 @@ class TemplateMenu:
         self._apply = apply
         self._apply_factory = apply_factory
         self._allow_default = allow_default
+        self._on_default_change = on_default_change
         # Tlačítko s nabídkou (Quasar QMenu se otevírá klikem na rodiče)
         with ui.button("Template", color=None).props("outline no-caps icon-right=expand_less").classes("tpl-button") as self.button:
             self.menu = ui.menu().props("anchor='top left' self='bottom left'").classes("tpl-menu")
@@ -104,7 +108,7 @@ class TemplateMenu:
         with ui.dialog() as self.name_dialog, ui.card().classes("tpl-name-dialog"):
             ui.label("Uložit šablonu").classes("tv-settings-title")
             self.name_input = (
-                ui.input("Název šablony", validation={"Nejvýš 40 znaků": lambda value: len(value or "") <= MAX_TEMPLATE_NAME})
+                ui.input("Název šablony", validation={"Nejvýš 40 znaků": lambda value: len(value or "") <= MAX_NAME_LENGTH})
                 .props("outlined dense autofocus")
                 .classes("w-full")
             )
@@ -179,9 +183,9 @@ class TemplateMenu:
 
     async def _save_named(self) -> None:
         # Uloží hodnoty dialogu pod zadaným názvem (stejný název přepíše)
-        name = clean_template_name(self.name_input.value)
+        name = clean_name(self.name_input.value)
         if not name:
-            ui.notify(f"Zadejte název šablony (1–{MAX_TEMPLATE_NAME} znaků).", type="warning")
+            ui.notify(f"Zadejte název šablony (1–{MAX_NAME_LENGTH} znaků).", type="warning")
             return
         values = self._collect()
         if values is None:
@@ -195,17 +199,21 @@ class TemplateMenu:
         ui.notify(f"Šablona „{name}“ {'přepsána' if overwritten else 'uložena'}.")
 
     async def _save_default(self) -> None:
-        # Výchozí šablona: převezmou ji nově přidané instance (indikátory)
+        # Výchozí šablona: převezmou ji nově přidané instance (indikátory, kresby)
         values = self._collect()
         if values is None:
             return
         await self._cache.set_setting(default_template_key(self._get_scope()), json.dumps(values))
+        if self._on_default_change:
+            await self._on_default_change()
         await self.refresh()
         ui.notify("Uloženo jako výchozí nastavení.")
 
     async def _reset_default(self) -> None:
         # Zruší uživatelskou výchozí šablonu a vrátí tovární hodnoty
         await self._cache.set_setting(default_template_key(self._get_scope()), "")
+        if self._on_default_change:
+            await self._on_default_change()
         self._apply_factory()
         await self.refresh()
         ui.notify("Výchozí nastavení vráceno na tovární.")

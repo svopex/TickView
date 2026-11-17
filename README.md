@@ -131,12 +131,28 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   (vpravo do budoucna, přes víkendové mezery), mazání
   přes pravoklikové menu („Smazat objekt“), Del nebo koš, magnet na OHLC,
   tužka (nástroj zůstává aktivní), zámek a skrytí kreseb; text i sticker se
-  zadávají v dialogu po kliknutí do grafu; tlačítko barvy nových kreseb
-  (výběr barvy ve stylu TradingView, volba se ukládá); kresby
-  se ukládají k symbolu a timeframe (přetrvávají restart). Watchlist v levém
-  panelu (přidat/odebrat, klik přepne graf a řádek se zvýrazní jako aktuální,
-  poslední cena a denní změna – Binance živě po 5 s, Yahoo po 60 s, IBKR po
-  30 s, Alpaca snapshots po 5 s).
+  zadávají v dialogu po kliknutí do grafu; barvu, šířku a styl nové kresby
+  určuje výchozí šablona typu kresby (viz Šablony); kresby
+  se ukládají k symbolu a timeframe (přetrvávají restart). Lišta i nabídky
+  používají vlastní tenké SVG piktogramy ve stylu TradingView. Watchlist
+  v levém panelu (přidat/odebrat, klik kamkoli do řádku – symbol, cena,
+  změna – přepne graf a řádek se zvýrazní jako aktuální, poslední cena
+  a denní změna – Binance živě po 5 s, Yahoo po 60 s, IBKR po 30 s, Alpaca
+  snapshots po 5 s).
+- Více seznamů symbolů jako v TradingView: název aktivního seznamu v hlavičce
+  watchlistu otevře nabídku seznamů (s počtem symbolů; klik přepne) a správu
+  aktivního seznamu – „Nový seznam…“, „Přejmenovat…“, „Vytvořit kopii…“,
+  „Vyprázdnit seznam“ a „Smazat seznam“ (s potvrzením; poslední seznam smazat
+  nejde). Stejný symbol může být ve více seznamech; vyhledávání i tlačítko +
+  přidávají do aktivního seznamu, aktivní seznam se pamatuje. Původní jediný
+  watchlist se při prvním spuštění převede do seznamu „Watchlist“.
+- Typ grafu jako v TradingView (tlačítko s ikonou vedle timeframů): Bars,
+  Candles, Hollow candles, Line, Line with markers, Step line, Area,
+  Baseline (základna v polovině rozpětí dat), Columns, High-low a Heikin Ashi;
+  barvy růstu / poklesu bere ze Settings grafu, volba se ukládá.
+- Měřič jako v TradingView: obdélník modrý při růstu / červený při poklesu,
+  šipky středem (cena svisle, čas vodorovně) a štítek s Δcenou, % a počtem
+  ticků, počtem barů a délkou úseku a součtem objemu.
 - Nadpis grafu ve stylu TradingView: „Název · timeframe · burza“ (název firmy
   / páru a burzu dodá zdroj), barevná tečka stavu dat (zelená živě, oranžová
   zpožděno), O/H/L/C obarvené podle směru svíčky, změna proti předchozímu
@@ -161,8 +177,7 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   obarvení svíček podle předchozího závěru a zobrazení objemu (Volume; objem
   lze skrýt i okem v řádku Vol). Změny v Settings grafu se hned ukazují
   v grafu, uloží se tlačítkem Ok, Cancel / zavření je vrátí.
-- Výběr barvy jako v TradingView (Settings grafu, indikátoru, kresby a barva
-  nových kreseb v liště): řada šedých, hlavní barvy, šest řad odstínů,
+- Výběr barvy jako v TradingView (Settings grafu, indikátoru a kresby): řada šedých, hlavní barvy, šest řad odstínů,
   vlastní barvy (tlačítko + otevře systémový výběr; ukládají se v prohlížeči)
   a průhlednost posuvníkem nebo v % – průhledná barva se ukládá jako
   `rgba(…)`, plná jako `#rrggbb`.
@@ -170,9 +185,10 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   indikátoru (pro typ indikátoru) a kresby (pro typ kresby): „Apply defaults“
   (výchozí hodnoty), „Save as…“ (pojmenovaná šablona; stejný název přepíše),
   pod čarou uložené šablony – klik je použije, křížek smaže. U indikátorů
-  navíc „Save as default“ – nově přidaný indikátor daného typu převezme
-  parametry a barvu ze šablony (a „Apply defaults“ ji použije); „Reset
-  default“ vrátí tovární hodnoty. Šablony se ukládají do SQLite.
+  a kreseb navíc „Save as default“ – nově přidaný indikátor (parametry,
+  barva) nebo nová kresba (barva, šířka a styl čáry, písmo) daného typu
+  převezme výchozí šablonu (a „Apply defaults“ ji použije); „Reset default“
+  vrátí tovární hodnoty. Šablony se ukládají do SQLite.
 - Oblíbené nástroje: ve flyout nabídce nástrojů je u každého nástroje
   hvězdička, u skupin s jediným nástrojem (kurzor, měřič) pravý klik na
   tlačítko lišty. Oblíbené nástroje se ukazují v plovoucím panelu nad grafem
@@ -276,13 +292,14 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   timeframy), aktivace po zadání klíčů
 - `tickview/providers/__init__.py` – registr zdrojů (nový zdroj = jeden řádek)
 - `tickview/logic/cache.py` – SQLite cache svíček, nastavení, kreseb,
-  watchlistu a evidence stažených intervalů; skládání historie z cache a sítě
+  seznamů symbolů (watchlistů) a evidence stažených intervalů; skládání historie z cache a sítě
   (ze sítě stahuje jen chybějící úseky)
 - `tickview/logic/indicators.py` – definice (kategorie, popis, parametry)
   a výpočet 28 indikátorů přes pandas-ta, payload overlay čar, panelů
   a skupin legendy pro graf, kontrola parametrů a načtení uložených indikátorů
 - `tickview/logic/styles.py` – kontrola barev (`#rrggbb` / `rgba`), styl
-  svíček grafu, šablony nastavení (Template) a oblíbené nástroje
+  svíček a typy grafu, styl kreseb, šablony nastavení (Template), názvy
+  a oblíbené nástroje
 - `tickview/logic/sessions.py` – filtr hlavní obchodní seance (RTH) a seznam
   časových pásem pro nabídku
 - `tickview/ui/lightweight_chart.py` – vlastní komponenta NiceGUI obalující
@@ -290,7 +307,9 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   indikátory, kreslení, fronta událostí z grafu)
 - `tickview/ui/color_button.py` + `color_button.js` – tlačítko barvy
   (vlastní komponenta NiceGUI), které otevírá výběr barvy
-- `tickview/ui/templates.py` – nabídka šablon „Template“ pro dialogy Settings
+- `tickview/ui/icons.py` – SVG piktogramy lišty kreslení a typů grafu
+- `tickview/ui/templates.py` – dialogy Settings (hlavička, tlačítka) a nabídka
+  šablon „Template“
 - `tickview/ui/main_window.py` – hlavní stránka: vyhledání symbolu, timeframy,
   watchlist, nabídka a Settings indikátorů, lišta kreslení, Settings kreseb
   a grafu, živý stream, stavová lišta se seancí a časovým pásmem

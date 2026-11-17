@@ -20,10 +20,16 @@ class LightweightChart(ui.element):
         on_ready: async callback volaný po inicializaci grafu v prohlížeči.
         show_volume: zda zobrazit objem (Settings grafu).
         chart_style: styl svíček (Settings grafu, viz CHART_DEFAULTS).
+        chart_type: typ grafu (viz CHART_TYPES – svíčky, čára, …).
     """
 
     def __init__(
-        self, dark: bool = True, on_ready=None, show_volume: bool = True, chart_style: dict | None = None
+        self,
+        dark: bool = True,
+        on_ready=None,
+        show_volume: bool = True,
+        chart_style: dict | None = None,
+        chart_type: str = "candles",
     ) -> None:
         super().__init__("div")
         self._js_id = f"tickview-chart-{uuid.uuid4().hex[:8]}"
@@ -34,6 +40,7 @@ class LightweightChart(ui.element):
         self._dark = dark
         self._show_volume = show_volume
         self._chart_style = chart_style or dict(CHART_DEFAULTS)
+        self._chart_type = chart_type
         self._on_ready = on_ready
         # Graf inicializujeme až po prvním vykreslení stránky v prohlížeči
         ui.timer(0.1, self._init_in_browser, once=True)
@@ -56,7 +63,15 @@ class LightweightChart(ui.element):
             return await ui.run_javascript("return " + self._js(method, args) + ";")
 
     async def _init_in_browser(self) -> None:
-        self._call("init", {"dark": self._dark, "showVolume": self._show_volume, "chartStyle": self._chart_style})
+        self._call(
+            "init",
+            {
+                "dark": self._dark,
+                "showVolume": self._show_volume,
+                "chartStyle": self._chart_style,
+                "chartType": self._chart_type,
+            },
+        )
         if self._on_ready:
             await self._on_ready()
 
@@ -112,9 +127,9 @@ class LightweightChart(ui.element):
         """Zapne/vypne kreslicí mód (hline/trend/rect/brush/fib/text/measure/None)."""
         self._call("setDrawingMode", mode)
 
-    async def set_drawing_color(self, color: str) -> None:
-        """Nastaví barvu nových kreseb."""
-        self._call("setDrawingColor", color)
+    def set_drawing_defaults(self, defaults: dict[str, dict]) -> None:
+        """Výchozí styl nových kreseb podle typu: {druh: {"color", "options"}} (výchozí šablony)."""
+        self._call("setDrawingDefaults", defaults)
 
     async def set_magnet(self, mode: str) -> None:
         """Nastaví režim magnetu: "off", "weak" (jen v blízkosti OHLC) nebo "strong" (vždy na OHLC)."""
@@ -164,6 +179,14 @@ class LightweightChart(ui.element):
     def set_chart_style(self, style: dict) -> None:
         """Použije styl svíček (barvy těla, okrajů a knotů, obarvení podle předchozího závěru)."""
         self._call("setChartStyle", style)
+
+    def set_icons(self, icons: dict[str, str]) -> None:
+        """Pošle SVG piktogramy nástrojů (icons.ICONS) pro flyout nabídky a panel oblíbených."""
+        self._call("setIcons", icons)
+
+    def set_chart_type(self, chart_type: str) -> None:
+        """Přepne typ grafu (Bars, Candles, Line, Area, …)."""
+        self._call("setChartType", chart_type)
 
     def set_favorites(self, modes: list[str], position: dict | None, visible: bool) -> None:
         """Oblíbené nástroje pro plovoucí panel.

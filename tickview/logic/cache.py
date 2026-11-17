@@ -44,6 +44,19 @@ CREATE TABLE IF NOT EXISTS watchlist (
     added_at TEXT   NOT NULL DEFAULT (datetime('now')),
     UNIQUE (source, symbol)
 );
+-- Pojmenované seznamy symbolů (více watchlistů jako v TradingView)
+CREATE TABLE IF NOT EXISTS watchlists (
+    id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    name  TEXT    NOT NULL
+);
+-- Symboly seznamů; stejný symbol může být ve více seznamech
+CREATE TABLE IF NOT EXISTS watchlist_items (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    list_id  INTEGER NOT NULL,
+    source   TEXT    NOT NULL,
+    symbol   TEXT    NOT NULL,
+    UNIQUE (list_id, source, symbol)
+);
 -- Intervaly (UTC ms), které už byly stažené ze sítě a jsou v cache kompletní;
 -- mezery mezi svíčkami uvnitř nich jsou skutečné (noc, víkend), ne díry
 CREATE TABLE IF NOT EXISTS fetched_ranges (
@@ -56,6 +69,10 @@ CREATE TABLE IF NOT EXISTS fetched_ranges (
 CREATE INDEX IF NOT EXISTS idx_fetched_ranges
     ON fetched_ranges (source, symbol, timeframe);
 """
+
+# Název seznamu, který vznikne při prvním spuštění (a do kterého se převede
+# původní jediný watchlist)
+DEFAULT_WATCHLIST_NAME = "Watchlist"
 
 # Migrace pro starší databáze: sloupce color, text a options (JSON se šířkou
 # a stylem čáry) v tabulce drawings – přidané dodatečně, CREATE TABLE IF NOT
@@ -103,6 +120,16 @@ class KlineCache:
             except sqlite3.OperationalError:
                 # Sloupce už existují – migrace se přeskočí
                 pass
+        # Bez seznamů (první spuštění nebo databáze s jediným watchlistem):
+        # vytvoříme výchozí seznam a převedeme do něj symboly původní tabulky
+        if self._conn.execute("SELECT COUNT(*) FROM watchlists").fetchone()[0] == 0:
+            cur = self._conn.execute("INSERT INTO watchlists (name) VALUES (?)", (DEFAULT_WATCHLIST_NAME,))
+            self._conn.execute(
+                "INSERT OR IGNORE INTO watchlist_items (list_id, source, symbol) "
+                "SELECT ?, source, symbol FROM watchlist ORDER BY id",
+                (cur.lastrowid,),
+            )
+        self._conn.commit()
 
     async def load(
         self,
@@ -240,6 +267,18 @@ class KlineCache:
         cur = self._conn.execute("SELECT value FROM settings WHERE key = ?", (key,))
         return cur.fetchone()
 
+    async def get_settings_prefix(self, prefix: str) -> dict[str, str]:
+        """Vrátí všechna nastavení, jejichž klíč začíná prefixem (jedním dotazem)."""
+        async with self._lock:
+            rows = await asyncio.to_thread(self._get_settings_prefix_sync, prefix)
+        return dict(rows)
+
+    def _get_settings_prefix_sync(self, prefix: str):
+        # substr místo LIKE – prefix může obsahovat znaky _ a %, které LIKE bere jako zástupné
+        return self._conn.execute(
+            "SELECT key, value FROM settings WHERE substr(key, 1, ?) = ?", (len(prefix), prefix)
+        ).fetchall()
+
     async def set_setting(self, key: str, value: str) -> None:
         """Uloží nastavení (key/value) do SQLite."""
         async with self._lock:
@@ -293,11 +332,12 @@ class KlineCache:
         points: list[dict],
         color: Optional[str] = None,
         text: Optional[str] = None,
+        options: Optional[dict] = None,
     ) -> int:
-        """Uloží jednu kresbu (typ + body + barva + volitelný text); vrátí její id."""
+        """Uloží jednu kresbu (typ + body + barva + volitelný text a styl čáry/písma); vrátí její id."""
         async with self._lock:
             return await asyncio.to_thread(
-                self._add_drawing_sync, source, symbol, timeframe, kind, points, color, text
+                self._add_drawing_sync, source, symbol, timeframe, kind, points, color, text, options
             )
 
     def _add_drawing_sync(
@@ -309,13 +349,15 @@ class KlineCache:
         points: list[dict],
         color: Optional[str],
         text: Optional[str],
+        options: Optional[dict],
     ) -> int:
+        # Volby (šířka, styl čáry, písmo) jako JSON; bez voleb NULL jako u starších kreseb
         cur = self._conn.execute(
             """
-            INSERT INTO drawings (source, symbol, timeframe, kind, points, color, text)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO drawings (source, symbol, timeframe, kind, points, color, text, options)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (source, symbol, timeframe, kind, json.dumps(points), color, text),
+            (source, symbol, timeframe, kind, json.dumps(points), color, text, json.dumps(options) if options else None),
         )
         self._conn.commit()
         return int(cur.lastrowid)
@@ -407,43 +449,92 @@ class KlineCache:
         )
         self._conn.commit()
 
-    # ---------- watchlist ----------
+    # ---------- watchlisty (pojmenované seznamy symbolů) ----------
 
-    async def watchlist_list(self) -> list[dict]:
-        """Vrátí sledované symboly v pořadí přidání."""
+    async def _run(self, func, *args):
+        # Synchronní operace nad databází ve vlákně, pod zámkem
         async with self._lock:
-            rows = await asyncio.to_thread(self._watchlist_list_sync)
+            return await asyncio.to_thread(func, *args)
+
+    async def watchlists(self) -> list[dict]:
+        """Vrátí seznamy symbolů [{"id", "name", "count"}] v pořadí vytvoření."""
+        rows = await self._run(self._watchlists_sync)
+        return [{"id": row[0], "name": row[1], "count": row[2]} for row in rows]
+
+    def _watchlists_sync(self):
+        # Počet symbolů každého seznamu jedním dotazem (LEFT JOIN – i prázdné seznamy)
+        return self._conn.execute(
+            """
+            SELECT w.id, w.name, COUNT(i.id)
+            FROM watchlists w LEFT JOIN watchlist_items i ON i.list_id = w.id
+            GROUP BY w.id ORDER BY w.id
+            """
+        ).fetchall()
+
+    async def watchlist_create(self, name: str, copy_from: Optional[int] = None) -> int:
+        """Vytvoří seznam; s copy_from do něj zkopíruje symboly jiného seznamu. Vrátí id."""
+        return await self._run(self._watchlist_create_sync, name, copy_from)
+
+    def _watchlist_create_sync(self, name: str, copy_from: Optional[int]) -> int:
+        cur = self._conn.execute("INSERT INTO watchlists (name) VALUES (?)", (name,))
+        list_id = int(cur.lastrowid)
+        if copy_from is not None:
+            # Kopie zachová pořadí symbolů původního seznamu
+            self._conn.execute(
+                "INSERT INTO watchlist_items (list_id, source, symbol) "
+                "SELECT ?, source, symbol FROM watchlist_items WHERE list_id = ? ORDER BY id",
+                (list_id, copy_from),
+            )
+        self._conn.commit()
+        return list_id
+
+    async def watchlist_rename(self, list_id: int, name: str) -> None:
+        """Přejmenuje seznam."""
+        await self._run(self._execute_sync, "UPDATE watchlists SET name = ? WHERE id = ?", (name, list_id))
+
+    async def watchlist_clear(self, list_id: int) -> None:
+        """Odebere ze seznamu všechny symboly."""
+        await self._run(self._execute_sync, "DELETE FROM watchlist_items WHERE list_id = ?", (list_id,))
+
+    async def watchlist_delete(self, list_id: int) -> None:
+        """Smaže seznam i s jeho symboly."""
+        await self._run(self._watchlist_delete_sync, list_id)
+
+    def _watchlist_delete_sync(self, list_id: int) -> None:
+        self._conn.execute("DELETE FROM watchlist_items WHERE list_id = ?", (list_id,))
+        self._conn.execute("DELETE FROM watchlists WHERE id = ?", (list_id,))
+        self._conn.commit()
+
+    def _execute_sync(self, sql: str, params: tuple) -> None:
+        # Jeden zápisový příkaz s potvrzením
+        self._conn.execute(sql, params)
+        self._conn.commit()
+
+    async def watchlist_list(self, list_id: int) -> list[dict]:
+        """Vrátí symboly seznamu v pořadí přidání."""
+        rows = await self._run(self._watchlist_list_sync, list_id)
         return [{"source": row[0], "symbol": row[1]} for row in rows]
 
-    def _watchlist_list_sync(self):
-        cur = self._conn.execute(
-            "SELECT source, symbol FROM watchlist ORDER BY id"
+    def _watchlist_list_sync(self, list_id: int):
+        return self._conn.execute(
+            "SELECT source, symbol FROM watchlist_items WHERE list_id = ? ORDER BY id", (list_id,)
+        ).fetchall()
+
+    async def watchlist_add(self, list_id: int, source: str, symbol: str) -> None:
+        """Přidá symbol do seznamu (duplicita se ignoruje)."""
+        await self._run(
+            self._execute_sync,
+            "INSERT OR IGNORE INTO watchlist_items (list_id, source, symbol) VALUES (?, ?, ?)",
+            (list_id, source, symbol),
         )
-        return cur.fetchall()
 
-    async def watchlist_add(self, source: str, symbol: str) -> None:
-        """Přidá symbol do watchlistu (duplicita se ignoruje)."""
-        async with self._lock:
-            await asyncio.to_thread(self._watchlist_add_sync, source, symbol)
-
-    def _watchlist_add_sync(self, source: str, symbol: str) -> None:
-        self._conn.execute(
-            "INSERT OR IGNORE INTO watchlist (source, symbol) VALUES (?, ?)",
-            (source, symbol),
+    async def watchlist_remove(self, list_id: int, source: str, symbol: str) -> None:
+        """Odebere symbol ze seznamu."""
+        await self._run(
+            self._execute_sync,
+            "DELETE FROM watchlist_items WHERE list_id = ? AND source = ? AND symbol = ?",
+            (list_id, source, symbol),
         )
-        self._conn.commit()
-
-    async def watchlist_remove(self, source: str, symbol: str) -> None:
-        """Odebere symbol z watchlistu."""
-        async with self._lock:
-            await asyncio.to_thread(self._watchlist_remove_sync, source, symbol)
-
-    def _watchlist_remove_sync(self, source: str, symbol: str) -> None:
-        self._conn.execute(
-            "DELETE FROM watchlist WHERE source = ? AND symbol = ?",
-            (source, symbol),
-        )
-        self._conn.commit()
 
 
 def uncovered_ranges(

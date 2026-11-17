@@ -24,11 +24,23 @@ from tickview.logic.indicators import (
 )
 from tickview.logic.styles import (
     CHART_DEFAULTS,
+    CHART_TYPE_SECTIONS,
+    CHART_TYPES,
+    DEFAULT_DRAWING_COLOR,
+    DEFAULT_FONT_SIZE,
+    DEFAULT_LINE_WIDTH,
+    DRAWING_LINE_STYLES,
+    DRAWING_LINE_WIDTHS,
+    MAX_NAME_LENGTH,
+    clean_name,
+    default_template_key,
     load_chart_style,
     load_favorite_tools,
     load_panel_position,
     normalize_chart_style,
+    normalize_chart_type,
     normalize_color,
+    normalize_drawing_style,
     normalize_favorite_tools,
     normalize_panel_position,
 )
@@ -42,6 +54,7 @@ from tickview.logic.sessions import (
 from tickview.providers import PROVIDERS, get_provider
 from tickview.providers.base import TIMEFRAME_MS, Candle, StreamStatus, is_closed, utc_now_ms
 from tickview.ui.color_button import ColorButton
+from tickview.ui.icons import ICONS, svg
 from tickview.ui.lightweight_chart import LightweightChart
 from tickview.ui.templates import TemplateMenu, load_default_template, settings_buttons, settings_header
 
@@ -54,24 +67,6 @@ VISIBLE_BARS = 150
 OLDER_LOAD_ATTEMPTS = 4
 # Jak často nejvýš se z živých svíček přepočítají indikátory (sekundy)
 LIVE_INDICATOR_REFRESH_S = 2.0
-# Tovární styl kreseb: barva (nové kresby, „Apply defaults“), šířka čáry a písmo
-DEFAULT_DRAWING_COLOR = "#2962ff"
-DEFAULT_LINE_WIDTH = 1.5
-DEFAULT_FONT_SIZE = 13
-# Za jak dlouho po poslední změně barvy v liště se barva uloží (tažení
-# průhlednosti posílá změny průběžně – do databáze stačí výsledná)
-DRAWING_COLOR_SAVE_DELAY_S = 0.5
-
-
-def clamp_font_size(value) -> int:
-    """Velikost písma textové kresby v rozsahu 8–72 px (neplatná hodnota = výchozí)."""
-    try:
-        return max(8, min(72, int(value or DEFAULT_FONT_SIZE)))
-    except (TypeError, ValueError):
-        return DEFAULT_FONT_SIZE
-
-
-
 # Složka statických souborů UI (styly, JS grafu, vendored knihovna)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -90,6 +85,16 @@ def _static_version() -> str:
 
 # Verze se počítá jednou při startu (ne při každém načtení stránky)
 STATIC_VERSION = _static_version()
+
+
+def icon_html(name: str) -> ui.html:
+    """SVG piktogram z icons.py jako prvek UI (statický obsah – bez sanitizace)."""
+    return ui.html(svg(name), sanitize=False).classes("tv-icon-wrap")
+
+
+def drawing_scope(kind: str) -> str:
+    """Rozsah šablon Settings kresby daného typu (šablony i výchozí styl nových kreseb)."""
+    return f"drawing.{kind}"
 
 
 def register(cache: KlineCache) -> None:
@@ -125,8 +130,8 @@ async def _build_index(cache: KlineCache) -> None:
     saved_magnet = await cache.get_setting("magnet", "off") or "off"
     # Styl svíček (Settings grafu); objem drží samostatné nastavení show_volume
     chart_style = load_chart_style(await cache.get_setting("chart_style"))
-    # Barva nových kreseb (tlačítko barvy v liště)
-    saved_drawing_color = normalize_color(await cache.get_setting("drawing_color")) or DEFAULT_DRAWING_COLOR
+    # Typ grafu z minula (Bars, Candles, Line, …)
+    saved_chart_type = normalize_chart_type(await cache.get_setting("chart_type"))
     # Handle si držíme: každé volání ui.dark_mode() by vytvořilo nový prvek
     dark_mode = ui.dark_mode(dark)
 
@@ -237,12 +242,13 @@ async def _build_index(cache: KlineCache) -> None:
     async def add_key_to_watchlist(key: str) -> None:
         # Přidá symbol "zdroj:symbol" do watchlistu, jen když tam ještě není
         provider_id, _, symbol = key.partition(":")
+        list_name = state.get("watchlist_name", "")
         if key in watch_rows:
-            show_status(f"{symbol} už ve watchlistu je ({provider_id}).")
+            show_status(f"{symbol} už v seznamu {list_name} je ({provider_id}).")
             return
-        await cache.watchlist_add(provider_id, symbol)
+        await cache.watchlist_add(state["watchlist_id"], provider_id, symbol)
         await rebuild_watchlist()
-        show_status(f"{symbol} přidán do watchlistu ({provider_id}).")
+        show_status(f"{symbol} přidán do seznamu {list_name} ({provider_id}).")
 
     def make_load_from_search(key: str):
         # Klik na návrh: přidá do watchlistu (jen když tam ještě není), načte graf
@@ -599,6 +605,20 @@ async def _build_index(cache: KlineCache) -> None:
 
         asyncio.create_task(run())
 
+    async def set_chart_type(chart_type: str) -> None:
+        # Typ grafu z nabídky v horní liště: graf, ikona tlačítka, zvýraznění; přetrvá restart
+        chart_type = normalize_chart_type(chart_type)
+        chart.set_chart_type(chart_type)
+        chart_type_icon.content = svg(CHART_TYPES[chart_type][1])
+        mark_active(chart_type_items, chart_type)
+        await cache.set_setting("chart_type", chart_type)
+
+    def make_chart_type_click(chart_type: str):
+        async def _handler() -> None:
+            await set_chart_type(chart_type)
+
+        return _handler
+
     async def toggle_theme(value: bool) -> None:
         dark_mode.set_value(value)
         await chart.set_theme(value)
@@ -614,41 +634,41 @@ async def _build_index(cache: KlineCache) -> None:
     # Skupiny nástrojů lišty (jako v TradingView): id, ikona, tooltip, nástroje;
     # položka {"section": …} je jen nadpis sekce ve flyout nabídce
     DRAWING_GROUPS = [
-        {"id": "g_cursor", "icon": "near_me", "tooltip": "Kurzor (výběr a tažení kreseb)",
-         "tools": [{"mode": "cursor", "tooltip": "Kurzor", "icon": "near_me"}]},
-        {"id": "g_lines", "icon": "show_chart", "tooltip": "Čáry, kanály a pitchforky",
+        {"id": "g_cursor", "icon": "cursor", "tooltip": "Kurzor (výběr a tažení kreseb)",
+         "tools": [{"mode": "cursor", "tooltip": "Kurzor", "icon": "cursor"}]},
+        {"id": "g_lines", "icon": "trend", "tooltip": "Čáry, kanály a pitchforky",
          "tools": [
              {"section": "Čáry"},
-             {"mode": "trend", "tooltip": "Trendová čára", "icon": "show_chart"},
-             {"mode": "ray", "tooltip": "Polopřímka", "icon": "trending_up"},
-             {"mode": "extended", "tooltip": "Přímka (oboustranná)", "icon": "sync_alt"},
-             {"mode": "arrow", "tooltip": "Trendová šipka", "icon": "north_east"},
-             {"mode": "hline", "tooltip": "Horizontální linie", "icon": "horizontal_rule"},
-             {"mode": "hray", "tooltip": "Horizontální polopřímka", "icon": "trending_flat"},
-             {"mode": "vline", "tooltip": "Svislá linie", "icon": "height"},
-             {"mode": "cross", "tooltip": "Kříž", "icon": "add"},
+             {"mode": "trend", "tooltip": "Trendová čára", "icon": "trend"},
+             {"mode": "ray", "tooltip": "Polopřímka", "icon": "ray"},
+             {"mode": "extended", "tooltip": "Přímka (oboustranná)", "icon": "extended"},
+             {"mode": "arrow", "tooltip": "Trendová šipka", "icon": "arrow"},
+             {"mode": "hline", "tooltip": "Horizontální linie", "icon": "hline"},
+             {"mode": "hray", "tooltip": "Horizontální polopřímka", "icon": "hray"},
+             {"mode": "vline", "tooltip": "Svislá linie", "icon": "vline"},
+             {"mode": "cross", "tooltip": "Kříž", "icon": "cross"},
              {"section": "Kanály"},
-             {"mode": "channel", "tooltip": "Paralelní kanál (3 kliky)", "icon": "view_stream"},
+             {"mode": "channel", "tooltip": "Paralelní kanál (3 kliky)", "icon": "channel"},
              {"section": "Pitchforky"},
-             {"mode": "pitchfork", "tooltip": "Pitchfork (3 kliky)", "icon": "gesture"},
+             {"mode": "pitchfork", "tooltip": "Pitchfork (3 kliky)", "icon": "pitchfork"},
          ]},
-        {"id": "g_fib", "icon": "align_vertical_center", "tooltip": "Fibonacci",
+        {"id": "g_fib", "icon": "fib", "tooltip": "Fibonacci",
          "tools": [
-             {"mode": "fib", "tooltip": "Fibonacci retracement", "icon": "align_vertical_center"},
-             {"mode": "fibext", "tooltip": "Fibonacci extension", "icon": "linear_scale"},
+             {"mode": "fib", "tooltip": "Fibonacci retracement", "icon": "fib"},
+             {"mode": "fibext", "tooltip": "Fibonacci extension", "icon": "fibext"},
          ]},
-        {"id": "g_shapes", "icon": "crop_square", "tooltip": "Tvary",
+        {"id": "g_shapes", "icon": "rect", "tooltip": "Tvary",
          "tools": [
-             {"mode": "rect", "tooltip": "Obdélník", "icon": "crop_square"},
+             {"mode": "rect", "tooltip": "Obdélník", "icon": "rect"},
              {"mode": "brush", "tooltip": "Štětec", "icon": "brush"},
          ]},
-        {"id": "g_text", "icon": "title", "tooltip": "Text a stickers",
+        {"id": "g_text", "icon": "text", "tooltip": "Text a stickers",
          "tools": [
-             {"mode": "text", "tooltip": "Text", "icon": "title"},
-             {"mode": "sticker", "tooltip": "Sticker (emoji)", "icon": "emoji_emotions"},
+             {"mode": "text", "tooltip": "Text", "icon": "text"},
+             {"mode": "sticker", "tooltip": "Sticker (emoji)", "icon": "sticker"},
          ]},
-        {"id": "g_measure", "icon": "straighten", "tooltip": "Měřič (Δcena, %, bary)",
-         "tools": [{"mode": "measure", "tooltip": "Měřič (Δcena, %, bary)", "icon": "straighten"}]},
+        {"id": "g_measure", "icon": "measure", "tooltip": "Měřič (Δcena, %, bary)",
+         "tools": [{"mode": "measure", "tooltip": "Měřič (Δcena, %, bary)", "icon": "measure"}]},
     ]
     # Režimy všech nástrojů v pořadí lišty (oblíbené v plovoucím panelu)
     TOOL_MODES = [tool["mode"] for group in DRAWING_GROUPS for tool in group["tools"] if "mode" in tool]
@@ -688,22 +708,19 @@ async def _build_index(cache: KlineCache) -> None:
             )
         await chart.set_drawing_mode(None if mode == "cursor" else mode)
 
-    async def set_drawing_color(color) -> None:
-        # Barva nových kreseb (tlačítko barvy v liště): do grafu hned, do
-        # databáze až po DRAWING_COLOR_SAVE_DELAY_S bez další změny
-        color = normalize_color(color)
-        if not color:
-            return
-        await chart.set_drawing_color(color)
-        pending = state.get("drawing_color_save")
-        if pending and not pending.done():
-            pending.cancel()
-
-        async def save_later() -> None:
-            await asyncio.sleep(DRAWING_COLOR_SAVE_DELAY_S)
-            await cache.set_setting("drawing_color", color)
-
-        state["drawing_color_save"] = asyncio.create_task(save_later())
+    async def push_drawing_defaults() -> None:
+        # Výchozí styl nových kreseb pro graf: uživatelská výchozí šablona typu
+        # kresby („Save as default“ v Settings kresby), jinak tovární styl;
+        # všechny výchozí šablony kreseb jedním dotazem do databáze
+        saved = await cache.get_settings_prefix(default_template_key(drawing_scope("")))
+        defaults = {}
+        for kind in DRAWING_KINDS:
+            try:
+                template = json.loads(saved.get(default_template_key(drawing_scope(kind))) or "{}")
+            except ValueError:
+                template = {}
+            defaults[kind] = normalize_drawing_style(template)
+        chart.set_drawing_defaults(defaults)
 
     # ---------- oblíbené nástroje (plovoucí panel) ----------
 
@@ -721,7 +738,7 @@ async def _build_index(cache: KlineCache) -> None:
 
     def paint_favorites_button() -> None:
         # Ikona hvězdy v liště: plná = panel oblíbených zobrazen
-        action_buttons["favorites"].props(f'icon={"star" if state["favorites_visible"] else "star_border"}')
+        set_action_icon("favorites", "star" if state["favorites_visible"] else "star_border")
 
     async def toggle_favorites_bar() -> None:
         # Tlačítko hvězdy v liště: zobrazí / skryje plovoucí panel oblíbených
@@ -746,6 +763,10 @@ async def _build_index(cache: KlineCache) -> None:
         "weak": "slabý – bod kresby se přichytí k O/H/L/C svíčky, když je kurzor blízko",
         "strong": "silný – body kreseb se vždy přichytí k nejbližší O/H/L/C svíčky",
     }
+
+    def set_action_icon(action: str, icon: str) -> None:
+        # Vymění SVG piktogram akčního tlačítka lišty (zámek, oko, hvězda)
+        action_icons[action].content = svg(icon)
 
     async def set_magnet(mode, announce: bool = True) -> None:
         # Magnet: přichytávání bodů kreseb k OHLC svíčky pod kurzorem; režim se
@@ -772,7 +793,7 @@ async def _build_index(cache: KlineCache) -> None:
         # Zámek: kresby nelze vybírat, posouvat ani mazat
         state["locked"] = not state.get("locked", False)
         button = action_buttons["lock"]
-        button.props(f'icon={"lock" if state["locked"] else "lock_open"}')
+        set_action_icon("lock", "lock" if state["locked"] else "lock_open")
         button.classes(add="drawing-btn-active" if state["locked"] else "", remove="" if state["locked"] else "drawing-btn-active")
         await chart.set_locked(state["locked"])
         show_status(f"Kresby {'uzamčeny' if state['locked'] else 'odemčeny'}.")
@@ -781,7 +802,7 @@ async def _build_index(cache: KlineCache) -> None:
         # Skrytí/zobrazení všech kreseb (ikona oka)
         state["hidden"] = not state.get("hidden", False)
         button = action_buttons["eye"]
-        button.props(f'icon={"visibility_off" if state["hidden"] else "visibility"}')
+        set_action_icon("eye", "eye_off" if state["hidden"] else "eye")
         button.classes(add="drawing-btn-active" if state["hidden"] else "", remove="" if state["hidden"] else "drawing-btn-active")
         await chart.set_drawings_hidden(state["hidden"])
 
@@ -813,40 +834,36 @@ async def _build_index(cache: KlineCache) -> None:
 
     # ---------- Settings kresby a grafu (pravý klik / dvojklik) ----------
 
-    # Styly čar pro dialog Settings kresby (hodnota v JS → popisek)
-    LINE_STYLES = {"solid": "Plná", "dashed": "Přerušovaná", "dotted": "Tečkovaná"}
-    # Šířky čar v px
-    LINE_WIDTHS = {1: "1 px", 1.5: "1,5 px (výchozí)", 2: "2 px", 3: "3 px", 4: "4 px"}
     # Kresby bez čáry (šířka a styl nemají smysl)
     NO_LINE_KINDS = {"text", "sticker"}
 
     def apply_drawing_template(values: dict) -> None:
         # Promítne hodnoty šablony (barva, šířka a styl čáry, velikost písma)
         # do polí dialogu; neplatné nebo chybějící hodnoty nahradí výchozími
-        options = values.get("options") if isinstance(values.get("options"), dict) else {}
-        drawing_color.value = normalize_color(values.get("color")) or DEFAULT_DRAWING_COLOR
-        width = options.get("width")
-        drawing_width.value = width if width in LINE_WIDTHS else DEFAULT_LINE_WIDTH
-        drawing_style.value = options.get("lineStyle") if options.get("lineStyle") in LINE_STYLES else "solid"
-        drawing_font.value = clamp_font_size(options.get("fontSize"))
+        style = normalize_drawing_style(values)
+        drawing_color.value = style["color"]
+        drawing_width.value = style["options"]["width"]
+        drawing_style.value = style["options"]["lineStyle"]
+        drawing_font.value = style["options"]["fontSize"]
 
     def apply_drawing_factory() -> None:
-        # „Apply defaults“: tovární styl kresby
-        apply_drawing_template({"color": DEFAULT_DRAWING_COLOR, "options": {}})
+        # „Apply defaults“ bez uložené výchozí šablony: tovární styl kresby
+        apply_drawing_template({})
 
     def collect_drawing_settings() -> dict | None:
         # Styl kresby z polí dialogu (bez textu – ten do šablony nepatří)
-        current = state.get("drawing_settings")
-        if not current:
+        if not state.get("drawing_settings"):
             return None
-        kind = current["kind"]
-        options: dict = {}
-        if kind not in NO_LINE_KINDS:
-            options["width"] = float(drawing_width.value or DEFAULT_LINE_WIDTH)
-            options["lineStyle"] = drawing_style.value or "solid"
-        if kind == "text":
-            options["fontSize"] = clamp_font_size(drawing_font.value)
-        return {"color": normalize_color(drawing_color.value) or DEFAULT_DRAWING_COLOR, "options": options}
+        return normalize_drawing_style(
+            {
+                "color": drawing_color.value,
+                "options": {
+                    "width": drawing_width.value,
+                    "lineStyle": drawing_style.value,
+                    "fontSize": drawing_font.value,
+                },
+            }
+        )
 
     async def open_drawing_settings(payload: dict) -> None:
         # Dialog Settings kresby podle jejího typu: barva, šířka a styl čáry,
@@ -1083,14 +1100,17 @@ async def _build_index(cache: KlineCache) -> None:
             elif payload.get("type") == "volume":
                 await set_volume_visible(bool(payload.get("visible")))
             elif payload.get("type") == "add" and payload.get("kind") in DRAWING_KINDS:
+                # Styl nové kresby (výchozí šablona typu poslaná z grafu) zkontrolujeme
+                style = normalize_drawing_style(payload)
                 drawing_id = await cache.add_drawing(
                     provider_id,
                     symbol,
                     timeframe,
                     payload["kind"],
                     drawing_points(payload),
-                    payload.get("color"),
+                    style["color"],
                     payload.get("text"),
+                    style["options"],
                 )
                 # Graf si kresbu spáruje podle lokálního id (další úpravy už jdou s id)
                 if payload.get("localId") is not None:
@@ -1153,7 +1173,7 @@ async def _build_index(cache: KlineCache) -> None:
     def make_watch_remove(key: str):
         async def _handler(_event):
             provider_id, _, symbol = key.partition(":")
-            await cache.watchlist_remove(provider_id, symbol)
+            await cache.watchlist_remove(state["watchlist_id"], provider_id, symbol)
             await rebuild_watchlist()
 
         return _handler
@@ -1166,25 +1186,116 @@ async def _build_index(cache: KlineCache) -> None:
             return
         await add_key_to_watchlist(f"{provider_id}:{symbol}")
 
+    # ---------- seznamy symbolů (více watchlistů jako v TradingView) ----------
+
+    async def select_active_watchlist(lists: list[dict]) -> dict:
+        # Aktivní seznam: uložená volba, jinak první (smazaný seznam = první)
+        saved = await cache.get_setting("active_watchlist")
+        return next((item for item in lists if str(item["id"]) == saved), lists[0])
+
+    def render_watchlist_menu(lists: list[dict]) -> None:
+        # Nabídka seznamů: přepnutí (s počtem symbolů) a správa aktivního seznamu
+        watchlist_button.text = state["watchlist_name"]
+        watchlist_menu.clear()
+        with watchlist_menu:
+            for item in lists:
+                with ui.menu_item(on_click=make_switch_watchlist(item["id"])).classes(
+                    "wl-item" + (" menu-item-active" if item["id"] == state["watchlist_id"] else "")
+                ):
+                    ui.label(item["name"]).classes("wl-name")
+                    ui.space()
+                    ui.label(str(item["count"])).classes("wl-count")
+            ui.separator()
+            ui.menu_item("Nový seznam…", on_click=lambda: open_watchlist_name("create")).classes("wl-item")
+            ui.menu_item("Přejmenovat…", on_click=lambda: open_watchlist_name("rename")).classes("wl-item")
+            ui.menu_item("Vytvořit kopii…", on_click=lambda: open_watchlist_name("copy")).classes("wl-item")
+            ui.menu_item("Vyprázdnit seznam", on_click=lambda: confirm_watchlist("clear")).classes("wl-item")
+            # Poslední seznam smazat nejde – vždy musí existovat aspoň jeden
+            if len(lists) > 1:
+                ui.menu_item("Smazat seznam", on_click=lambda: confirm_watchlist("delete")).classes("wl-item wl-danger")
+
+    def make_switch_watchlist(list_id: int):
+        async def _handler() -> None:
+            await cache.set_setting("active_watchlist", str(list_id))
+            await rebuild_watchlist()
+
+        return _handler
+
+    def open_watchlist_name(mode: str) -> None:
+        # Dialog názvu seznamu: nový / přejmenování / kopie aktivního seznamu
+        state["watchlist_name_mode"] = mode
+        titles = {"create": "Nový seznam", "rename": "Přejmenovat seznam", "copy": "Kopie seznamu"}
+        watchlist_name_title.text = titles[mode]
+        current = state["watchlist_name"]
+        watchlist_name_input.value = {"create": "", "rename": current, "copy": f"{current} (kopie)"}[mode]
+        watchlist_name_dialog.open()
+
+    async def submit_watchlist_name() -> None:
+        # Uloží název podle režimu dialogu; nový seznam i kopie se rovnou zobrazí
+        name = clean_name(watchlist_name_input.value)
+        if not name:
+            ui.notify(f"Zadejte název seznamu (1–{MAX_NAME_LENGTH} znaků).", type="warning")
+            return
+        mode = state.get("watchlist_name_mode")
+        watchlist_name_dialog.close()
+        if mode == "rename":
+            # Přejmenování mění jen nabídku – řádky ani ceny se nepřestavují
+            await cache.watchlist_rename(state["watchlist_id"], name)
+            state["watchlist_name"] = name
+            render_watchlist_menu(await cache.watchlists())
+            show_status(f"Seznam přejmenován na {name}.")
+            return
+        copy_from = state["watchlist_id"] if mode == "copy" else None
+        list_id = await cache.watchlist_create(name, copy_from=copy_from)
+        await cache.set_setting("active_watchlist", str(list_id))
+        show_status(f"Seznam {name} vytvořen.")
+        await rebuild_watchlist()
+
+    def confirm_watchlist(action: str) -> None:
+        # Potvrzení nevratné akce nad aktivním seznamem (vyprázdnění / smazání)
+        state["watchlist_confirm"] = action
+        name = state["watchlist_name"]
+        watchlist_confirm_text.text = (
+            f"Odebrat ze seznamu {name} všechny symboly?" if action == "clear" else f"Smazat seznam {name}?"
+        )
+        watchlist_confirm_dialog.open()
+
+    async def submit_watchlist_confirm() -> None:
+        action = state.get("watchlist_confirm")
+        watchlist_confirm_dialog.close()
+        name = state["watchlist_name"]
+        if action == "clear":
+            await cache.watchlist_clear(state["watchlist_id"])
+            show_status(f"Seznam {name} vyprázdněn.")
+        elif action == "delete":
+            await cache.watchlist_delete(state["watchlist_id"])
+            show_status(f"Seznam {name} smazán.")
+        await rebuild_watchlist()
+
     async def rebuild_watchlist() -> None:
-        # Přestaví řádky watchlistu podle databáze
+        # Přestaví nabídku seznamů a řádky aktivního seznamu podle databáze
+        lists = await cache.watchlists()
+        active = await select_active_watchlist(lists)
+        state["watchlist_id"] = active["id"]
+        state["watchlist_name"] = active["name"]
+        render_watchlist_menu(lists)
         watch_rows.clear()
         watchlist_body.clear()
-        items = await cache.watchlist_list()
+        items = await cache.watchlist_list(active["id"])
         with watchlist_body:
             for item in items:
                 key = f"{item['source']}:{item['symbol']}"
                 code = PROVIDER_CODES.get(item["source"], item["source"][:3].upper())
-                with ui.row().classes("watch-row w-full") as watch_row_element:
+                # Klik kamkoli do řádku (symbol, cena, změna) přepne graf
+                with ui.row().classes("watch-row w-full").on("click", make_watch_click(key)) as watch_row_element:
                     ui.label(code).classes("watch-code").tooltip(item["source"])
-                    ui.label(item["symbol"]).classes("watch-symbol").on(
-                        "click", make_watch_click(key)
-                    )
+                    ui.label(item["symbol"]).classes("watch-symbol")
                     price_label = ui.label("—").classes("watch-price")
                     change_label = ui.label("—").classes("watch-change")
-                    ui.button(
-                        icon="close", on_click=make_watch_remove(key)
-                    ).props("flat dense size=sm").classes("watch-remove")
+                    # Odebrání nesmí zároveň přepnout graf (.stop zastaví klik řádku)
+                    ui.button(icon="close").props("flat dense size=sm").classes("watch-remove").on(
+                        "click.stop", make_watch_remove(key)
+                    )
                 watch_rows[key] = {"row": watch_row_element, "price": price_label, "change": change_label}
         refresh_watchlist_active()
         await refresh_watchlist_prices()
@@ -1205,9 +1316,10 @@ async def _build_index(cache: KlineCache) -> None:
         # Po inicializaci grafu obnovíme poslední symbol a výchozí režim kurzoru
         await set_drawing_mode("cursor")
         await set_magnet(saved_magnet, announce=False)
-        await chart.set_drawing_color(saved_drawing_color)
+        await push_drawing_defaults()
         await restore_favorites()
         mark_active(timezone_items, state["timezone"])
+        mark_active(chart_type_items, saved_chart_type)
         refresh_session_button()
         await load_symbol(last_symbol)
 
@@ -1493,6 +1605,19 @@ async def _build_index(cache: KlineCache) -> None:
                 ).props("debounce=300 outlined dense")
                 suggestions_container = ui.column().classes("autocomplete hidden")
             timeframe_toggle = ui.toggle(options=[], value=None).classes("timeframes")
+            # Typ grafu jako v TradingView: tlačítko s ikonou aktuálního typu a nabídka po sekcích
+            with ui.button(color=None).props("flat dense").classes("chart-type-btn").tooltip("Typ grafu"):
+                chart_type_icon = icon_html(CHART_TYPES[saved_chart_type][1])
+                with ui.menu().classes("chart-type-menu"):
+                    chart_type_items = {}
+                    for section_index, section in enumerate(CHART_TYPE_SECTIONS):
+                        if section_index:
+                            ui.separator()
+                        for type_id, type_label, type_icon in section:
+                            with ui.menu_item(on_click=make_chart_type_click(type_id)).classes("chart-type-item") as item:
+                                icon_html(type_icon)
+                                ui.label(type_label)
+                            chart_type_items[type_id] = item
             source_badge = ui.badge("—").classes("source-badge")
             theme_switch = ui.switch("Tmavý motiv", value=dark)
             ui.button("Indikátory", icon="add_chart", on_click=open_indicator_dialog).props(
@@ -1504,7 +1629,12 @@ async def _build_index(cache: KlineCache) -> None:
         with ui.row().classes("main-area w-full"):
             with ui.column().classes("watchlist-panel"):
                 with ui.row().classes("watchlist-header w-full"):
-                    ui.label("Watchlist").classes("watchlist-title")
+                    # Název aktivního seznamu s nabídkou seznamů (jako v TradingView)
+                    with ui.button("Watchlist", color=None).props(
+                        "flat dense no-caps icon-right=expand_more"
+                    ).classes("watchlist-title") as watchlist_button:
+                        watchlist_menu = ui.menu().classes("wl-menu")
+                    ui.space()
                     ui.button(icon="playlist_add", on_click=watchlist_add_current).props(
                         "flat dense size=sm"
                     ).classes("watch-add")
@@ -1516,40 +1646,45 @@ async def _build_index(cache: KlineCache) -> None:
                         # výběr nástroje přijde zpět přes frontu událostí
                         drawing_buttons = {}
                         for group in DRAWING_GROUPS:
-                            drawing_buttons[group["id"]] = (
-                                ui.button(icon=group["icon"])
+                            with (
+                                ui.button(color=None)
                                 .props(f'flat dense data-tool-group={group["id"]}')
                                 .classes("drawing-btn")
-                                .tooltip(group["tooltip"])
-                            )
-                        ui.separator().props("vertical").classes("toolbar-sep")
-                        # Barva nových kreseb: výběr barvy ve stylu TradingView
-                        ColorButton(
-                            saved_drawing_color,
-                            on_change=lambda event: set_drawing_color(event.value),
-                            title="Barva nových kreseb",
-                        ).classes("toolbar-color")
+                                .tooltip(group["tooltip"]) as group_button
+                            ):
+                                icon_html(group["icon"])
+                            drawing_buttons[group["id"]] = group_button
                         ui.separator().props("vertical").classes("toolbar-sep")
                         # Akční tlačítka (zpracovává je on_drawing_finished přes frontu)
                         action_buttons = {}
+                        # Prvky s SVG ikonou akčních tlačítek (přepínání ikony)
+                        action_icons = {}
                         for action, tooltip, icon in [
-                            ("magnet", "Magnet – přichytávání bodů kreseb k O/H/L/C (klik = výběr režimu)", "push_pin"),
-                            ("pencil", "Režim kreslení (nástroj zůstává aktivní)", "edit"),
-                            ("lock", "Zamknout kresby", "lock"),
-                            ("eye", "Skrýt/zobrazit kresby", "visibility"),
-                            ("trash", "Smazat označenou / všechny kresby", "delete_sweep"),
+                            ("magnet", "Magnet – přichytávání bodů kreseb k O/H/L/C (klik = výběr režimu)", "magnet"),
+                            ("pencil", "Režim kreslení (nástroj zůstává aktivní)", "pencil"),
+                            ("lock", "Zamknout kresby", "lock_open"),
+                            ("eye", "Skrýt/zobrazit kresby", "eye"),
+                            ("trash", "Smazat označenou / všechny kresby", "trash"),
                             ("favorites", "Zobrazit / skrýt panel oblíbených nástrojů (hvězdička ve flyoutu)", "star"),
                         ]:
-                            action_buttons[action] = (
-                                ui.button(icon=icon)
+                            with (
+                                ui.button(color=None)
                                 .props(f'flat dense data-tool-action={action}')
                                 .classes("drawing-btn")
-                                .tooltip(tooltip)
-                            )
+                                .tooltip(tooltip) as action_button
+                            ):
+                                action_icons[action] = icon_html(icon)
+                            action_buttons[action] = action_button
                     chart = LightweightChart(
-                        dark=dark, on_ready=initial_load, show_volume=show_volume, chart_style=chart_style
+                        dark=dark,
+                        on_ready=initial_load,
+                        show_volume=show_volume,
+                        chart_style=chart_style,
+                        chart_type=saved_chart_type,
                     )
-                    # Definice skupin pro flyout nabídky lišty (může přijít i před init grafu)
+                    # Definice skupin pro flyout nabídky lišty a SVG ikony (můžou
+                    # přijít i před init grafu)
+                    chart.set_icons(ICONS)
                     chart.set_tool_groups(DRAWING_GROUPS)
                 # Stavová lišta: zprávy vlevo, vpravo seance (RTH/ETH) a hodiny
                 # s volbou časového pásma (jako v TradingView)
@@ -1576,6 +1711,21 @@ async def _build_index(cache: KlineCache) -> None:
                             for tz_value, tz_label in timezone_options():
                                 timezone_items[tz_value] = ui.menu_item(tz_label, on_click=make_timezone_click(tz_value))
                     timezone_button.tooltip("Časové pásmo grafu")
+
+    # Dialog názvu seznamu symbolů (nový / přejmenování / kopie)
+    with ui.dialog() as watchlist_name_dialog, ui.card().classes("tpl-name-dialog"):
+        watchlist_name_title = settings_header(watchlist_name_dialog, "Nový seznam")
+        watchlist_name_input = ui.input("Název seznamu").props("outlined dense autofocus").classes("w-full")
+        watchlist_name_input.on("keydown.enter", submit_watchlist_name)
+        with ui.row().classes("tv-settings-actions w-full"):
+            settings_buttons(watchlist_name_dialog, submit_watchlist_name, "Save")
+
+    # Potvrzení vyprázdnění / smazání seznamu symbolů
+    with ui.dialog() as watchlist_confirm_dialog, ui.card().classes("tpl-name-dialog"):
+        settings_header(watchlist_confirm_dialog, "Seznam symbolů")
+        watchlist_confirm_text = ui.label("")
+        with ui.row().classes("tv-settings-actions w-full"):
+            settings_buttons(watchlist_confirm_dialog, submit_watchlist_confirm)
 
     # Dialog pro výběr stickeru (emoji)
     with ui.dialog() as sticker_dialog, ui.card().classes("settings-dialog"):
@@ -1649,15 +1799,17 @@ async def _build_index(cache: KlineCache) -> None:
         with ui.row().classes("tv-settings-row") as drawing_color_row:
             ui.label("Barva").classes("tv-settings-label")
             drawing_color = ColorButton(DEFAULT_DRAWING_COLOR, title="Barva kresby")
-        drawing_width = ui.select(LINE_WIDTHS, value=1.5, label="Šířka čáry").props("outlined dense").classes("w-full")
-        drawing_style = ui.select(LINE_STYLES, value="solid", label="Styl čáry").props("outlined dense").classes("w-full")
+        drawing_width = ui.select(DRAWING_LINE_WIDTHS, value=DEFAULT_LINE_WIDTH, label="Šířka čáry").props("outlined dense").classes("w-full")
+        drawing_style = ui.select(DRAWING_LINE_STYLES, value="solid", label="Styl čáry").props("outlined dense").classes("w-full")
         with ui.row().classes("tv-settings-actions w-full"):
             drawing_templates = TemplateMenu(
                 cache,
-                lambda: f"drawing.{(state.get('drawing_settings') or {}).get('kind', '')}",
+                lambda: drawing_scope((state.get("drawing_settings") or {}).get("kind", "")),
                 collect_drawing_settings,
                 apply_drawing_template,
                 apply_drawing_factory,
+                allow_default=True,
+                on_default_change=push_drawing_defaults,
             )
             settings_buttons(drawing_settings_dialog, submit_drawing_settings)
 

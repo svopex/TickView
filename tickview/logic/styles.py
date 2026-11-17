@@ -17,8 +17,8 @@ _RGBA_PATTERN = re.compile(
 # Barva ve tvaru #rrggbb
 _HEX_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
 
-# Nejdelší povolený název šablony (název se zobrazuje v nabídce)
-MAX_TEMPLATE_NAME = 40
+# Nejdelší povolený název šablony nebo seznamu symbolů (zobrazuje se v nabídce)
+MAX_NAME_LENGTH = 40
 
 # Výchozí styl svíček (dialog Settings grafu, „Apply defaults“): barvy těla,
 # okrajů a knotů pro růst / pokles a obarvení podle předchozího závěru.
@@ -35,6 +35,65 @@ CHART_DEFAULTS: dict = {
     "wick_up": "#26a69a",
     "wick_down": "#ef5350",
 }
+
+# Tovární styl kreseb (nová kresba bez výchozí šablony, „Apply defaults“)
+DEFAULT_DRAWING_COLOR = "#2962ff"
+DEFAULT_LINE_WIDTH = 1.5
+DEFAULT_FONT_SIZE = 13
+# Povolené šířky (px) a styly čar kreseb s popisky pro dialog Settings kresby
+DRAWING_LINE_WIDTHS = {1: "1 px", 1.5: "1,5 px (výchozí)", 2: "2 px", 3: "3 px", 4: "4 px"}
+DRAWING_LINE_STYLES = {"solid": "Plná", "dashed": "Přerušovaná", "dotted": "Tečkovaná"}
+
+
+def clamp_font_size(value) -> int:
+    """Velikost písma textové kresby v rozsahu 8–72 px (neplatná hodnota = výchozí)."""
+    try:
+        return max(8, min(72, int(value or DEFAULT_FONT_SIZE)))
+    except (TypeError, ValueError):
+        return DEFAULT_FONT_SIZE
+
+
+def normalize_drawing_style(values) -> dict:
+    """Styl kresby (šablona, dialog, výchozí styl nových kreseb) s doplněnými výchozími hodnotami.
+
+    Parametry:
+        values: {"color", "options": {"width", "lineStyle", "fontSize"}} – může být neúplný.
+
+    Vrací {"color", "options"} s platnou barvou, šířkou, stylem čáry a písmem.
+    """
+    source = values if isinstance(values, dict) else {}
+    options = source.get("options") if isinstance(source.get("options"), dict) else {}
+    width = options.get("width")
+    line_style = options.get("lineStyle")
+    return {
+        "color": normalize_color(source.get("color")) or DEFAULT_DRAWING_COLOR,
+        "options": {
+            "width": width if width in DRAWING_LINE_WIDTHS else DEFAULT_LINE_WIDTH,
+            "lineStyle": line_style if line_style in DRAWING_LINE_STYLES else "solid",
+            "fontSize": clamp_font_size(options.get("fontSize")),
+        },
+    }
+
+
+# Typy grafu jako v TradingView, po sekcích nabídky: (id, popisek, ikona)
+CHART_TYPE_SECTIONS: list[list[tuple[str, str, str]]] = [
+    [("bars", "Bars", "chart_bars"), ("candles", "Candles", "chart_candles"), ("hollow", "Hollow candles", "chart_hollow")],
+    [("line", "Line", "chart_line"), ("line_markers", "Line with markers", "chart_line_markers"), ("step", "Step line", "chart_step")],
+    [("area", "Area", "chart_area"), ("baseline", "Baseline", "chart_baseline")],
+    [("columns", "Columns", "chart_columns"), ("highlow", "High-low", "chart_highlow")],
+    [("heikin", "Heikin Ashi", "chart_heikin")],
+]
+# Typ grafu → (popisek, ikona)
+CHART_TYPES: dict[str, tuple[str, str]] = {
+    type_id: (label, icon) for section in CHART_TYPE_SECTIONS for type_id, label, icon in section
+}
+DEFAULT_CHART_TYPE = "candles"
+
+
+def normalize_chart_type(value) -> str:
+    """Vrátí platný typ grafu; neznámá hodnota (starší nastavení) = svíčky."""
+    return value if value in CHART_TYPES else DEFAULT_CHART_TYPE
+
 
 # Klíče stylu grafu, které nesou barvu (ostatní jsou přepínače)
 CHART_COLOR_KEYS = ("body_up", "body_down", "border_up", "border_down", "wick_up", "wick_down")
@@ -127,12 +186,12 @@ def load_templates(raw: str | None) -> dict[str, dict]:
     return dict(sorted(items.items(), key=lambda item: item[0].lower()))
 
 
-def clean_template_name(name) -> str | None:
-    """Ořízne název šablony; prázdný nebo příliš dlouhý název vrátí jako None."""
+def clean_name(name) -> str | None:
+    """Ořízne název (šablona, seznam symbolů); prázdný nebo příliš dlouhý vrátí jako None."""
     if not isinstance(name, str):
         return None
     text = " ".join(name.split())
-    if not text or len(text) > MAX_TEMPLATE_NAME:
+    if not text or len(text) > MAX_NAME_LENGTH:
         return None
     return text
 
@@ -145,7 +204,7 @@ def save_template(templates: dict[str, dict], name: str, values: dict) -> dict[s
 
     Parametry:
         templates: dosavadní šablony {název: hodnoty}.
-        name: název šablony (už očištěný přes clean_template_name).
+        name: název šablony (už očištěný přes clean_name).
         values: hodnoty dialogu k uložení.
     """
     result = {key: value for key, value in templates.items() if key.lower() != name.lower()}

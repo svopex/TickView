@@ -35,9 +35,28 @@ window.TickViewChart = (function () {
 
   // Definice skupin nástrojů pro flyout nabídky, když je přijme Python dřív než init
   const pendingToolGroups = new Map();
+  // SVG piktogramy nástrojů (název -> SVG z icons.py); společné všem grafům
+  let toolIcons = {};
 
   // Neviditelná barva (vypnuté tělo svíčky)
   const TRANSPARENT = 'rgba(0, 0, 0, 0)';
+
+  // Typy hlavní série (jako v TradingView) → druh série Lightweight Charts
+  const CHART_TYPE_SERIES = {
+    bars: 'Bar',
+    candles: 'Candlestick',
+    hollow: 'Candlestick',
+    heikin: 'Candlestick',
+    highlow: 'Candlestick',
+    line: 'Line',
+    line_markers: 'Line',
+    step: 'Line',
+    area: 'Area',
+    baseline: 'Baseline',
+    columns: 'Histogram',
+  };
+  // Barva čárových typů (Line, Area) jako v TradingView
+  const LINE_COLOR = '#2962ff';
 
   // Volby svíčkové série podle stylu grafu (tělo, okraje, knoty); úplný
   // styl (CHART_DEFAULTS) posílá Python při init i po změně v Settings
@@ -54,22 +73,135 @@ window.TickViewChart = (function () {
     };
   }
 
-  // Bod svíčkové série: při obarvení podle předchozího závěru nese vlastní
-  // barvy (růst = závěr ≥ předchozí závěr), jinak barvy řídí volby série
-  function candlePoint(s, candle, previous) {
-    const style = s.chartStyle;
-    if (!style.color_by_prev_close || !previous) return candle;
-    const up = candle.close >= previous.close;
-    return Object.assign({}, candle, {
-      color: style.body ? (up ? style.body_up : style.body_down) : TRANSPARENT,
-      borderColor: up ? style.border_up : style.border_down,
-      wickColor: up ? style.wick_up : style.wick_down,
-    });
+  // Volby hlavní série podle typu grafu a stylu (barvy růstu / poklesu
+  // ze Settings grafu se používají i u sloupců, barů a baseline); přesnost
+  // ceny podle instrumentu se přidá ke všem typům
+  function mainSeriesOptions(s) {
+    const decimals = s.priceDecimals || 2;
+    const priceFormat = { type: 'price', precision: decimals, minMove: Math.pow(10, -decimals) };
+    return Object.assign(typeSeriesOptions(s), { priceFormat });
   }
 
-  // Body svíčkové série ze s.candles (s barvami podle předchozího závěru, je-li zapnuto)
-  function candleData(s) {
-    return s.candles.map((candle, index) => candlePoint(s, candle, s.candles[index - 1]));
+  // Polovina cenového rozpětí načtených svíček (základna typu Baseline)
+  function baselinePrice(s) {
+    let low = Infinity;
+    let high = -Infinity;
+    for (const candle of s.candles) {
+      low = Math.min(low, candle.low);
+      high = Math.max(high, candle.high);
+    }
+    return s.candles.length ? (low + high) / 2 : 0;
+  }
+
+  // Volby série specifické pro typ grafu (bez přesnosti ceny)
+  function typeSeriesOptions(s) {
+    const style = s.chartStyle;
+    switch (s.chartType) {
+      case 'hollow':
+        // Rostoucí svíčka jen obrysem, klesající plná
+        return Object.assign(candleOptions(style), { upColor: TRANSPARENT, borderVisible: true });
+      case 'highlow':
+        // Jen rozpětí high–low (barvu nese každý bod podle směru svíčky)
+        return { borderVisible: false, wickVisible: false };
+      case 'bars':
+        return { upColor: style.body_up, downColor: style.body_down, thinBars: false };
+      case 'line':
+      case 'line_markers':
+      case 'step':
+        return {
+          color: LINE_COLOR,
+          lineWidth: 2,
+          lineType: s.chartType === 'step' ? LightweightCharts.LineType.WithSteps : LightweightCharts.LineType.Simple,
+          pointMarkersVisible: s.chartType === 'line_markers',
+        };
+      case 'area':
+        return { lineColor: LINE_COLOR, lineWidth: 2, topColor: withAlpha(LINE_COLOR, 0.28), bottomColor: withAlpha(LINE_COLOR, 0.05) };
+      case 'baseline':
+        // Základna v polovině cenového rozpětí dat; nad ní barva růstu, pod ní poklesu
+        return {
+          baseValue: { type: 'price', price: baselinePrice(s) },
+          topLineColor: style.body_up,
+          topFillColor1: withAlpha(style.body_up, 0.28),
+          topFillColor2: withAlpha(style.body_up, 0.05),
+          bottomLineColor: style.body_down,
+          bottomFillColor1: withAlpha(style.body_down, 0.05),
+          bottomFillColor2: withAlpha(style.body_down, 0.28),
+          lineWidth: 2,
+        };
+      case 'columns':
+        return { color: style.body_up };
+      default:
+        return candleOptions(style);
+    }
+  }
+
+  // Potřebuje typ / styl vlastní barvy bodů (pak změna stylu vyžaduje setData)?
+  function usesPointColors(s) {
+    return s.chartStyle.color_by_prev_close || s.chartType === 'columns' || s.chartType === 'highlow';
+  }
+
+  // Bod hlavní série pro svíčku podle typu grafu.
+  // Parametry: candle – svíčka, previous – předchozí svíčka, previousPoint –
+  // předchozí bod série (Heikin Ashi z něj počítá open)
+  function mainPoint(s, candle, previous, previousPoint) {
+    const style = s.chartStyle;
+    // Směr: podle předchozího závěru (volba Settings), jinak open → close
+    const up = style.color_by_prev_close && previous ? candle.close >= previous.close : candle.close >= candle.open;
+    switch (s.chartType) {
+      case 'line':
+      case 'line_markers':
+      case 'step':
+      case 'area':
+      case 'baseline':
+        return { time: candle.time, value: candle.close };
+      case 'columns':
+        // Sloupce jako v TradingView: barva podle předchozího závěru
+        return {
+          time: candle.time,
+          value: candle.close,
+          color: !previous || candle.close >= previous.close ? style.body_up : style.body_down,
+        };
+      case 'highlow': {
+        const color = up ? style.body_up : style.body_down;
+        return { time: candle.time, open: candle.low, high: candle.high, low: candle.low, close: candle.high, color, borderColor: color };
+      }
+      case 'heikin': {
+        // Heikin Ashi: close = průměr OHLC, open = střed předchozí HA svíčky
+        const close = (candle.open + candle.high + candle.low + candle.close) / 4;
+        const open = previousPoint ? (previousPoint.open + previousPoint.close) / 2 : (candle.open + candle.close) / 2;
+        return { time: candle.time, open, high: Math.max(candle.high, open, close), low: Math.min(candle.low, open, close), close };
+      }
+      case 'bars':
+        return style.color_by_prev_close && previous ? Object.assign({}, candle, { color: up ? style.body_up : style.body_down }) : candle;
+      default: {
+        // Svíčky (i hollow): vlastní barvy jen při obarvení podle předchozího závěru
+        if (!style.color_by_prev_close || !previous) return candle;
+        const hollowUp = s.chartType === 'hollow' && up;
+        return Object.assign({}, candle, {
+          color: style.body && !hollowUp ? (up ? style.body_up : style.body_down) : TRANSPARENT,
+          borderColor: up ? style.border_up : style.border_down,
+          wickColor: up ? style.wick_up : style.wick_down,
+        });
+      }
+    }
+  }
+
+  // Body hlavní série ze s.candles (uloží je do s.mainPoints pro živé doplňování)
+  function mainData(s) {
+    const points = [];
+    s.candles.forEach((candle, index) => {
+      points.push(mainPoint(s, candle, s.candles[index - 1], points[index - 1]));
+    });
+    s.mainPoints = points;
+    return points;
+  }
+
+  // Vytvoří (nebo po změně typu nahradí) hlavní sérii grafu a naplní ji daty
+  function createMainSeries(s) {
+    if (s.candleSeries) s.chart.removeSeries(s.candleSeries);
+    const kind = CHART_TYPE_SERIES[s.chartType] || 'Candlestick';
+    s.candleSeries = s.chart['add' + kind + 'Series'](mainSeriesOptions(s));
+    s.candleSeries.setData(mainData(s));
   }
 
   // Barva objemového sloupce podle směru svíčky (poloprůhledná)
@@ -530,8 +662,6 @@ window.TickViewChart = (function () {
     });
 
     // Svíčky
-    const chartStyle = options.chartStyle;
-    const candleSeries = chart.addCandlestickSeries(candleOptions(chartStyle));
 
     // Objem jako překryvná série v dolní části hlavního panelu
     const volumeSeries = chart.addHistogramSeries({
@@ -544,7 +674,10 @@ window.TickViewChart = (function () {
 
     const s = {
       chart,
-      candleSeries,
+      // Hlavní série (typ grafu – svíčky, čára, …); vzniká v createMainSeries
+      candleSeries: null,
+      mainPoints: [],
+      chartType: options.chartType || 'candles',
       volumeSeries,
       legend,
       container,
@@ -557,7 +690,6 @@ window.TickViewChart = (function () {
         pending: null,
         previewPoint: null,
         drawings: [],
-        color: '#2962ff',
         // Magnet: 'off' | 'weak' (jen v blízkosti OHLC) | 'strong' (vždy na OHLC)
         magnet: 'off',
         hidden: false,
@@ -574,8 +706,11 @@ window.TickViewChart = (function () {
       indicatorValues: new Map(),
       elementId: id,
       toolGroups: pendingToolGroups.get(id) || [],
+      // Výchozí styl nových kreseb podle typu {druh: {color, options}} –
+      // výchozí šablony ze Settings kresby (posílá Python)
+      drawingDefaults: {},
       // Styl svíček (Settings grafu)
-      chartStyle: chartStyle,
+      chartStyle: options.chartStyle,
       // Oblíbené nástroje (plovoucí panel): pořadí, pozice v px vůči grafu, viditelnost
       favorites: [],
       favoritesPos: null,
@@ -616,6 +751,7 @@ window.TickViewChart = (function () {
       nextLocalId: 1,
     };
     state.set(id, s);
+    createMainSeries(s);
 
     // Legenda: svíčka pod kurzorem, mimo graf poslední svíčka
     chart.subscribeCrosshairMove((param) => {
@@ -1024,10 +1160,10 @@ window.TickViewChart = (function () {
 
   // Hvězdička položky flyoutu: přidá / odebere nástroj z oblíbených (nevybírá ho)
   function favoriteStar(s, mode) {
-    const star = el('span', 'material-icons tool-flyout-star');
+    const star = el('span', 'tv-icon-wrap tool-flyout-star');
     const paint = () => {
       const on = s.favorites.includes(mode);
-      star.textContent = on ? 'star' : 'star_border';
+      star.innerHTML = toolIcons[on ? 'star' : 'star_border'] || '';
       star.classList.toggle('on', on);
       star.title = on ? 'Odebrat z oblíbených' : 'Přidat do oblíbených';
     };
@@ -1079,7 +1215,7 @@ window.TickViewChart = (function () {
       button.type = 'button';
       button.title = tool.tooltip;
       button.dataset.mode = tool.mode;
-      button.appendChild(el('span', 'material-icons', tool.icon));
+      button.appendChild(toolIcon(tool.icon));
       button.addEventListener('click', (event) => {
         event.stopPropagation();
         closeFlyout();
@@ -1135,10 +1271,22 @@ window.TickViewChart = (function () {
     handle.addEventListener('pointercancel', finish);
   }
 
+  // Prvek s SVG piktogramem nástroje (icons.py); neznámý název = prázdný prvek
+  function toolIcon(name, className) {
+    const node = el('span', 'tv-icon-wrap' + (className ? ' ' + className : ''));
+    node.innerHTML = toolIcons[name] || '';
+    return node;
+  }
+
+  // SVG ikony nástrojů z Pythonu (posílají se jednou, i před init grafu)
+  function setIcons(id, icons) {
+    toolIcons = icons || {};
+  }
+
   // Položka flyout nabídky (ikona + popisek); klik pošle událost a zavře nabídku
   function flyoutItem(icon, label, active, event, s) {
     const item = el('div', 'tool-flyout-item' + (active ? ' active' : ''));
-    item.appendChild(el('span', 'material-icons tool-flyout-icon', icon));
+    item.appendChild(toolIcon(icon, 'tool-flyout-icon'));
     item.appendChild(el('span', '', label));
     item.addEventListener('click', () => {
       s.finishedQueue.push(event);
@@ -1157,9 +1305,9 @@ window.TickViewChart = (function () {
 
   // Režimy magnetu pro nabídku (id, ikona, popis)
   const MAGNET_MODES = [
-    ['weak', 'push_pin', 'Slabý magnet – přichytí bod k O/H/L/C, když je kurzor blízko'],
-    ['strong', 'push_pin', 'Silný magnet – bod vždy na nejbližší O/H/L/C svíčky'],
-    ['off', 'block', 'Vypnout magnet'],
+    ['weak', 'magnet', 'Slabý magnet – přichytí bod k O/H/L/C, když je kurzor blízko'],
+    ['strong', 'magnet', 'Silný magnet – bod vždy na nejbližší O/H/L/C svíčky'],
+    ['off', 'magnet_off', 'Vypnout magnet'],
   ];
 
   // Flyout s režimy magnetu; výběr jde přes frontu do Pythonu (uloží se)
@@ -1596,7 +1744,7 @@ window.TickViewChart = (function () {
 
   // Nastaví svíčky i objemy grafu ze s.candles (barva objemu podle směru svíčky)
   function applySeriesData(s) {
-    s.candleSeries.setData(candleData(s));
+    s.candleSeries.setData(mainData(s));
     s.volumeSeries.setData(
       s.candles.map((candle) => ({ time: candle.time, value: candle.volume, color: volumeColor(candle) }))
     );
@@ -1618,9 +1766,7 @@ window.TickViewChart = (function () {
     s.olderRetryAt = 0;
     // Přesnost cenové osy podle instrumentu (forex 1.10025 místo 1.10)
     s.priceDecimals = detectPriceDecimals(clean);
-    s.candleSeries.applyOptions({
-      priceFormat: { type: 'price', precision: s.priceDecimals, minMove: Math.pow(10, -s.priceDecimals) },
-    });
+    s.candleSeries.applyOptions(mainSeriesOptions(s));
     // Instrument bez objemu (forex MIDPOINT, indexy) objem neukazuje
     s.hasVolume = clean.some((candle) => candle.volume > 0);
     applyVolumeVisibility(s);
@@ -1700,13 +1846,19 @@ window.TickViewChart = (function () {
     const last = s.candles[s.candles.length - 1];
     // Starší svíčku ignorujeme – graf se nevrací zpět v čase
     if (candle.time < last.time) return;
-    // Předchozí svíčka pro obarvení podle předchozího závěru
-    const previous = candle.time === last.time ? s.candles[s.candles.length - 2] : last;
-    s.candleSeries.update(candlePoint(s, candle, previous));
+    // Předchozí svíčka a bod série (obarvení podle předchozího závěru, Heikin Ashi)
+    const replace = candle.time === last.time;
+    const count = s.candles.length;
+    const previous = replace ? s.candles[count - 2] : last;
+    const previousPoint = s.mainPoints[replace ? count - 2 : count - 1];
+    const point = mainPoint(s, candle, previous, previousPoint);
+    s.candleSeries.update(point);
     s.volumeSeries.update({ time: candle.time, value: candle.volume, color: volumeColor(candle) });
-    if (candle.time === last.time) {
-      s.candles[s.candles.length - 1] = candle;
+    if (replace) {
+      s.mainPoints[count - 1] = point;
+      s.candles[count - 1] = candle;
     } else {
+      s.mainPoints.push(point);
       s.candles.push(candle);
     }
     s.byTime.set(candle.time, candle);
@@ -1731,7 +1883,7 @@ window.TickViewChart = (function () {
       rightPriceScale: { borderColor: theme.border },
       timeScale: { borderColor: theme.border },
     });
-    s.candleSeries.applyOptions(candleOptions(s.chartStyle));
+    s.candleSeries.applyOptions(mainSeriesOptions(s));
     // Svíčky a objemy překreslit, aby měly správné barvy po přepnutí motivu
     applySeriesData(s);
     // Panely indikátorů přegenerovat v novém motivu
@@ -1788,14 +1940,21 @@ window.TickViewChart = (function () {
   function setChartStyle(id, style) {
     const s = state.get(id);
     if (!s) return;
-    // Vlastní barvy bodů (obarvení podle předchozího závěru) nese jen setData;
-    // bez nich stačí volby série – objem ani svíčky se znovu neposílají
-    const perBar = style.color_by_prev_close || s.chartStyle.color_by_prev_close;
+    // Vlastní barvy bodů nese jen setData; bez nich stačí volby série –
+    // objem ani svíčky se znovu neposílají
+    const perBar = usesPointColors(s) || style.color_by_prev_close;
     s.chartStyle = style;
-    s.candleSeries.applyOptions(candleOptions(style));
-    if (perBar) {
-      s.candleSeries.setData(candleData(s));
-    }
+    s.candleSeries.applyOptions(mainSeriesOptions(s));
+    if (perBar) s.candleSeries.setData(mainData(s));
+  }
+
+  // Typ grafu (Bars, Candles, Line, Area, …) – hlavní série se vymění
+  function setChartType(id, type) {
+    const s = state.get(id);
+    if (!s || !CHART_TYPE_SERIES[type] || s.chartType === type) return;
+    s.chartType = type;
+    createMainSeries(s);
+    redrawOverlay(s);
   }
 
   // Nastaví definice skupin nástrojů pro flyout nabídky (přijde z Pythonu;
@@ -1809,11 +1968,11 @@ window.TickViewChart = (function () {
     s.toolGroups = groups;
   }
 
-  // Nastaví barvu nových kreseb (paleta v liště nástrojů)
-  function setDrawingColor(id, color) {
+  // Výchozí styl nových kreseb podle typu (výchozí šablony ze Settings kresby)
+  function setDrawingDefaults(id, defaults) {
     const s = state.get(id);
     if (!s) return;
-    s.overlay.color = color || '#2962ff';
+    s.drawingDefaults = defaults || {};
   }
 
   // Nastaví režim magnetu: 'off' | 'weak' | 'strong'
@@ -1850,9 +2009,18 @@ window.TickViewChart = (function () {
     redrawOverlay(s);
   }
 
+  // Výchozí styl nové kresby daného typu (výchozí šablona, jinak tovární)
+  function defaultStyle(s, kind) {
+    return s.drawingDefaults[kind] || { color: '#2962ff', options: {} };
+  }
+
   // Přidá novou kresbu do grafu a do fronty k uložení; id z databáze jí
-  // dodatečně přiřadí Python přes assignDrawingId (podle lokálního id)
+  // dodatečně přiřadí Python přes assignDrawingId (podle lokálního id).
+  // Barvu a volby (šířka, styl čáry, písmo) převezme z výchozího stylu typu
   function queueNewDrawing(s, drawing) {
+    const style = defaultStyle(s, drawing.kind);
+    drawing.color = style.color;
+    drawing.options = Object.assign({}, style.options);
     drawing.localId = s.nextLocalId++;
     s.overlay.drawings.push(drawing);
     redrawOverlay(s);
@@ -1862,6 +2030,7 @@ window.TickViewChart = (function () {
       kind: drawing.kind,
       points: drawing.points,
       color: drawing.color,
+      options: drawing.options,
       text: drawing.text || null,
     });
   }
@@ -1870,7 +2039,7 @@ window.TickViewChart = (function () {
   function addText(id, time, price, text) {
     const s = state.get(id);
     if (!s) return;
-    queueNewDrawing(s, { kind: 'text', points: [{ time: Number(time), price: Number(price) }], color: s.overlay.color, text: text });
+    queueNewDrawing(s, { kind: 'text', points: [{ time: Number(time), price: Number(price) }], text: text });
   }
 
   // Použije nastavení kresby z dialogu Settings (barva, text, šířka, styl,
@@ -2000,7 +2169,7 @@ window.TickViewChart = (function () {
     // Hotové kresby se hromadí ve frontě a backend si je vyzvedává stránkovým
     // timerem přes popEvents (DOM eventy z Vue komponenty nejsou spolehlivé;
     // fronta zvládne i více kreseb mezi dvěma ticky)
-    queueNewDrawing(s, { kind: drawing.kind, points: drawing.points, color: s.overlay.color });
+    queueNewDrawing(s, { kind: drawing.kind, points: drawing.points });
     returnToCursor(s);
   }
 
@@ -2040,7 +2209,6 @@ window.TickViewChart = (function () {
     queueNewDrawing(s, {
       kind: 'sticker',
       points: [{ time: Number(time), price: Number(price) }],
-      color: s.overlay.color,
       text: emoji,
     });
   }
@@ -2303,41 +2471,122 @@ window.TickViewChart = (function () {
     }
   }
 
-  // Nakreslí měřič: rámeček + statistiky (Δcena, %, počet barů)
+  // Barvy měřiče jako v TradingView: růst modře, pokles červeně
+  const MEASURE_UP = '#2962ff';
+  const MEASURE_DOWN = '#f23645';
+
+  // Délka intervalu v sekundách zkráceně: „3d 4h“, „12h 15m“, „45m“
+  function formatDuration(seconds) {
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    if (days) return days + 'd' + (hours ? ' ' + hours + 'h' : '');
+    if (hours) return hours + 'h' + (minutes ? ' ' + minutes + 'm' : '');
+    return minutes + 'm';
+  }
+
+  // Úsečka s otevřenou šipkou na konci (osy měřiče)
+  function drawArrowLine(ctx, x1, y1, x2, y2) {
+    const angle = Math.atan2(y2 - y1, x2 - x1);
+    const size = 6;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.moveTo(x2 - size * Math.cos(angle - Math.PI / 5), y2 - size * Math.sin(angle - Math.PI / 5));
+    ctx.lineTo(x2, y2);
+    ctx.lineTo(x2 - size * Math.cos(angle + Math.PI / 5), y2 - size * Math.sin(angle + Math.PI / 5));
+    ctx.stroke();
+  }
+
+  // Index první svíčky s časem ≥ time (binární hledání v seřazených svíčkách)
+  function firstCandleIndex(s, time) {
+    let low = 0;
+    let high = s.candles.length;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      if (s.candles[middle].time < time) low = middle + 1;
+      else high = middle;
+    }
+    return low;
+  }
+
+  // Řádky štítku měřiče: Δcena (Δ %) Δticky / počet barů a čas / objem
+  function measureLines(s, p1, p2) {
+    const diff = p2.price - p1.price;
+    const pct = p1.price ? (diff / p1.price) * 100 : 0;
+    // Tick = nejmenší krok ceny instrumentu (podle přesnosti dat)
+    const ticks = Math.round(diff * Math.pow(10, s.priceDecimals || 2));
+    // Počet barů = rozdíl logických indexů (i mimo rozsah dat)
+    const bars = Math.round(timeToLogical(s, p2.time) - timeToLogical(s, p1.time));
+    const lines = [
+      formatInstrumentPrice(s, diff) + ' (' + pct.toFixed(2) + '%) ' + ticks,
+      bars + ' bars, ' + formatDuration(Math.abs(p2.time - p1.time)),
+    ];
+    // Objem svíček v měřeném úseku (instrumenty bez objemu řádek nemají)
+    if (s.hasVolume) {
+      const to = Math.max(p1.time, p2.time);
+      let volume = 0;
+      // Sčítá se jen měřený úsek – měřič se překresluje při každém pohybu grafu
+      for (let index = firstCandleIndex(s, Math.min(p1.time, p2.time)); index < s.candles.length; index++) {
+        if (s.candles[index].time > to) break;
+        volume += s.candles[index].volume;
+      }
+      lines.push('Vol ' + formatVolume(volume));
+    }
+    return lines;
+  }
+
+  // Nakreslí měřič jako v TradingView: obdélník v barvě směru, šipky středem
+  // (cena svisle, čas vodorovně) a štítek se statistikami pod / nad obdélníkem
   function renderMeasure(ctx, s, paneWidth, paneHeight) {
     const measure = s.measure;
     if (!measure || !measure.points || measure.points.length === 0) return;
-    const pixels = measure.points.map((point) => pointToPixel(s, point));
-    if (pixels.some((p) => p === null)) return;
-    const a = pixels[0];
-    const b = pixels.length > 1 ? pixels[1] : s.overlay.previewPoint ? pointToPixel(s, s.overlay.previewPoint) : null;
-    if (!b) return;
-    const x = Math.min(a.x, b ? b.x : a.x);
-    const y = Math.min(a.y, b ? b.y : a.y);
-    const w = Math.abs((b ? b.x : a.x) - a.x) || 1;
-    const h = Math.abs((b ? b.y : a.y) - a.y) || 1;
+    const p1 = measure.points[0];
+    const p2 = measure.points[1] || s.overlay.previewPoint;
+    if (!p2) return;
+    const a = pointToPixel(s, p1);
+    const b = pointToPixel(s, p2);
+    if (!a || !b) return;
+    const up = p2.price >= p1.price;
+    const color = up ? MEASURE_UP : MEASURE_DOWN;
+    const left = Math.min(a.x, b.x);
+    const top = Math.min(a.y, b.y);
+    const width = Math.abs(b.x - a.x);
+    const height = Math.abs(b.y - a.y);
+    const centerX = (a.x + b.x) / 2;
+    const centerY = (a.y + b.y) / 2;
     ctx.save();
-    ctx.fillStyle = 'rgba(41, 98, 255, 0.15)';
-    ctx.fillRect(x, y, w, h);
-    ctx.setLineDash([4, 4]);
-    ctx.strokeStyle = '#2962ff';
-    ctx.strokeRect(x, y, w, h);
+    ctx.fillStyle = withAlpha(color, 0.2);
+    ctx.fillRect(left, top, Math.max(width, 1), Math.max(height, 1));
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1;
     ctx.setLineDash([]);
-    if (measure.points.length > 1) {
-      // Statistiky: změna ceny a %, počet barů mezi body
-      const p1 = measure.points[0];
-      const p2 = measure.points[1];
-      const diff = p2.price - p1.price;
-      const pct = p1.price ? (diff / p1.price) * 100 : 0;
-      // Počet barů = rozdíl logických indexů (i mimo rozsah dat)
-      const bars = Math.round(Math.abs(timeToLogical(s, p2.time) - timeToLogical(s, p1.time)));
-      const label =
-        (diff >= 0 ? '+' : '') + formatInstrumentPrice(s, diff) + ' (' + (pct >= 0 ? '+' : '') + pct.toFixed(2) + ' %) · ' + bars + ' barů';
-      ctx.font = '12px sans-serif';
-      ctx.textBaseline = 'top';
-      ctx.fillStyle = s.themeName === 'dark' ? '#d1d4dc' : '#131722';
-      ctx.fillText(label, x + 4, y + 4);
-    }
+    // Šipky míří od prvního bodu ke druhému (krátké osy se nekreslí)
+    if (height > 8) drawArrowLine(ctx, centerX, a.y, centerX, b.y);
+    if (width > 8) drawArrowLine(ctx, a.x, centerY, b.x, centerY);
+
+    // Štítek: plný obdélník se zaoblenými rohy a bílým textem na středu
+    const lines = measureLines(s, p1, p2);
+    ctx.font = '13px -apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, sans-serif';
+    const lineHeight = 20;
+    const padX = 10;
+    const padY = 7;
+    const boxWidth = Math.max(...lines.map((line) => ctx.measureText(line).width)) + 2 * padX;
+    const boxHeight = lines.length * lineHeight + 2 * padY;
+    const boxX = Math.min(Math.max(2, centerX - boxWidth / 2), paneWidth - boxWidth - 2);
+    // Růst: štítek nad obdélníkem, pokles pod ním (a vždy uvnitř grafu)
+    let boxY = up ? top - boxHeight - 8 : top + height + 8;
+    boxY = Math.min(Math.max(2, boxY), paneHeight - boxHeight - 2);
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.roundRect(boxX, boxY, boxWidth, boxHeight, 4);
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    lines.forEach((line, index) => {
+      ctx.fillText(line, boxX + boxWidth / 2, boxY + padY + lineHeight * (index + 0.5));
+    });
     ctx.restore();
   }
 
@@ -2665,7 +2914,8 @@ window.TickViewChart = (function () {
     ctx.translate(pane.offsetX, pane.offsetY);
     if (!s.overlay.hidden) {
       const all = [...s.overlay.drawings];
-      if (s.overlay.pending) all.push({ ...s.overlay.pending, preview: true, color: s.overlay.color });
+      // Rozepsaná kresba už ve stylu, jaký dostane po dokončení
+      if (s.overlay.pending) all.push({ ...s.overlay.pending, ...defaultStyle(s, s.overlay.pending.kind), preview: true });
       for (const drawing of all) {
         drawShape(ctx, s, drawing, pane.width, pane.height);
       }
@@ -2683,7 +2933,7 @@ window.TickViewChart = (function () {
     if (!pixel) return;
     ctx.save();
     ctx.lineWidth = 1.5;
-    ctx.strokeStyle = s.overlay.color || '#2962ff';
+    ctx.strokeStyle = defaultStyle(s, s.overlay.mode).color;
     ctx.fillStyle = s.themeName === 'dark' ? '#131722' : '#ffffff';
     ctx.beginPath();
     ctx.arc(pixel.x, pixel.y, 4.5, 0, Math.PI * 2);
@@ -2707,15 +2957,17 @@ window.TickViewChart = (function () {
     setLegendStatus: setLegendStatus,
     setDrawingMode: setDrawingMode,
     setDrawings: setDrawings,
-    setDrawingColor: setDrawingColor,
+    setDrawingDefaults: setDrawingDefaults,
     setMagnet: setMagnet,
     setDrawingsHidden: setDrawingsHidden,
     addText: addText,
     trashDrawings: trashDrawings,
     setToolGroups: setToolGroups,
+    setIcons: setIcons,
     setFavorites: setFavorites,
     setFavoritesVisible: setFavoritesVisible,
     setChartStyle: setChartStyle,
+    setChartType: setChartType,
     setKeepTool: setKeepTool,
     setLocked: setLocked,
     addSticker: addSticker,

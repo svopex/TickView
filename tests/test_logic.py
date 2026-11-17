@@ -1,6 +1,7 @@
 """Testy logické vrstvy a společných částí zdrojů (spuštění: python -m unittest)."""
 
 import asyncio
+import sqlite3
 import tempfile
 import time
 import unittest
@@ -23,14 +24,16 @@ from tickview.logic.indicators import (
 from tickview.logic.sessions import filter_session, timezone_options, utc_offset_label
 from tickview.logic.styles import (
     CHART_DEFAULTS,
-    clean_template_name,
+    clean_name,
     delete_template,
     load_chart_style,
     load_favorite_tools,
     load_panel_position,
     load_templates,
     normalize_chart_style,
+    normalize_chart_type,
     normalize_color,
+    normalize_drawing_style,
     normalize_favorite_tools,
     normalize_panel_position,
     save_template,
@@ -414,6 +417,48 @@ class ConfigTest(unittest.TestCase):
             self.assertEqual(yaml.safe_load(path.read_text(encoding="utf-8")), {"alpaca": {"api_key": "k"}})
 
 
+class WatchlistsTest(unittest.IsolatedAsyncioTestCase):
+    """Více pojmenovaných watchlistů a převod původního jediného seznamu."""
+
+    async def test_migration_and_lists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "test.db"
+            # Databáze ze starší verze: jen tabulka watchlist se dvěma symboly
+            legacy = sqlite3.connect(path)
+            legacy.executescript(
+                "CREATE TABLE watchlist (id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL, "
+                "symbol TEXT NOT NULL, added_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE (source, symbol));"
+                "INSERT INTO watchlist (source, symbol) VALUES ('binance', 'BTCUSDT'), ('ibkr', 'MSFT');"
+            )
+            legacy.commit()
+            legacy.close()
+            cache = KlineCache(path)
+            await cache.init()
+            try:
+                lists = await cache.watchlists()
+                self.assertEqual([(item["name"], item["count"]) for item in lists], [("Watchlist", 2)])
+                first = lists[0]["id"]
+                self.assertEqual(
+                    await cache.watchlist_list(first),
+                    [{"source": "binance", "symbol": "BTCUSDT"}, {"source": "ibkr", "symbol": "MSFT"}],
+                )
+                # Kopie seznamu, stejný symbol ve dvou seznamech, přejmenování
+                copy = await cache.watchlist_create("Forex", copy_from=first)
+                await cache.watchlist_add(copy, "ibkr", "EUR.USD")
+                await cache.watchlist_add(copy, "ibkr", "EUR.USD")
+                await cache.watchlist_remove(copy, "binance", "BTCUSDT")
+                await cache.watchlist_rename(copy, "FX")
+                self.assertEqual(len(await cache.watchlist_list(copy)), 2)
+                self.assertEqual(len(await cache.watchlist_list(first)), 2)
+                self.assertEqual([item["name"] for item in await cache.watchlists()], ["Watchlist", "FX"])
+                await cache.watchlist_clear(first)
+                self.assertEqual(await cache.watchlist_list(first), [])
+                await cache.watchlist_delete(copy)
+                self.assertEqual([item["id"] for item in await cache.watchlists()], [first])
+            finally:
+                await cache.close()
+
+
 class StylesTest(unittest.TestCase):
     """Barvy s průhledností, styl grafu, šablony a oblíbené nástroje."""
 
@@ -447,9 +492,17 @@ class StylesTest(unittest.TestCase):
         self.assertEqual(list(delete_template(templates, "alfa")), ["MOJE"])
         self.assertEqual(load_templates('{"b": {"x": 1}, "a": {"y": 2}, "": {}, "c": 5}'), {"a": {"y": 2}, "b": {"x": 1}})
         self.assertEqual(load_templates("[1]"), {})
-        self.assertEqual(clean_template_name("  Můj   styl "), "Můj styl")
-        self.assertIsNone(clean_template_name("   "))
-        self.assertIsNone(clean_template_name("x" * 41))
+        self.assertEqual(clean_name("  Můj   styl "), "Můj styl")
+        self.assertIsNone(clean_name("   "))
+        self.assertIsNone(clean_name("x" * 41))
+
+    def test_drawing_style_and_chart_type(self) -> None:
+        style = normalize_drawing_style({"color": "rgba(1, 2, 3, 0.5)", "options": {"width": 3, "lineStyle": "x", "fontSize": 200}})
+        self.assertEqual(style, {"color": "rgba(1, 2, 3, 0.5)", "options": {"width": 3, "lineStyle": "solid", "fontSize": 72}})
+        # Prázdná šablona = tovární styl
+        self.assertEqual(normalize_drawing_style(None)["options"], {"width": 1.5, "lineStyle": "solid", "fontSize": 13})
+        self.assertEqual(normalize_chart_type("heikin"), "heikin")
+        self.assertEqual(normalize_chart_type("renko"), "candles")
 
     def test_favorite_tools(self) -> None:
         allowed = ["cursor", "trend", "hline", "fib"]
