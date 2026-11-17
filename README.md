@@ -265,6 +265,9 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   s časovým pásmem grafu – nabídka UTC, Exchange (pásmo burzy), místní čas
   a města jako v TradingView; pásmo platí pro časovou osu i crosshair, denní
   svíčky se ukazují v UTC; volba se ukládá.
+- Když posledních 600 svíček nestačí na zaplnění grafu (RTH před otevřením
+  trhu, noc, víkend), načtení sáhne dál do minulosti – graf tak ukáže
+  předchozí seanci místo hlášky o chybějících datech.
 - Do cache se ukládají jen uzavřené svíčky; rozpracovaná poslední svíčka se
   při každém načtení stahuje znovu. Cache si pamatuje skutečně stažené
   intervaly, takže se doplní i díry uprostřed uložených dat.

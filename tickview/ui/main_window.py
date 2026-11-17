@@ -85,8 +85,9 @@ from tickview.ui.templates import TemplateMenu, load_default_template, settings_
 DEFAULT_BARS = 600
 # Kolik posledních svíček je vidět po načtení grafu
 VISIBLE_BARS = 150
-# Kolikrát se při donačítání historie zdvojnásobí okno, když je prázdné
-# (víkend, noc u akcií); pak se historie považuje za vyčerpanou
+# Kolik oken historie se nejvýš stáhne, když první nemá dost svíček (víkend,
+# noc u akcií, RTH před otevřením trhu); každé další je dvojnásobné a starší,
+# pak se historie považuje za vyčerpanou
 OLDER_LOAD_ATTEMPTS = 4
 # Jak často nejvýš se z živých svíček přepočítají indikátory (sekundy)
 LIVE_INDICATOR_REFRESH_S = 2.0
@@ -657,11 +658,10 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
         set_badge(False)
         show_status(f"Načítám {symbol} ({timeframe})…")
         try:
-            end_ms = utc_now_ms()
-            start_ms = end_ms - DEFAULT_BARS * TIMEFRAME_MS[timeframe]
-            candles = await fetch_history(provider, cache, symbol, timeframe, start_ms, end_ms)
-            # RTH: jen svíčky hlavní obchodní seance (ETH = vše, co zdroj poslal)
-            candles = filter_session(candles, timeframe, active_session())
+            # Aspoň tolik svíček, kolik je po načtení vidět (zbytek donačte load_older)
+            candles = await fetch_session_history(
+                provider, symbol, timeframe, utc_now_ms(), min_count=VISIBLE_BARS, seq=seq
+            )
             if seq != state["load_seq"]:
                 # Mezitím uživatel zvolil jiný symbol/timeframe – zastaralou odpověď zahodíme
                 return
@@ -704,12 +704,49 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
             await chart.set_drawings([])
             await push_indicators()
 
+    async def fetch_session_history(
+        provider, symbol: str, timeframe: str, end_ms: int, *, min_count: int, seq: int
+    ) -> list[Candle]:
+        """Stáhne svíčky končící v end_ms, odfiltrované na zvolenou seanci.
+
+        Začne oknem DEFAULT_BARS svíček; dokud jich je méně než min_count,
+        stáhne i úsek před ním a okno zdvojnásobí (celkem nejvýš
+        OLDER_LOAD_ATTEMPTS oken) – noc, víkend nebo RTH mimo hlavní hodiny
+        jinak vrátí málo nebo nic. Přestane i tehdy, když mezitím začalo jiné
+        načtení (seq), nebo když filtr seance nic neodebral a úsek přesto
+        nestačil (dosažen začátek historie, např. mladý symbol).
+
+        Parametry:
+            provider, symbol, timeframe: co se stahuje.
+            end_ms: konec intervalu (ms UTC, včetně).
+            min_count: kolik svíček po filtru seance stačí.
+            seq: číslo načtení, ke kterému dotaz patří (state["load_seq"]).
+        """
+        span_ms = DEFAULT_BARS * TIMEFRAME_MS[timeframe]
+        session = active_session()
+        candles: list[Candle] = []
+        for _ in range(OLDER_LOAD_ATTEMPTS):
+            chunk = await fetch_history(provider, cache, symbol, timeframe, end_ms - span_ms, end_ms)
+            filtered = filter_session(chunk, timeframe, session)
+            # Starší úsek jde před dosud stažené svíčky (úseky se nepřekrývají)
+            candles = filtered + candles
+            if len(candles) >= min_count or seq != state["load_seq"]:
+                break
+            # Neprázdný úsek bez mezer po filtru seance a přesto krátký = data
+            # dřív nezačínají; další (prázdné, necachované) dotazy by byly zbytečné
+            if chunk and len(filtered) == len(chunk):
+                break
+            # Stažený úsek už znovu nestahujeme – další pokus končí těsně před
+            # jeho začátkem (interval je včetně obou mezí, svíčka by se zdvojila)
+            end_ms -= span_ms + 1
+            span_ms *= 2
+        return candles
+
     async def load_older(before_s) -> None:
         """Donačte starší svíčky před první svíčkou grafu (posun grafu doleva).
 
-        Prázdné okno (víkend, noc u akcií) se posune dál do minulosti a
-        zdvojnásobí; když nic nevrátí ani poslední pokus, graf historii označí
-        za vyčerpanou.
+        Když nic nevrátí ani poslední okno fetch_session_history, graf
+        historii označí za vyčerpanou.
         """
         provider = state.get("provider")
         symbol = state.get("symbol")
@@ -717,19 +754,10 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
         seq = state["load_seq"]
         if provider is None or not symbol or before_s is None:
             return
-        step_ms = TIMEFRAME_MS[timeframe]
-        end_ms = int(before_s) * 1000 - 1
-        span_ms = DEFAULT_BARS * step_ms
-        older: list[Candle] = []
         try:
-            for _ in range(OLDER_LOAD_ATTEMPTS):
-                older = await fetch_history(provider, cache, symbol, timeframe, end_ms - span_ms, end_ms)
-                older = filter_session(older, timeframe, active_session())
-                if older or seq != state["load_seq"]:
-                    break
-                # Prázdný úsek už znovu nestahujeme – další pokus začne před ním
-                end_ms -= span_ms
-                span_ms *= 2
+            older = await fetch_session_history(
+                provider, symbol, timeframe, int(before_s) * 1000 - 1, min_count=1, seq=seq
+            )
         except Exception as exc:
             if seq == state["load_seq"]:
                 show_status(f"Starší data {symbol} se nepodařilo načíst: {exc}", error=True)
