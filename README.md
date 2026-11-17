@@ -158,7 +158,9 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   přidávají do aktivního seznamu, aktivní seznam se pamatuje. Původní jediný
   watchlist se při prvním spuštění převede do seznamu „Watchlist“. Pod
   hlavičkou jsou kulatá tlačítka s iniciálou každého seznamu pro rychlé
-  přepnutí (aktivní seznam je plný, tooltip ukazuje celý název).
+  přepnutí (aktivní seznam je plný, tooltip ukazuje celý název). Klik na
+  záhlaví sloupce „Symbol“ řadí symboly podle abecedy (A→Z, Z→A, zpět
+  pořadí přidání); řazení platí pro všechny seznamy a pamatuje se.
 - Typ grafu jako v TradingView: Bars, Candles, Hollow candles, Line, Line
   with markers, Step line, Area, Baseline (základna v polovině rozpětí dat),
   Columns, High-low a Heikin Ashi; barvy růstu / poklesu bere ze Settings
@@ -313,7 +315,7 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   scanu, počet posledních svíček pro signál, pozice tabulky (top_right,
   top_left, middle_right, bottom_right, bottom_left, nezobrazovat), jen trhy
   se signálem, velikost textu, skrytí prefixu zdroje; alert před zavřením
-  svíčky – dva nezávislé prahy v minutách (výchozí 10 a 5), každý nejvýš
+  svíčky (ve výchozím stavu zapnutý) – dva nezávislé prahy v minutách (výchozí 10 a 5), každý nejvýš
   jednou za svíčku, jedna souhrnná zpráva se seznamem trhů se signálem na
   běžící svíčce, notifikace Telegram / oznámení / zvuk; a 40 polí symbolů
   ve tvaru „zdroj:SYMBOL“ (bez prefixu = zdroj grafu). Výchozí symboly jsou
@@ -523,6 +525,7 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   časových pásem pro nabídku
 - `tickview/logic/layouts.py` – rozložení více grafů (Layout setup), volby
   synchronizace, kontrola uložené konfigurace a změna počtu grafů
+- `tickview/logic/watchlists.py` – řazení symbolů watchlistu podle abecedy
 - `tickview/logic/indicator_templates.py` – šablony indikátorů (uložení,
   přepsání, oblíbené, naposledy použité, popis)
 - `tickview/ui/chart_pane.py` – jeden graf rozložení (ChartPane): symbol,

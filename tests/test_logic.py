@@ -22,6 +22,7 @@ from tickview.indicators.compute import (
     normalize_params,
 )
 from tickview.logic.sessions import filter_session, timezone_options, utc_offset_label
+from tickview.logic.watchlists import sort_watchlist
 from tickview.logic.styles import (
     CHART_DEFAULTS,
     clean_name,
@@ -415,6 +416,23 @@ class ConfigTest(unittest.TestCase):
             update_config_section("alpaca", {"api_key": "k"}, path)
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             self.assertEqual(yaml.safe_load(path.read_text(encoding="utf-8")), {"alpaca": {"api_key": "k"}})
+
+
+class WatchlistSortTest(unittest.TestCase):
+    """Řazení symbolů watchlistu podle abecedy."""
+
+    def test_sort(self) -> None:
+        items = [{"source": "ibkr", "symbol": "MSFT"}, {"source": "binance", "symbol": "BTCUSDT"},
+                 {"source": "alpaca", "symbol": "MSFT"}, {"source": "yahoo", "symbol": "aapl"}]
+        pairs = lambda result: [f"{item['source']}:{item['symbol']}" for item in result]  # noqa: E731
+        # Abeceda bez ohledu na velikost písmen, shodný symbol vzestupně podle zdroje
+        self.assertEqual(pairs(sort_watchlist(items, "asc")),
+                         ["yahoo:aapl", "binance:BTCUSDT", "alpaca:MSFT", "ibkr:MSFT"])
+        self.assertEqual(pairs(sort_watchlist(items, "desc")),
+                         ["alpaca:MSFT", "ibkr:MSFT", "binance:BTCUSDT", "yahoo:aapl"])
+        # Bez řazení (i neznámý klíč) pořadí přidání
+        self.assertEqual(sort_watchlist(items, ""), items)
+        self.assertEqual(sort_watchlist(items, "xyz"), items)
 
 
 class WatchlistsTest(unittest.IsolatedAsyncioTestCase):

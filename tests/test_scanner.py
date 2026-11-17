@@ -212,7 +212,10 @@ class ScannerLogicTest(unittest.TestCase):
         self.assertEqual(parse_symbol("yahoo:EURUSD=X", "binance"), ("yahoo", "EURUSD=X"))
         self.assertEqual(parse_symbol("BTCUSDT", "binance"), ("binance", "BTCUSDT"))
         self.assertIsNone(parse_symbol(" ", "binance"))
-        params = registry.get_indicator("svopex_ttw").defaults()
+        defaults = registry.get_indicator("svopex_ttw").defaults()
+        # Alert před zavřením svíčky je ve výchozím stavu zapnutý
+        self.assertTrue(defaults["scan_alert"])
+        params = {**defaults, "scan_alert": False}
         spec = {"kind": "svopex_ttw", "params": params, "visible": True}
         job, table = make_job(spec, "binance")
         self.assertTrue(table)

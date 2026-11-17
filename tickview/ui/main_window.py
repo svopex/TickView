@@ -60,6 +60,7 @@ from tickview.logic.layouts import (
     load_layout,
     resize_panes,
 )
+from tickview.logic.watchlists import WATCHLIST_SORTS, sort_watchlist
 from tickview.logic.styles import (
     CHART_DEFAULTS,
     CHART_TYPE_SECTIONS,
@@ -166,6 +167,9 @@ def provider_code(source: str) -> str:
 
 # Obsahy pravého panelu ("" = panel skrytý, zůstane jen pravá lišta)
 RIGHT_PANELS = ("watchlist", "alerts", "")
+# Záhlaví sloupce Symbol ve watchlistu: další stav řazení po kliknutí a ikona stavu
+WATCHLIST_SORT_NEXT = {"": "asc", "asc": "desc", "desc": ""}
+WATCHLIST_SORT_ICONS = {"": "unfold_more", "asc": "arrow_upward", "desc": "arrow_downward"}
 
 
 def register(cache: KlineCache, alert_engine: AlertEngine, scanner: ScannerService, reminders: ReminderService) -> None:
@@ -232,6 +236,10 @@ async def _build_index(
     saved_alerts_sort = await cache.get_setting("alerts_sort", "newest")
     if saved_alerts_sort not in ALERT_SORTS:
         saved_alerts_sort = "newest"
+    # Řazení watchlistu z minula ("" = pořadí přidání, asc / desc podle abecedy)
+    saved_watchlist_sort = await cache.get_setting("watchlist_sort", "")
+    if saved_watchlist_sort not in WATCHLIST_SORTS:
+        saved_watchlist_sort = ""
     # Handle si držíme: každé volání ui.dark_mode() by vytvořilo nový prvek
     dark_mode = ui.dark_mode(dark)
 
@@ -261,6 +269,8 @@ async def _build_index(
         "right_panel": saved_right_panel,
         "alerts_tab": "alerts",
         "alerts_sort": saved_alerts_sort,
+        "watchlist_sort": saved_watchlist_sort,
+        "watchlist_items": [],
         "alert_search_open": False,
         # Naposledy načtené alerty (hledání a řazení filtrují v paměti)
         "alerts": [],
@@ -1599,9 +1609,11 @@ async def _build_index(
         render_watchlist_menu(lists)
         watch_rows.clear()
         watchlist_body.clear()
-        items = await cache.watchlist_list(active["id"])
+        # Symboly v pořadí přidání si pamatujeme pro přeřazení bez načítání (záhlaví Symbol)
+        state["watchlist_items"] = await cache.watchlist_list(active["id"])
+        paint_watchlist_sort()
         with watchlist_body:
-            for item in items:
+            for item in sort_watchlist(state["watchlist_items"], state["watchlist_sort"]):
                 key = f"{item['source']}:{item['symbol']}"
                 code = provider_code(item["source"])
                 # Klik kamkoli do řádku (symbol, cena, změna) přepne graf
@@ -1617,6 +1629,24 @@ async def _build_index(
                 watch_rows[key] = {"row": watch_row_element, "price": price_label, "change": change_label}
         refresh_watchlist_active()
         await refresh_watchlist_prices()
+
+    async def toggle_watchlist_sort() -> None:
+        # Klik na záhlaví Symbol (jako v TradingView): A→Z, Z→A, pořadí přidání;
+        # řazení platí pro všechny seznamy a přetrvá restart. Existující řádky
+        # se jen přeskládají (ceny zůstanou, nic se nenačítá znovu)
+        state["watchlist_sort"] = WATCHLIST_SORT_NEXT[state["watchlist_sort"]]
+        paint_watchlist_sort()
+        for index, item in enumerate(sort_watchlist(state["watchlist_items"], state["watchlist_sort"])):
+            row = watch_rows.get(f"{item['source']}:{item['symbol']}")
+            if row:
+                row["row"].move(target_index=index)
+        await cache.set_setting("watchlist_sort", state["watchlist_sort"])
+
+    def paint_watchlist_sort() -> None:
+        # Ikona a zvýraznění záhlaví podle stavu řazení
+        sort = state["watchlist_sort"]
+        watchlist_sort_icon.name = WATCHLIST_SORT_ICONS[sort]
+        watchlist_sort_button.classes(add="active" if sort else "", remove="" if sort else "active")
 
     def refresh_watchlist_active() -> None:
         # Zvýrazní řádek tickeru aktivního grafu (jako v TradingView)
@@ -2943,6 +2973,17 @@ async def _build_index(
                         ).classes("watch-add").tooltip("Přidat symbol grafu do seznamu")
                     # Rychlé přepínání seznamů (kulatá tlačítka s iniciálou názvu)
                     watchlist_quick = ui.row().classes("wl-quick w-full")
+                    # Záhlaví sloupce Symbol: klik přepíná řazení podle abecedy
+                    with ui.row().classes("watch-head w-full"):
+                        with ui.button(color=None, on_click=toggle_watchlist_sort).props(
+                            "flat dense no-caps"
+                        ).classes("watch-sort").tooltip(
+                            "Řadit podle abecedy (A→Z, Z→A, pořadí přidání)"
+                        ) as watchlist_sort_button:
+                            ui.label("Symbol")
+                            watchlist_sort_icon = ui.icon(WATCHLIST_SORT_ICONS[state["watchlist_sort"]]).classes(
+                                "watch-sort-icon"
+                            )
                     watchlist_body = ui.column().classes("watchlist-body w-full")
                 with ui.column().classes("alerts-panel w-full") as alerts_section:
                     # Přepínač Alerts / Log (log s počtem záznamů) jako v TradingView

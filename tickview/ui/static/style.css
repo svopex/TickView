@@ -594,6 +594,27 @@
   color: #808080;
 }
 
+/* Záhlaví watchlistu: sloupec Symbol s řazením podle abecedy (jako v TradingView) */
+.watch-head {
+  padding: 0 4px;
+}
+
+.watch-sort {
+  min-height: 22px;
+  padding: 0 4px;
+  font-size: 11px;
+  color: #808080;
+}
+
+.watch-sort.active {
+  color: #2962ff;
+}
+
+.watch-sort-icon {
+  margin-left: 2px;
+  font-size: 14px;
+}
+
 /* Obsah vpravo od watchlistu: lišty + graf + stav */
 .content-col {
   flex: 1 1 auto;

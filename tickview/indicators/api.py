@@ -199,7 +199,7 @@ TABLE_POSITIONS = ("top_right", "top_left", "middle_right", "bottom_right", "bot
 TABLE_SIZES = ("tiny", "small", "normal", "large")
 
 
-def scanner_params(default_symbols: Sequence[str] = (), timeframe: str = "1h") -> list["Param"]:
+def scanner_params(default_symbols: Sequence[str] = (), timeframe: str = "1h", alert: bool = False) -> list["Param"]:
     """Vstupy scanneru, které indikátor se signály připojí ke svým parametrům.
 
     Scanner (TickView, tickview/services/scanner.py) spočítá indikátor se
@@ -210,6 +210,7 @@ def scanner_params(default_symbols: Sequence[str] = (), timeframe: str = "1h") -
     Parametry:
         default_symbols: výchozí symboly ("zdroj:SYMBOL"), zbylá pole jsou prázdná.
         timeframe: výchozí timeframe scanu.
+        alert: alert před zavřením svíčky ve výchozím stavu zapnutý.
     """
     params = [
         Param.timeframe("scan_timeframe", timeframe, "Timeframe scanu", group=G_SCANNER),
@@ -220,7 +221,7 @@ def scanner_params(default_symbols: Sequence[str] = (), timeframe: str = "1h") -
         Param.bool("scan_only_hits", True, "Zobrazit pouze trhy se signálem", group=G_SCANNER),
         Param.select("scan_text_size", "normal", "Velikost textu", options=TABLE_SIZES, group=G_SCANNER),
         Param.bool("scan_strip_prefix", True, "Skrýt prefix zdroje", group=G_SCANNER),
-        Param.bool("scan_alert", False, "Posílat alert před zavřením svíčky", group=G_SCANNER_ALERT,
+        Param.bool("scan_alert", alert, "Posílat alert před zavřením svíčky", group=G_SCANNER_ALERT,
                    tooltip="Jedna souhrnná zpráva se seznamem trhů se signálem na běžící svíčce timeframu scanu."),
         Param.int("scan_alert_minutes1", 10, "1. upozornění (min před zavřením)", min=0, max=1440,
                   group=G_SCANNER_ALERT, tooltip="0 = vypnuto; každý práh nejvýš jednou za svíčku."),

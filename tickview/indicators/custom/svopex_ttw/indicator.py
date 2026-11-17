@@ -191,7 +191,7 @@ class SvopexTTW(Indicator):
         Param.color("two_color_middle_color", "#b8860b", "Barva prostřední části dvoubarevné linky",
                     group=G_DISPLAY),
         # Scanner přes symboly (tabulka v grafu, alert před zavřením svíčky)
-        *scanner_params(DEFAULT_SCAN_SYMBOLS),
+        *scanner_params(DEFAULT_SCAN_SYMBOLS, alert=True),
     ]
 
     def required_bars(self, params: dict) -> int:
