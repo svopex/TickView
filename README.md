@@ -492,6 +492,7 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
 
 ## Struktura projektu
 
+- `LICENSE` – text licence Apache License 2.0
 - `main.py` – vstupní bod: CLI parametry (`--port`, `--native`, `--open`),
   registrace statických souborů, spuštění UI
 - `run.sh` – zkrácené spuštění na macOS/Linux: příprava `.venv`, instalace
@@ -612,3 +613,11 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   rozhraní a loader indikátorů, scanner, časové připomínky a Svopex TTW
   porovnaný s doslovným přepisem Pine v `tests/ttw_reference.py`);
   spuštění `python -m unittest`
+
+## Licence
+
+Copyright 2026 Petr Svoboda
+
+Projekt je licencovaný pod [Apache License 2.0](LICENSE). Vendored knihovna
+TradingView Lightweight Charts (`tickview/ui/static/lightweight-charts.standalone.production.js`)
+má vlastní licenci Apache-2.0 (Copyright TradingView, Inc.), uvedenou v hlavičce souboru.
