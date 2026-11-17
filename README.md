@@ -264,13 +264,61 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   cen (osa i legenda) se určuje z dat (forex 5 míst, akcie 2).
 - Indikátory: tlačítko „Indikátory“ otevře nabídku jako v TradingView –
   hledání, kategorie (klouzavé průměry, pásma a kanály, trend, oscilátory,
-  volatilita, objem, aktivní) a seznam s popisem; klik indikátor přidá
+  volatilita, objem, vlastní, aktivní) a seznam s popisem; klik indikátor přidá
   s výchozími parametry. K dispozici SMA, EMA, WMA, HMA, VWMA, VWAP, Bollinger
   Bands, Keltner, Donchian, Ichimoku, Parabolic SAR, Supertrend, ADX, RSI,
   MACD, Stochastic, Stoch RSI, CCI, Williams %R, Momentum, ROC, Awesome
-  Oscillator, TRIX, TSI, ATR, OBV, MFI a CMF. Řádek indikátoru v legendě (i
+  Oscillator, TRIX, TSI, ATR, OBV, MFI, CMF a vlastní Svopex TTW. Řádek indikátoru v legendě (i
   v titulku panelu) má při najetí myší oko (skrýt/zobrazit), ozubené kolečko
-  (Settings – parametry a barva) a křížek (odebrat).
+  (Settings – parametry a barva) a křížek (odebrat). Dialog Settings se
+  skládá ze schématu parametrů indikátoru: skupiny jako sekce, pole podle
+  typu (číslo, přepínač, barva, výběr, text, timeframe) a nápověda v tooltipu.
+  Graf načte tolik historie, kolik aktivní indikátory potřebují (po přidání
+  indikátoru donačte starší svíčky). Instance indikátoru, který se nenačetl
+  (chyba v jeho souboru), v grafu zůstane s poznámkou „nenačten“ i s nastavením.
+- Vlastní indikátory: každý má vlastní adresář
+  `tickview/indicators/custom/<název>/` se souborem `indicator.py` (třída
+  odvozená od `Indicator` z `tickview/indicators/api.py` a proměnná
+  `INDICATOR`); další soubory adresáře (verze Pine skriptu v `pine/`,
+  poznámky) TickView ignoruje. Indikátor importuje jen `tickview.indicators.api`
+  a pandas/numpy, dostane svíčky, parametry a `Context` (druh instrumentu,
+  tick, pásmo burzy, timeframe) a vrátí `Result`: čáry, úrovně panelu,
+  úsečky, značky u svíček a signály pro scanner. Nový indikátor = nový
+  adresář, odebrání = smazání adresáře. Chyba importu nebo jiná verze
+  rozhraní (`API_VERSION`) se zapíše do logu a ukáže v kategorii Vlastní,
+  ostatní indikátory fungují dál.
+- Svopex TTW (`custom/svopex_ttw/`): převod výpočetního jádra Pine skriptu
+  (`pine/svopex_ttw_v9.pine`, původně MQL5 SvpTomTheWizard) 1:1 včetně
+  zvláštností z MQL – formace ONE / ENG / STAR, swingy, trendlinky
+  a šablony, double bottom / top, vynechání půlnočních svíček; kreslí úsečky
+  do grafu a vrací signály (LONG / SHORT s indexem svíčky). Potřebuje aspoň
+  tolik svíček, kolik je „Počet svíček, které se zpracovávají“ (výchozí 360),
+  jinak nic nevykreslí (jako v TradingView). Hodina půlnoční svíčky se počítá
+  v nastaveném pásmu (výchozí Europe/Prague; v Pine je to pásmo burzy
+  symbolu – pro shodu s TradingView je potřeba zvolit pásmo, ve kterém má
+  rolloverová svíčka nastavenou hodinu). U forexu na 1h se minimální
+  a maximální velikost svíčky počítá z ticku (forex z Yahoo 0.00001, u JPY
+  párů 0.001; ostatní zdroje odhad z dat).
+  Scanner, alerty a noční upozornění z Pine skriptu jsou v TickView obecné
+  funkce (níže).
+- Scanner (tlačítko radaru v pravé liště): pro každý symbol zvoleného
+  seznamu watchlistu spočítá indikátor se signály (Svopex TTW) na zvoleném
+  timeframu a ukáže tabulku LONG(0) / SHORT(1) … (0 = běžící svíčka;
+  zelená long, červená short, oranžová oba; v tooltipu typ formace nebo
+  chyba). Klik na řádek načte symbol do aktivního grafu. Nastavení
+  (ozubené kolečko): zapnutí, indikátor a jeho parametry, seznam symbolů,
+  timeframe, počet posledních svíček, jen trhy se signálem a alert před
+  zavřením svíčky – dva nezávislé prahy v minutách (výchozí 10 a 5), každý
+  nejvýš jednou za svíčku, jedna souhrnná zpráva se seznamem trhů se
+  signálem na běžící svíčce; notifikace Telegram, oznámení, zvuk, webhook.
+  Scanner běží na serveru i bez otevřené stránky, přepočítá se každou minutu
+  (tlačítko obnovit hned) a před odesláním alertu si data obnoví. Data
+  bere ze zdrojů symbolů v seznamu (přes cache).
+- Časové připomínky (panel Alerty → ⋯ → Časové připomínky…): opakovaná
+  notifikace v okně od–do (např. 22:30–22:55 po 5 minutách, výzva k uzavření
+  pozic před noční seancí) ve zvoleném pásmu a dny v týdnu; zapnutí /
+  vypnutí, úprava, smazání. Běží na serveru; spuštění se zapisují do logu
+  alertů (bez ceny).
 - Pravý klik a dvojklik (jako v TradingView): na kresbě menu „Settings…“
   (barva, šířka a styl čáry, u textu obsah a vzhled písma, u všech záložka
   Visibility) a „Smazat
@@ -385,7 +433,7 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
 - `tickview/config.py` – cesty k runtime datům, cache DB, načítání
   konfigurace `config.yaml` a zápis sekce se zachováním komentářů
 - `tickview/providers/base.py` – rozhraní DataProvider (search/history/stream/
-  tickers/describe/close, pásmo burzy, hlavní seance), Candle, StreamStatus
+  tickers/describe/close, pásmo burzy, druh instrumentu, tick ceny, hlavní seance), Candle, StreamStatus
   (výpadek/obnovení streamu, případně živá/zpožděná data), SymbolInfo, kanonické timeframy, skládání
   2m/10m z kratších svíček (historie i živě), omezovač dotazů a společná
   smyčka pollingu živých dat
@@ -404,10 +452,24 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
 - `tickview/providers/__init__.py` – registr zdrojů (nový zdroj = jeden řádek)
 - `tickview/logic/cache.py` – SQLite cache svíček, nastavení, kreseb,
   alertů a jejich logu, seznamů symbolů (watchlistů) a evidence stažených intervalů; skládání historie z cache a sítě
-  (ze sítě stahuje jen chybějící úseky)
-- `tickview/logic/indicators.py` – definice (kategorie, popis, parametry)
-  a výpočet 28 indikátorů přes pandas-ta, payload overlay čar, panelů
-  a skupin legendy pro graf, kontrola parametrů a načtení uložených indikátorů
+  (ze sítě stahuje jen chybějící úseky) a „aspoň N posledních svíček“ se
+  zvětšováním okna (graf i scanner)
+- `tickview/indicators/api.py` – rozhraní indikátorů (jediný modul, který
+  indikátor importuje): Param (schéma parametrů), Indicator, Context,
+  Result, Line, Segment, Marker, Signal, kategorie a `API_VERSION`
+- `tickview/indicators/builtin.py` – 28 vestavěných indikátorů (pandas-ta)
+  jako deklarace přes rozhraní indikátorů
+- `tickview/indicators/registry.py` – registr indikátorů: vestavěné + loader
+  vlastních z `custom/<název>/indicator.py` s izolací chyb
+- `tickview/indicators/compute.py` – instance indikátorů (kontrola, načtení
+  uložených, zachování nenačtených), kontext výpočtu (tick, druh
+  instrumentu) a payload pro graf (čáry, panely, úsečky, značky, legenda)
+- `tickview/indicators/custom/svopex_ttw/` – indikátor Svopex TTW
+  (`indicator.py`) a verze jeho Pine skriptu (`pine/`)
+- `tickview/logic/scanner.py` – logika scanneru: nastavení, řádky ze
+  signálů, texty a alert před zavřením svíčky (CloseAlertWindow)
+- `tickview/logic/reminders.py` – časové připomínky: kontrola zadání, sloty
+  časového okna (ReminderTracker)
 - `tickview/logic/styles.py` – kontrola barev (`#rrggbb` / `rgba`), styl
   svíček a typy grafu, styl kreseb (včetně vzhledu textu a viditelnosti
   podle timeframu), šablony nastavení (Template), názvy a oblíbené nástroje
@@ -419,6 +481,12 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   otevřeným stránkám
 - `tickview/services/notify.py` – Telegram bot (sendMessage, zjištění chat
   id) a webhook
+- `tickview/services/listeners.py` – posluchači otevřených stránek pro
+  služby na pozadí (AlertEngine, ScannerService)
+- `tickview/services/scanner.py` – ScannerService: přepočet signálů přes
+  seznam symbolů na pozadí a alert před zavřením svíčky
+- `tickview/services/reminders.py` – ReminderService: časové připomínky na
+  pozadí
 - `tickview/logic/sessions.py` – filtr hlavní obchodní seance (RTH) a seznam
   časových pásem pro nabídku
 - `tickview/logic/layouts.py` – rozložení více grafů (Layout setup), volby
@@ -436,15 +504,22 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
 - `tickview/ui/icons.py` – SVG piktogramy lišty kreslení a typů grafu
 - `tickview/ui/templates.py` – dialogy Settings (hlavička, tlačítka) a nabídka
   šablon „Template“
+- `tickview/ui/param_form.py` – formulář parametrů indikátoru ze schématu
+  (Settings indikátoru, nastavení scanneru)
+- `tickview/ui/scanner_panel.py` – záložka Scanner (tabulka) a její nastavení
+- `tickview/ui/reminders_dialog.py` – dialog Časové připomínky
+- `tickview/ui/notify_fields.py` – pole notifikací (Telegram, oznámení,
+  zvuk, webhook)
 - `tickview/ui/main_window.py` – hlavní stránka: mřížka grafů a Layout
   setup, aktivní graf, hledání symbolu (dialog), pravý panel (watchlist,
-  alerty – seznam, log, hledání, hromadné akce), dialog alertu, Telegram
+  alerty – seznam, log, hledání, hromadné akce, scanner), dialog alertu, Telegram
   v Settings), timeframy, watchlist, nabídka, šablony a Settings
   indikátorů, lišta kreslení, Settings kreseb (Text, Visibility) a grafu,
   stavová lišta se seancí a časovým pásmem
 - `tickview/ui/static/lightweight_chart.js` – JS komponenta grafu (svíčky,
   objem, nadpis a legenda ve stylu TradingView, motivy, časové pásmo,
-  inkrementální update, donačítání historie, panely indikátorů, kontextová
+  inkrementální update, donačítání historie, panely indikátorů, úsečky
+  a značky indikátorů, kontextová
   menu, kreslicí nástroje na překryvném canvasu včetně Long / Short position,
   čáry alertů a zvuk alertu, plovoucí panel oblíbených
   nástrojů, styl svíček; více grafů na stránce – aktivní graf, společná
@@ -458,5 +533,7 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   konfigurace, skládání timeframů, seance, časová pásma, forex, barvy,
   šablony a oblíbené nástroje; alerty, engine alertů, Telegram/webhook přes
   falešný HTTP transport a pozice Long/Short; rozložení grafů, viditelnost
-  kreseb, styl textu, šablony indikátorů a kresby napříč timeframy);
+  kreseb, styl textu, šablony indikátorů a kresby napříč timeframy;
+  rozhraní a loader indikátorů, scanner, časové připomínky a Svopex TTW
+  porovnaný s doslovným přepisem Pine v `tests/ttw_reference.py`);
   spuštění `python -m unittest`

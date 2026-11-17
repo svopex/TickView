@@ -1,0 +1,891 @@
+//@version=6
+// Svopex TTW - prevod zakladni kreslici funkcionality z MQL5 indikatoru SvpTomTheWizard.mq5.
+// v9 (2026-08-11) - k prepinacum 'Posilat alerty' a 'Posilat nocni upozorneni' pridan tooltip.
+//                   Duvod: odskrtnuti prepinace notifikace nezastavi, pokud alert v TradingView
+//                   uz existuje. TradingView si pri VYTVORENI alertu ulozi kopii vsech nastaveni
+//                   indikatoru i verzi zdrojoveho kodu a pozdejsi zmeny na grafu uz do bezicoho
+//                   alertu nepropisuje. Reseni je alert smazat a vytvorit znovu. V samotne logice
+//                   je podminka spravna (oba alert() volani jsou prepinacem hlidana) - zmena je
+//                   proto jen dokumentacni, aby past byla videt primo v nastaveni indikatoru.
+// v8 (2026-08-10) - poradi skupin nastaveni: 'Alerty' presunuty na prvni misto, 'Nocni
+//                   upozorneni' na druhe. Jde jen o poradi deklaraci inputu, logika beze zmeny.
+// v7 (2026-08-05) - nove nocni upozorneni na uzavreni pozic (default 22:30-22:55 po 5 minutach,
+//                   mistni cas). V textu alertu pred zavrenim svicky se nove uvadi nastaveny
+//                   prah, ne dopocitany zbytek - ten ukazoval o minutu min (10 -> 9).
+// v6 (2026-08-04) - alerty: X minut pred zavrenim svicky scanTF se posle JEDNA souhrnna
+//                   notifikace se seznamem trhu, ktere maji signal na prave bezici svicce
+//                   (index 0). Dva nezavisle prahy, default 10 a 5 minut.
+// v5 (2026-08-04) - scanner rozsiren na 40 symbolovych slotu (38-40 prazdne, konvence ze
+//                   Svopex S&D Scan v31). Default hodiny pulnocni svicky zmenen z 0 na 23.
+// v4 (2026-08-04) - u signalu se zobrazuje index svicky, na ktere nastal: LONG(0), SHORT(1) apod.
+//                   0 = aktualni (rozpracovana) svicka, 1 = predchozi atd. Scanner rozsiren na
+//                   37 slotu se symboly prevzatymi ze Svopex S&D Scan v31 (vcetne poradi).
+// v3 (2026-08-04) - scanner na 28 forexovych paru + vykonove optimalizace (swing test a cache).
+// v2 (2026-08-04) - pridan multi-symbol scanner s tabulkou signalu (vzor: Svopex S&D Scan).
+//                   Vypocetni jadro cerpa VYHRADNE z built-in serii (open/high/low/close/hour/
+//                   dayofweek). Diky tomu funguji stejne funkce nad aktualnim grafem i uvnitr
+//                   request.security nad cizim symbolem. Odvozene serie se pocitaji primo smyckou -
+//                   nesmi se predavat parametrem, protoze Pine buduje historii parametru jen na
+//                   barech, kde je funkce skutecne volana.
+// NEPREVEDENO: ovladani klavesnici, backtest / vypocet zisku, zapis signalu do souboru, CallHue.
+indicator("Svopex TTW", overlay = true, max_lines_count = 500, max_bars_back = 1000)
+
+// ==================== VSTUPNI PARAMETRY ====================
+
+// Spolecny tooltip pro oba prepinace notifikaci. TradingView vyhodnocuje alert na serveru nad
+// KOPII nastaveni indikatoru porizenou ve chvili vytvoreni alertu (vcetne verze zdrojoveho kodu).
+// Odskrtnuti prepinace na grafu se proto do jiz bezicoho alertu nepropise a notifikace chodi dal.
+var string ttPrepinac = "POZOR: zmena tohoto prepinace se NEPROJEVI na alertu, ktery uz v TradingView existuje." + "\n\n" + "TradingView si pri vytvoreni alertu ulozi kopii nastaveni indikatoru a dal ji nemeni. Aby odskrtnuti zabralo, je nutne alert v seznamu alertu smazat a vytvorit znovu (pripadne ho jen vypnout / pozastavit)."
+
+// -- Alerty (notifikace pred zavrenim svicky na scanTF) --
+// Hlida se jen index 0, tj. prave bezici svicka - smysl je stihnout vstup na jejim uzavreni.
+var string grpAlert = "Alerty"
+alertyZapnuty = input.bool(true, "Posilat alerty", group = grpAlert, tooltip = ttPrepinac)
+alertMin1 = input.int(10, "1. upozorneni - minut pred zavrenim svicky (0 = vypnuto)", minval = 0, maxval = 1440, group = grpAlert)
+alertMin2 = input.int(5, "2. upozorneni - minut pred zavrenim svicky (0 = vypnuto)", minval = 0, maxval = 1440, group = grpAlert)
+
+// -- Nocni upozorneni (uzavreni pozic pred nocni seanci) --
+// Casove okno, ve kterem se v pravidelnem rozestupu opakuje vyzva k uzavreni pozice.
+// Nezavisi na signalech ani na scanneru - hlida se pouze cas.
+var string grpNoc = "Nocni upozorneni"
+nocniZapnuty = input.bool(false, "Posilat nocni upozorneni", group = grpNoc, tooltip = ttPrepinac)
+nocniOd = input.string("22:30", "Zacatek okna (HH:MM)", group = grpNoc)
+nocniDo = input.string("22:55", "Konec okna (HH:MM)", group = grpNoc)
+nocniInterval = input.int(5, "Rozestup upozorneni (minuty)", minval = 1, maxval = 240, group = grpNoc)
+
+// Casova zona, ve ktere se okno vyhodnocuje. Zamerne NENI cas burzy chart symbolu -
+// ten se meni podle toho, jaky trh je zrovna na grafu, a okno by se posouvalo.
+nocniTZ = "Europe/Prague"
+
+// -- Detekce svickove formace (ONE / ENG / STAR) --
+var string grpSig = "Detekce signalu"
+minimumCandleLength = input.float(10, "Minimalni delka svicky (pomer k prumerne)", group = grpSig)
+maximumCandleLength = input.float(45, "Maximalni delka svicky (pomer k prumerne)", group = grpSig)
+engLongerThanPreviousHigh = input.bool(true, "ENG/STAR: uzavreni nad high predchozi svicky", group = grpSig)
+starNasobek = input.float(1, "STAR: pomer velikosti 1. a 3. svicky ku 2.", group = grpSig)
+bratZdola = input.bool(true, "Brat signaly pouze zdola (long) / shora (short)", group = grpSig)
+bratZdolaKoeficient = input.float(0.9, "Koeficient pro 'brat zdola'", group = grpSig)
+pocetSvicekNaObrazovceProBratZeZdola = input.int(180, "Pocet svicek pro test 'brat zdola'", group = grpSig)
+ShowShorts = input.bool(true, "Zobrazovat i shorty", group = grpSig)
+
+// -- Rozsah zpracovani a delky formaci --
+var string grpRange = "Rozsah zpracovani"
+pocetSvicekNaObrazovceProZpracovani = input.int(360, "Pocet svicek, ktere se zpracovavaji", group = grpRange)
+maximalniDelkaSignalu = input.int(90, "Maximalni delka signalu (svicky)", group = grpRange)
+minimalniDelkaFormace = input.int(10, "Minimalni delka formace (svicky)", group = grpRange)
+minimalniMezera = input.int(3, "Minimalni mezera mezi dotyky", group = grpRange)
+maximalniPocetUsecekProJedenSignal = input.int(2, "Maximalni pocet usecek pro jeden signal", group = grpRange)
+
+// -- Swingy --
+var string grpSwing = "Swingy"
+pocetSvicekProSwing = input.int(2, "Pocet svicek pro minor swing", group = grpSwing)
+nasobekPrumerneVyskySvickyProSwing = input.float(0.8, "Nasobek prumerne vysky svicky pro swing", group = grpSwing)
+useMajorSwingIndikator = input.bool(true, "Pouzit major swing indikator pro startovni svicku", group = grpSwing)
+PeriodsInMajorSwing = input.int(9, "Sirka major swingu", group = grpSwing)
+PeriodsInMinorSwing = input.int(4, "Sirka minor swingu", group = grpSwing)
+
+// -- Tolerance --
+var string grpTol = "Tolerance"
+miraNedosednutiNaTrendlinku = input.float(0.07, "Maximalni mira nedosednuti na trendlinku", group = grpTol)
+UseckaNeniProtnutaZadnouSvickouKorekce = input.float(0.15, "Povolene protnuti usecky svickou", group = grpTol)
+DoubleBottomKorekce = input.float(0.25, "Maximalni odchylka u double bottom", group = grpTol)
+minimalniDelkaFormaceDoubleBottom = input.int(10, "Minimalni delka formace double bottom", group = grpTol)
+prvniSvickyNaKnotech = input.bool(true, "Prvni dva doteky na knotech", group = grpTol)
+posledniSvickaNaKnotech = input.bool(true, "Posledni dotek na knotech", group = grpTol)
+
+// -- Pulnocni svicky --
+var string grpMidnight = "Pulnocni svicky"
+pulnocniSvickyVynechat = input.bool(true, "Vynechat pulnocni svicky", group = grpMidnight)
+pulnocniSvickaHodina = input.int(23, "Hodina pulnocni svicky", group = grpMidnight)
+
+// -- Zobrazeni --
+var string grpShow = "Zobrazeni"
+showTrendLine = input.bool(true, "Zobraz trendlinku", group = grpShow)
+showSablona = input.bool(true, "Zobraz sablonu", group = grpShow)
+showDoubleTopDoubleBottom = input.bool(true, "Zobraz double top / double bottom", group = grpShow)
+DvojbarevnaLinka = input.bool(false, "Dvojbarevna linka signalu", group = grpShow)
+TrendlineLongColour = input.color(color.green, "Barva trendline long", group = grpShow)
+TrendlineShortColour = input.color(color.red, "Barva trendline short", group = grpShow)
+DoubleBottomColor = input.color(#00CED1, "Barva double bottom", group = grpShow)
+DoubleTopColor = input.color(#00CED1, "Barva double top", group = grpShow)
+DoubleTrendlineColour = input.color(#B8860B, "Barva prostredni casti dvojbarevne linky", group = grpShow)
+
+// -- Scanner (tabulka signalu na vice trzich) --
+var string grpScan = "Scanner"
+scanTF = input.timeframe("60", "Timeframe scanu", group = grpScan)
+scanBars = input.int(2, "Pocet poslednich svicek pro signal", minval = 1, maxval = 5, group = grpScan)
+tblPos = input.string("top_right", "Pozice tabulky", options = ["top_left", "top_right", "bottom_left", "bottom_right", "middle_right"], group = grpScan)
+tblOnlyHits = input.bool(true, "Zobrazit pouze trhy se signalem", group = grpScan)
+tblSize = input.string("normal", "Velikost textu", options = ["tiny", "small", "normal", "large"], group = grpScan)
+tblStrip = input.bool(true, "Skryt prefix burzy", group = grpScan)
+
+// 40 symbolovych slotu; 1-37 prevzato ze Svopex S&D Scan v31 (vcetne poradi), 38-40 prazdne.
+// Prazdne sloty se ve scanu i v tabulce preskakuji.
+var string grpSyms = "Scanner - symboly"
+sym01 = input.symbol("OANDA:NAS100USD", "Symbol 1", group = grpSyms)
+sym02 = input.symbol("OANDA:XAUUSD", "Symbol 2", group = grpSyms)
+sym03 = input.symbol("OANDA:EURUSD", "Symbol 3", group = grpSyms)
+sym04 = input.symbol("OANDA:US30USD", "Symbol 4", group = grpSyms)
+sym05 = input.symbol("OANDA:SPX500USD", "Symbol 5", group = grpSyms)
+sym06 = input.symbol("OANDA:US2000USD", "Symbol 6", group = grpSyms)
+sym07 = input.symbol("OANDA:DE30EUR", "Symbol 7", group = grpSyms)
+sym08 = input.symbol("OANDA:WTICOUSD", "Symbol 8", group = grpSyms)
+sym09 = input.symbol("OANDA:XAGUSD", "Symbol 9", group = grpSyms)
+sym10 = input.symbol("OANDA:BTCUSD", "Symbol 10", group = grpSyms)
+sym11 = input.symbol("OANDA:GBPUSD", "Symbol 11", group = grpSyms)
+sym12 = input.symbol("OANDA:USDJPY", "Symbol 12", group = grpSyms)
+sym13 = input.symbol("OANDA:USDCHF", "Symbol 13", group = grpSyms)
+sym14 = input.symbol("OANDA:AUDUSD", "Symbol 14", group = grpSyms)
+sym15 = input.symbol("OANDA:USDCAD", "Symbol 15", group = grpSyms)
+sym16 = input.symbol("OANDA:NZDUSD", "Symbol 16", group = grpSyms)
+sym17 = input.symbol("OANDA:EURGBP", "Symbol 17", group = grpSyms)
+sym18 = input.symbol("OANDA:EURJPY", "Symbol 18", group = grpSyms)
+sym19 = input.symbol("OANDA:EURCHF", "Symbol 19", group = grpSyms)
+sym20 = input.symbol("OANDA:EURAUD", "Symbol 20", group = grpSyms)
+sym21 = input.symbol("OANDA:EURCAD", "Symbol 21", group = grpSyms)
+sym22 = input.symbol("OANDA:EURNZD", "Symbol 22", group = grpSyms)
+sym23 = input.symbol("OANDA:GBPJPY", "Symbol 23", group = grpSyms)
+sym24 = input.symbol("OANDA:GBPCHF", "Symbol 24", group = grpSyms)
+sym25 = input.symbol("OANDA:GBPAUD", "Symbol 25", group = grpSyms)
+sym26 = input.symbol("OANDA:GBPCAD", "Symbol 26", group = grpSyms)
+sym27 = input.symbol("OANDA:GBPNZD", "Symbol 27", group = grpSyms)
+sym28 = input.symbol("OANDA:AUDJPY", "Symbol 28", group = grpSyms)
+sym29 = input.symbol("OANDA:AUDCHF", "Symbol 29", group = grpSyms)
+sym30 = input.symbol("OANDA:AUDCAD", "Symbol 30", group = grpSyms)
+sym31 = input.symbol("OANDA:AUDNZD", "Symbol 31", group = grpSyms)
+sym32 = input.symbol("OANDA:CADJPY", "Symbol 32", group = grpSyms)
+sym33 = input.symbol("OANDA:CADCHF", "Symbol 33", group = grpSyms)
+sym34 = input.symbol("OANDA:NZDJPY", "Symbol 34", group = grpSyms)
+sym35 = input.symbol("OANDA:NZDCHF", "Symbol 35", group = grpSyms)
+sym36 = input.symbol("OANDA:NZDCAD", "Symbol 36", group = grpSyms)
+sym37 = input.symbol("OANDA:CHFJPY", "Symbol 37", group = grpSyms)
+sym38 = input.symbol("", "Symbol 38", group = grpSyms)
+sym39 = input.symbol("", "Symbol 39", group = grpSyms)
+sym40 = input.symbol("", "Symbol 40", group = grpSyms)
+
+// ==================== POMOCNE FUNKCE ====================
+
+// Je svicka na danem offsetu pulnocni? Na TF od H2 vyse se pulnocni svicky neresi.
+f_pulnoc(int idx) =>
+    bool res = false
+    if pulnocniSvickyVynechat and timeframe.in_seconds() < 7200
+        int h = hour[idx]
+        int dw = dayofweek[idx]
+        // Pondelni pulnoc se bere jako validni svicka
+        if not na(h) and h == pulnocniSvickaHodina and dw != dayofweek.monday
+            res := true
+    res
+
+// Minimalni velikost svicky pro signal (MQL ma pro forex na H1 zvlastni vetev)
+f_minLen(float acs) =>
+    (timeframe.period == "60" and syminfo.type == "forex") ? syminfo.mintick * minimumCandleLength * 10 : acs * 3 / maximumCandleLength * minimumCandleLength
+
+// Maximalni velikost svicky pro signal
+f_maxLen(float acs) =>
+    (timeframe.period == "60" and syminfo.type == "forex") ? syminfo.mintick * maximumCandleLength * 10 : acs * 3
+
+// Rozsah stredu svicek za poslednich N baru od offsetu idx - urcuje, zda je signal
+// v dolni (long) / horni (short) casti grafu. Odpovida vypoctu prumerLong/prumerShort v GetData.
+f_prumer(int idx, int longShort) =>
+    float hi = (high[idx] + low[idx]) / 2
+    float lo = hi
+    for j = idx to idx + pocetSvicekNaObrazovceProBratZeZdola - 1
+        float m = (high[j] + low[j]) / 2
+        if m > hi
+            hi := m
+        if m < lo
+            lo := m
+    longShort == 0 ? (hi - lo) * bratZdolaKoeficient + lo : (hi - lo) * (1 - bratZdolaKoeficient) + lo
+
+// Je bar na offsetu idx extremem v okne o sirce 2*per? Replikuje MQL podminku
+// iLowest/iHighest(..., per*2, i) == i + per - pri shode rozhoduje novejsi bar.
+f_extremLow(int idx, int per) =>
+    bool res = false
+    if idx >= per + 1
+        float v = low[idx]
+        res := true
+        for j = idx - per to idx - 1
+            if low[j] <= v
+                res := false
+        for j = idx + 1 to idx + per - 1
+            if low[j] < v
+                res := false
+    res
+
+f_extremHigh(int idx, int per) =>
+    bool res = false
+    if idx >= per + 1
+        float v = high[idx]
+        res := true
+        for j = idx - per to idx - 1
+            if high[j] >= v
+                res := false
+        for j = idx + 1 to idx + per - 1
+            if high[j] > v
+                res := false
+    res
+
+// Pozn.: v MQL se pro Open pouziva iHighest a pro Close iLowest - zachovavam tuto asymetrii
+f_extremOpenHi(int idx, int per) =>
+    bool res = false
+    if idx >= per + 1
+        float v = open[idx]
+        res := true
+        for j = idx - per to idx - 1
+            if open[j] >= v
+                res := false
+        for j = idx + 1 to idx + per - 1
+            if open[j] > v
+                res := false
+    res
+
+f_extremCloseLo(int idx, int per) =>
+    bool res = false
+    if idx >= per + 1
+        float v = close[idx]
+        res := true
+        for j = idx - per to idx - 1
+            if close[j] <= v
+                res := false
+        for j = idx + 1 to idx + per - 1
+            if close[j] < v
+                res := false
+    res
+
+// Cena major swingu na danem offsetu (0 = swing neexistuje) - stejna konvence jako MQL pole
+f_majSwingLow(int idx) =>
+    f_extremLow(idx, PeriodsInMajorSwing) ? low[idx] : 0.0
+f_majSwingHigh(int idx) =>
+    f_extremHigh(idx, PeriodsInMajorSwing) ? high[idx] : 0.0
+
+// Major swing - vyraznejsi swing, pouziva se pro startovaci dotek usecky.
+// OPTIMALIZACE (v3): MQL testuje "major NEBO minor swing". Okno minor swingu je podmnozinou
+// okna major swingu, takze extrem v majoru je vzdy i extremem v minoru - staci tedy jediny
+// test s uzsim oknem. Logicky ekvivalentni, ale o polovinu levnejsi.
+f_isSwingMajor(int idx, int longShort) =>
+    int per = math.min(PeriodsInMajorSwing, PeriodsInMinorSwing)
+    bool res = false
+    if longShort == 0
+        if prvniSvickyNaKnotech
+            res := f_extremLow(idx, per)
+        else
+            res := f_extremOpenHi(idx, per) or f_extremCloseLo(idx, per)
+    else
+        if prvniSvickyNaKnotech
+            res := f_extremHigh(idx, per)
+        else
+            res := f_extremOpenHi(idx, per) or f_extremCloseLo(idx, per)
+    res
+
+// Minor swing - mene vyrazny swing, pouziva se pro prostredni dotek usecky
+f_isSwingMinor(int idx, int longShort, float acs) =>
+    bool good = false
+    if longShort == 0
+        for i = 0 to pocetSvicekProSwing - 1
+            float p = prvniSvickyNaKnotech ? low[idx] : math.min(close[idx], open[idx])
+            float lft = high[idx + (i + 1)]
+            float rgt = idx - (i + 1) >= 0 ? high[idx - (i + 1)] : na
+            // Swing je validni, pokud low svicky + nasobek prumerne velikosti je nizsi nez high nektere okolni svicky
+            if (p + acs * nasobekPrumerneVyskySvickyProSwing < rgt) or (p + acs * nasobekPrumerneVyskySvickyProSwing < lft)
+                good := true
+    else
+        for j = 0 to pocetSvicekProSwing - 1
+            float p = prvniSvickyNaKnotech ? high[idx] : math.max(open[idx], close[idx])
+            float lft = low[idx + (j + 1)]
+            float rgt = idx - (j + 1) >= 0 ? low[idx - (j + 1)] : na
+            // Swing je validni, pokud high svicky - nasobek prumerne velikosti je vyssi nez low nektere okolni svicky
+            if (p - acs * nasobekPrumerneVyskySvickyProSwing > rgt) or (p - acs * nasobekPrumerneVyskySvickyProSwing > lft)
+                good := true
+
+    // Okolni svicky nesmi v zadnem pripade prekrocit extrem testovane svicky
+    if longShort == 0
+        for k = 0 to pocetSvicekProSwing - 1
+            float p = low[idx]
+            float lft = low[idx + (k + 1)]
+            float rgt = idx - (k + 1) >= 0 ? low[idx - (k + 1)] : na
+            if (not na(lft) and lft < p) or (not na(rgt) and rgt < p)
+                good := false
+    else
+        for l = 0 to pocetSvicekProSwing - 1
+            float p = high[idx]
+            float lft = high[idx + (l + 1)]
+            float rgt = idx - (l + 1) >= 0 ? high[idx - (l + 1)] : na
+            if (not na(lft) and lft > p) or (not na(rgt) and rgt > p)
+                good := false
+    good
+
+// Delka long formace na offsetu idx (0 = zadna, 1 = ONE, 2 = ENG, 3 = STAR).
+// Test "brat zdola" se pocita az po splneni cenovych podminek - f_prumer je drahy (180 iteraci).
+f_formaceLong(int idx, float acs) =>
+    float o1 = open[idx]
+    float o2 = open[idx + 1]
+    float o3 = open[idx + 2]
+    float c1 = close[idx]
+    float c2 = close[idx + 1]
+    float c3 = close[idx + 2]
+    float l1 = low[idx]
+    float l2 = low[idx + 1]
+    float l3 = low[idx + 2]
+    float h1 = high[idx]
+    float h2 = high[idx + 1]
+    float minLen = f_minLen(acs)
+    float maxLen = f_maxLen(acs)
+    int res = 0
+
+    // ONE - jedna silna svicka s dlouhym spodnim knotem
+    float rOne = math.abs(c1 - l1)
+    if rOne >= minLen and rOne <= maxLen
+        if c1 > o1 and (c1 - o1) * (1 / 0.6) > (h1 - l1) and (h1 - c1) * 2 < (o1 - l1)
+            res := 1
+
+    // Morning Star - telo prostredni svicky musi byt vyrazne mensi nez telo prvni a treti
+    float rStar = math.max(math.max(math.abs(c1 - l1), math.abs(c1 - l2)), math.abs(c1 - l3))
+    if rStar >= minLen and rStar <= maxLen
+        bool zaklad = c3 < o3 and c1 > o1 and math.abs(c2 - o2) * starNasobek < math.abs(c1 - o1) and math.abs(c2 - o2) * starNasobek < math.abs(c3 - o3) and (engLongerThanPreviousHigh ? c1 > h2 : c1 > math.max(o2, c2)) and c1 > o2 and o3 > c2 and o3 > o2 and c2 < o3 - ((o3 - c3) / 2) and c1 != h1
+        if zaklad
+            if not bratZdola or f_prumer(idx, 0) > c1
+                res := 3
+
+    // Buy engulfing
+    float rEng = math.max(math.abs(c1 - l1), math.abs(c1 - l2))
+    if rEng >= minLen and rEng <= maxLen
+        bool zaklad = c2 < o2 and c1 > o1 and (engLongerThanPreviousHigh ? c1 > h2 : c1 > o2) and math.abs(c1 - o1) > math.abs(o2 - c2) and c1 != h1
+        if zaklad
+            if not bratZdola or f_prumer(idx, 0) > c1
+                res := 2
+    res
+
+// Delka short formace na offsetu idx (0 = zadna formace)
+f_formaceShort(int idx, float acs) =>
+    float o1 = open[idx]
+    float o2 = open[idx + 1]
+    float o3 = open[idx + 2]
+    float c1 = close[idx]
+    float c2 = close[idx + 1]
+    float c3 = close[idx + 2]
+    float l1 = low[idx]
+    float l2 = low[idx + 1]
+    float h1 = high[idx]
+    float h2 = high[idx + 1]
+    float h3 = high[idx + 2]
+    float minLen = f_minLen(acs)
+    float maxLen = f_maxLen(acs)
+    int res = 0
+
+    // ONE - jedna silna svicka s dlouhym hornim knotem
+    float rOne = math.abs(c1 - h1)
+    if rOne >= minLen and rOne <= maxLen
+        if c1 < o1 and (o1 - c1) * (1 / 0.6) > (h1 - l1) and (c1 - l1) * 2 < (h1 - o1)
+            res := 1
+
+    // Evening Star
+    float rStar = math.max(math.max(math.abs(c1 - h1), math.abs(c1 - h2)), math.abs(c1 - h3))
+    if rStar >= minLen and rStar <= maxLen
+        bool zaklad = c3 > o3 and c1 < o1 and math.abs(c2 - o2) * starNasobek < math.abs(c1 - o1) and math.abs(c2 - o2) * starNasobek < math.abs(c3 - o3) and (engLongerThanPreviousHigh ? c1 < l2 : c1 < math.min(o2, c2)) and c1 < o2 and o3 < c2 and o3 < o2 and c2 > o3 + (c3 - o3) / 2 and c1 != l1
+        if zaklad
+            if not bratZdola or f_prumer(idx, 1) < c1
+                res := 3
+
+    // Sell engulfing
+    float rEng = math.max(math.abs(c1 - h1), math.abs(c1 - h2))
+    if rEng >= minLen and rEng <= maxLen
+        bool zaklad = c2 > o2 and c1 < o1 and (engLongerThanPreviousHigh ? c1 < l2 : c1 < o2) and math.abs(o1 - c1) > math.abs(c2 - o2) and c1 != l1
+        if zaklad
+            if not bratZdola or f_prumer(idx, 1) < c1
+                res := 2
+    res
+
+// Delka formace podle smeru (0 = long, 1 = short)
+f_formace(int idx, int longShort, float acs) =>
+    longShort == 0 ? f_formaceLong(idx, acs) : f_formaceShort(idx, acs)
+
+// Mezi jednotlivymi doteky usecky musi byt alespon minimalni mezera
+f_existSpace(int indexStartovni, int indexProstredni, int indexTestovana) =>
+    (indexStartovni - indexProstredni > minimalniMezera) and (indexProstredni - indexTestovana > minimalniMezera)
+
+// Trendlinka musi dosednout na testovanou svicku (maximalne do jeji poloviny).
+// Vraci [protina, cena na testovane svicce, cena startovniho doteku, cena prostredniho doteku].
+f_linkaProtina(int indexStartovni, int indexProstredni, int indexTestovana, int delkaFormace, int longShort) =>
+    float priceStartovni = 0.0
+    float priceProstredni = 0.0
+    float priceLinkaTestovana1 = 0.0
+    bool res = false
+    float o1 = open[indexTestovana]
+    float o2 = open[indexTestovana + 1]
+    float c1 = close[indexTestovana]
+    float c2 = close[indexTestovana + 1]
+    float l1 = low[indexTestovana]
+    float l2 = low[indexTestovana + 1]
+    float h1 = high[indexTestovana]
+    float h2 = high[indexTestovana + 1]
+
+    if longShort == 0
+        priceStartovni := prvniSvickyNaKnotech ? low[indexStartovni] : math.min(open[indexStartovni], close[indexStartovni])
+        priceProstredni := prvniSvickyNaKnotech ? low[indexProstredni] : math.min(open[indexProstredni], close[indexProstredni])
+        // Kam smeruje linka - cena na testovane svicce a na svicce o jednu starsi
+        priceLinkaTestovana1 := priceStartovni + (priceProstredni - priceStartovni) / float(indexProstredni - indexStartovni) * float(indexTestovana - indexStartovni)
+        float priceLinkaTestovana2 = priceStartovni + (priceProstredni - priceStartovni) / float(indexProstredni - indexStartovni) * float((indexTestovana + 1) - indexStartovni)
+
+        float lo1 = 0.0
+        float lo2 = 0.0
+        if posledniSvickaNaKnotech
+            lo1 := l1 - (h1 - l1) * miraNedosednutiNaTrendlinku
+            lo2 := l2 - (h1 - l1) * miraNedosednutiNaTrendlinku
+        else
+            // Protnout muzeme az do poloviny knotu - miraNedosednutiNaTrendlinku
+            lo1 := math.min(c1, o1) - (math.min(c1, o1) - l1) / 2 - (h1 - l1) * miraNedosednutiNaTrendlinku
+            lo2 := math.min(c2, o2) - (math.min(c1, o1) - l1) / 2 - (h1 - l1) * miraNedosednutiNaTrendlinku
+
+        res := ((lo1 <= priceLinkaTestovana1) and (priceLinkaTestovana1 <= l1 + (h1 - l1) / 2)) or ((delkaFormace > 1) and (lo2 <= priceLinkaTestovana2) and (priceLinkaTestovana2 <= l2 + (h2 - l2) / 2))
+    else
+        priceStartovni := prvniSvickyNaKnotech ? high[indexStartovni] : math.max(open[indexStartovni], close[indexStartovni])
+        priceProstredni := prvniSvickyNaKnotech ? high[indexProstredni] : math.max(open[indexProstredni], close[indexProstredni])
+        priceLinkaTestovana1 := priceStartovni + (priceProstredni - priceStartovni) / float(indexProstredni - indexStartovni) * float(indexTestovana - indexStartovni)
+        float priceLinkaTestovana2 = priceStartovni + (priceProstredni - priceStartovni) / float(indexProstredni - indexStartovni) * float((indexTestovana + 1) - indexStartovni)
+
+        float hi1 = 0.0
+        float hi2 = 0.0
+        if posledniSvickaNaKnotech
+            hi1 := h1 + (h1 - l1) * miraNedosednutiNaTrendlinku
+            hi2 := h2 + (h1 - l1) * miraNedosednutiNaTrendlinku
+        else
+            hi1 := math.max(c1, o1) + (h1 - math.max(c1, o1)) / 2 + (h1 - l1) * miraNedosednutiNaTrendlinku
+            hi2 := math.max(c2, o2) + (h2 - math.max(c2, o2)) / 2 + (h1 - l1) * miraNedosednutiNaTrendlinku
+
+        res := ((hi1 >= priceLinkaTestovana1) and (priceLinkaTestovana1 >= h1 - (h1 - l1) / 2)) or ((delkaFormace > 1) and (hi2 >= priceLinkaTestovana2) and (priceLinkaTestovana2 >= h2 - (h2 - l2) / 2))
+
+    [res, priceLinkaTestovana1, priceStartovni, priceProstredni]
+
+// Trendova usecka nesmi byt protnuta zadnou svickou mezi startovnim a testovanym dotekem
+f_useckaNeniProtnuta(int indexStartovni, int indexTestovana, float priceLinkaTestovana, int indexProstredni, int delkaFormace, int longShort, float acs) =>
+    bool res = true
+    int fromIdx = indexStartovni - 1
+    int toIdx = indexTestovana + delkaFormace
+
+    if fromIdx >= toIdx
+        if longShort == 0
+            float priceStartovni = prvniSvickyNaKnotech ? low[indexStartovni] : math.min(open[indexStartovni], close[indexStartovni])
+            for idx = fromIdx to toIdx
+                if res and not f_pulnoc(idx)
+                    float priceLow = prvniSvickyNaKnotech ? low[idx] : math.min(open[idx], close[idx])
+                    float priceLinkaAktualne = priceStartovni + (priceLinkaTestovana - priceStartovni) / float(indexTestovana - indexStartovni) * float(idx - indexStartovni)
+                    // Usecka smi protinat svicku jen o toleranci danou koeficientem korekce
+                    if priceLinkaAktualne > priceLow + (acs * UseckaNeniProtnutaZadnouSvickouKorekce) and indexProstredni != idx
+                        res := false
+        else
+            float priceStartovni = prvniSvickyNaKnotech ? high[indexStartovni] : math.max(open[indexStartovni], close[indexStartovni])
+            for idx = fromIdx to toIdx
+                if res and not f_pulnoc(idx)
+                    float priceHigh = prvniSvickyNaKnotech ? high[idx] : math.max(open[idx], close[idx])
+                    float priceLinkaAktualne = priceStartovni + (priceLinkaTestovana - priceStartovni) / float(indexTestovana - indexStartovni) * float(idx - indexStartovni)
+                    if priceLinkaAktualne < priceHigh - (acs * UseckaNeniProtnutaZadnouSvickouKorekce) and indexProstredni != idx
+                        res := false
+    res
+
+// Filtr: usecka smeruje proti smeru signalu (klasicka trendlinka)
+f_isTrendLine(float priceStartovni, float priceLinkaTestovana1, int longShort) =>
+    (priceStartovni <= priceLinkaTestovana1 and longShort == 0) or (priceStartovni >= priceLinkaTestovana1 and longShort != 0)
+
+// Filtr: usecka smeruje ve smeru signalu (sablona)
+f_isSablona(float priceStartovni, float priceLinkaTestovana1, int longShort) =>
+    (priceStartovni >= priceLinkaTestovana1 and longShort == 0) or (priceStartovni <= priceLinkaTestovana1 and longShort != 0)
+
+// Test double bottom / double top. Vraci [nalezeno, cena levelu].
+f_testDoubleBottom(int indexTestovana, int indexStartovni, int longShort, float acs) =>
+    float dbk = DoubleBottomKorekce
+    bool found = false
+    float price = 0.0
+    float lT = low[indexTestovana]
+    float hT = high[indexTestovana]
+    float oT = open[indexTestovana]
+
+    if longShort == 0
+        // Startovni svicka merena na low
+        float p1 = f_majSwingLow(indexStartovni)
+        bool major = p1 > 0 and ((lT > p1 - acs * dbk and lT < p1 + acs * dbk) or (oT > p1 - acs * dbk and oT < p1 + acs * dbk) or (lT <= p1 and oT >= p1))
+        if major
+            found := true
+            price := p1
+        else
+            // Startovni svicka merena na open/close
+            float p2 = math.min(open[indexStartovni], close[indexStartovni])
+            bool major2 = p1 > 0 and ((lT > p2 - acs * dbk and lT < p2 + acs * dbk) or (oT > p2 - acs * dbk and oT < p2 + acs * dbk) or (lT <= p2 and oT >= p2))
+            if major2
+                found := true
+                price := p2
+    else
+        // Startovni svicka merena na high
+        float p1 = f_majSwingHigh(indexStartovni)
+        bool majorShort = p1 > 0 and ((hT > p1 - acs * dbk and hT < p1 + acs * dbk) or (oT > p1 - acs * dbk and oT < p1 + acs * dbk) or (hT >= p1 and oT <= p1))
+        if majorShort
+            found := true
+            price := p1
+        else
+            float p2 = math.max(open[indexStartovni], close[indexStartovni])
+            bool major2Short = p1 > 0 and ((hT > p2 - acs * dbk and hT < p2 + acs * dbk) or (oT > p2 - acs * dbk and oT < p2 + acs * dbk) or (hT >= p2 and oT <= p2))
+            if major2Short
+                found := true
+                price := p2
+
+    [found, price]
+
+// V ceste double bottom signalu nesmi lezet telo zadne svicky
+f_dbJeSvickaVSignalu(int indexTestovana, int indexStartovni, int delkaFormace, int longShort, float doubleBottomPrice) =>
+    bool res = false
+    int fromIdx = indexTestovana + delkaFormace
+    int toIdx = indexStartovni - 1
+    if fromIdx <= toIdx
+        for i = fromIdx to toIdx
+            if not res and not f_pulnoc(i)
+                if longShort == 0
+                    if doubleBottomPrice > math.min(close[i], open[i])
+                        res := true
+                else
+                    if doubleBottomPrice < math.max(close[i], open[i])
+                        res := true
+    res
+
+// Fyzicke vykresleni usecky mezi dvema bary
+f_drawSegment(int shift0, float p0, int shift1, float p1, color clr) =>
+    line.new(bar_index - shift0, p0, bar_index - shift1, p1, xloc = xloc.bar_index, extend = extend.none, color = clr, width = 2)
+
+// ==================== HLAVNI VYPOCET NA AKTUALNIM GRAFU ====================
+
+// Prumerna velikost svicky (odpovida CalculateAverageCandleSize v MQL)
+gAcs = ta.sma(high - low, pocetSvicekNaObrazovceProZpracovani)
+
+// Pocitadlo vykreslenych usecek - Pine ma limit na pocet objektu
+var int linesDrawn = 0
+maxLines = 490
+
+if barstate.islast
+    linesDrawn := 0
+
+    // --- Trendlinky a sablony (odpovida draw_line v MQL) ---
+    for longShort = 0 to (ShowShorts ? 1 : 0)
+        for indexTestovana = 0 to pocetSvicekNaObrazovceProZpracovani - 1
+            int df = f_formace(indexTestovana, longShort, gAcs)
+            if df > 0
+                int counter = 0
+                // Startovni dotek usecky hledame smerem do minulosti
+                for indexStartovni = indexTestovana + df to indexTestovana + maximalniDelkaSignalu
+                    if counter >= maximalniPocetUsecekProJedenSignal
+                        break
+                    bool startSwingOk = useMajorSwingIndikator ? f_isSwingMajor(indexStartovni, longShort) : f_isSwingMinor(indexStartovni, longShort, gAcs)
+                    if startSwingOk and indexStartovni - 1 >= indexTestovana + 1
+                        // Prostredni dotek usecky
+                        for indexProstredni = indexStartovni - 1 to indexTestovana + 1
+                            if counter >= maximalniPocetUsecekProJedenSignal
+                                break
+                            if not f_pulnoc(indexStartovni) and not f_pulnoc(indexProstredni) and not f_pulnoc(indexTestovana)
+                                if f_isSwingMinor(indexProstredni, longShort, gAcs)
+                                    [protina, pLinka, pStart, pProstr] = f_linkaProtina(indexStartovni, indexProstredni, indexTestovana, df, longShort)
+                                    if protina and f_existSpace(indexStartovni, indexProstredni, indexTestovana)
+                                        if f_useckaNeniProtnuta(indexStartovni, indexTestovana, pLinka, indexProstredni, df, longShort, gAcs)
+                                            if math.abs(indexStartovni - indexTestovana) > minimalniDelkaFormace
+                                                // Filtr na typ usecky - trendlinka nebo sablona
+                                                bool typeOk = (showTrendLine and f_isTrendLine(pStart, pLinka, longShort)) or (showSablona and f_isSablona(pStart, pLinka, longShort))
+                                                if typeOk
+                                                    counter += 1
+                                                    if linesDrawn < maxLines
+                                                        f_drawSegment(indexStartovni, pStart, indexTestovana, pLinka, longShort == 0 ? TrendlineLongColour : TrendlineShortColour)
+                                                        linesDrawn += 1
+                                                    if DvojbarevnaLinka and linesDrawn < maxLines
+                                                        f_drawSegment(indexStartovni, pStart, indexProstredni, pProstr, DoubleTrendlineColour)
+                                                        linesDrawn += 1
+
+    // --- Double bottom / double top levely (odpovida draw_line_db v MQL) ---
+    if showDoubleTopDoubleBottom
+        for longShort = 0 to (ShowShorts ? 1 : 0)
+            for indexTestovana = 0 to pocetSvicekNaObrazovceProZpracovani - 1
+                int df = f_formace(indexTestovana, longShort, gAcs)
+                if df > 0
+                    // U double bottom bereme pouze prvni nalezeny level
+                    for indexStartovni = indexTestovana + df to indexTestovana + maximalniDelkaSignalu
+                        if not f_pulnoc(indexStartovni) and not f_pulnoc(indexTestovana)
+                            [dbFound, dbPrice] = f_testDoubleBottom(indexTestovana, indexStartovni, longShort, gAcs)
+                            if dbFound
+                                if not f_dbJeSvickaVSignalu(indexTestovana, indexStartovni, df, longShort, dbPrice)
+                                    if math.abs(indexStartovni - indexTestovana) > minimalniDelkaFormaceDoubleBottom
+                                        if linesDrawn < maxLines
+                                            f_drawSegment(indexStartovni, dbPrice, indexTestovana, dbPrice, longShort == 0 ? DoubleBottomColor : DoubleTopColor)
+                                            linesDrawn += 1
+                                // Po prvnim nalezenem levelu koncime (doubleBottomDone v MQL)
+                                break
+
+// ==================== SCANNER ====================
+
+// Existuje na svicce idx platny signal? Signal = trendova usecka / sablona nebo double bottom level.
+// Scanner nepotrebuje pocet usecek, staci existence - proto se po prvnim nalezu konci.
+// OPTIMALIZACE (v3): minor swingy se predpocitaji jednou do pole. Bez toho by se f_isSwingMinor
+// volal ve vnorene smycce az nekolik tisickrat na jeden signal, coz pri desitkach symbolu
+// prekroci limit doby vypoctu Pine.
+f_maSignal(int idx, int longShort, float acs) =>
+    bool found = false
+    int df = f_formace(idx, longShort, acs)
+    if df > 0
+        array<bool> minCache = array.new<bool>(maximalniDelkaSignalu + 1, false)
+        for k = 1 to maximalniDelkaSignalu
+            array.set(minCache, k, f_isSwingMinor(idx + k, longShort, acs))
+
+        // Trendove usecky / sablony
+        for indexStartovni = idx + df to idx + maximalniDelkaSignalu
+            if found
+                break
+            bool startSwingOk = useMajorSwingIndikator ? f_isSwingMajor(indexStartovni, longShort) : array.get(minCache, indexStartovni - idx)
+            if startSwingOk and indexStartovni - 1 >= idx + 1
+                for indexProstredni = indexStartovni - 1 to idx + 1
+                    if found
+                        break
+                    if not f_pulnoc(indexStartovni) and not f_pulnoc(indexProstredni) and not f_pulnoc(idx)
+                        if array.get(minCache, indexProstredni - idx)
+                            [protina, pLinka, pStart, pProstr] = f_linkaProtina(indexStartovni, indexProstredni, idx, df, longShort)
+                            if protina and f_existSpace(indexStartovni, indexProstredni, idx)
+                                if f_useckaNeniProtnuta(indexStartovni, idx, pLinka, indexProstredni, df, longShort, acs)
+                                    if math.abs(indexStartovni - idx) > minimalniDelkaFormace
+                                        if (showTrendLine and f_isTrendLine(pStart, pLinka, longShort)) or (showSablona and f_isSablona(pStart, pLinka, longShort))
+                                            found := true
+
+        // Double bottom / double top
+        if not found and showDoubleTopDoubleBottom
+            for indexStartovni = idx + df to idx + maximalniDelkaSignalu
+                if not f_pulnoc(indexStartovni) and not f_pulnoc(idx)
+                    [dbFound, dbPrice] = f_testDoubleBottom(idx, indexStartovni, longShort, acs)
+                    if dbFound
+                        if not f_dbJeSvickaVSignalu(idx, indexStartovni, df, longShort, dbPrice)
+                            if math.abs(indexStartovni - idx) > minimalniDelkaFormaceDoubleBottom
+                                found := true
+                        // Po prvnim nalezenem levelu koncime (doubleBottomDone v MQL)
+                        break
+    found
+
+// Status jednoho skenovaneho trhu, zakodovany do jednoho intu (v4):
+//   jednotky  = index svicky s long signalem + 1  (0 = zadny long)
+//   desitky   = index svicky se short signalem + 1 (0 = zadny short)
+// Index svicky: 0 = aktualni (rozpracovana), 1 = predchozi atd. Hleda se od nejnovejsi,
+// takze se ulozi ten nejcerstvejsi signal daneho smeru.
+// ta.sma se pocita uvnitr, aby platila pro skenovany symbol, ne pro chart symbol.
+f_scanStatus() =>
+    float acs = ta.sma(high - low, pocetSvicekNaObrazovceProZpracovani)
+    int lb = -1
+    int sb = -1
+    // Tezky vypocet jen na poslednim baru - jinak by se hnal pres celou historii chartu
+    if barstate.islast
+        for i = 0 to scanBars - 1
+            if f_maSignal(i, 0, acs)
+                lb := i
+                break
+        if ShowShorts
+            for i = 0 to scanBars - 1
+                if f_maSignal(i, 1, acs)
+                    sb := i
+                    break
+    (lb + 1) + (sb + 1) * 10
+
+// Prazdne sloty volaji fallback symbol - Pine je deduplikuje na jeden security call
+fbSym = "OANDA:EURUSD"
+st01 = request.security(sym01 == "" ? fbSym : sym01, scanTF, f_scanStatus())
+st02 = request.security(sym02 == "" ? fbSym : sym02, scanTF, f_scanStatus())
+st03 = request.security(sym03 == "" ? fbSym : sym03, scanTF, f_scanStatus())
+st04 = request.security(sym04 == "" ? fbSym : sym04, scanTF, f_scanStatus())
+st05 = request.security(sym05 == "" ? fbSym : sym05, scanTF, f_scanStatus())
+st06 = request.security(sym06 == "" ? fbSym : sym06, scanTF, f_scanStatus())
+st07 = request.security(sym07 == "" ? fbSym : sym07, scanTF, f_scanStatus())
+st08 = request.security(sym08 == "" ? fbSym : sym08, scanTF, f_scanStatus())
+st09 = request.security(sym09 == "" ? fbSym : sym09, scanTF, f_scanStatus())
+st10 = request.security(sym10 == "" ? fbSym : sym10, scanTF, f_scanStatus())
+st11 = request.security(sym11 == "" ? fbSym : sym11, scanTF, f_scanStatus())
+st12 = request.security(sym12 == "" ? fbSym : sym12, scanTF, f_scanStatus())
+st13 = request.security(sym13 == "" ? fbSym : sym13, scanTF, f_scanStatus())
+st14 = request.security(sym14 == "" ? fbSym : sym14, scanTF, f_scanStatus())
+st15 = request.security(sym15 == "" ? fbSym : sym15, scanTF, f_scanStatus())
+st16 = request.security(sym16 == "" ? fbSym : sym16, scanTF, f_scanStatus())
+st17 = request.security(sym17 == "" ? fbSym : sym17, scanTF, f_scanStatus())
+st18 = request.security(sym18 == "" ? fbSym : sym18, scanTF, f_scanStatus())
+st19 = request.security(sym19 == "" ? fbSym : sym19, scanTF, f_scanStatus())
+st20 = request.security(sym20 == "" ? fbSym : sym20, scanTF, f_scanStatus())
+st21 = request.security(sym21 == "" ? fbSym : sym21, scanTF, f_scanStatus())
+st22 = request.security(sym22 == "" ? fbSym : sym22, scanTF, f_scanStatus())
+st23 = request.security(sym23 == "" ? fbSym : sym23, scanTF, f_scanStatus())
+st24 = request.security(sym24 == "" ? fbSym : sym24, scanTF, f_scanStatus())
+st25 = request.security(sym25 == "" ? fbSym : sym25, scanTF, f_scanStatus())
+st26 = request.security(sym26 == "" ? fbSym : sym26, scanTF, f_scanStatus())
+st27 = request.security(sym27 == "" ? fbSym : sym27, scanTF, f_scanStatus())
+st28 = request.security(sym28 == "" ? fbSym : sym28, scanTF, f_scanStatus())
+st29 = request.security(sym29 == "" ? fbSym : sym29, scanTF, f_scanStatus())
+st30 = request.security(sym30 == "" ? fbSym : sym30, scanTF, f_scanStatus())
+st31 = request.security(sym31 == "" ? fbSym : sym31, scanTF, f_scanStatus())
+st32 = request.security(sym32 == "" ? fbSym : sym32, scanTF, f_scanStatus())
+st33 = request.security(sym33 == "" ? fbSym : sym33, scanTF, f_scanStatus())
+st34 = request.security(sym34 == "" ? fbSym : sym34, scanTF, f_scanStatus())
+st35 = request.security(sym35 == "" ? fbSym : sym35, scanTF, f_scanStatus())
+st36 = request.security(sym36 == "" ? fbSym : sym36, scanTF, f_scanStatus())
+st37 = request.security(sym37 == "" ? fbSym : sym37, scanTF, f_scanStatus())
+st38 = request.security(sym38 == "" ? fbSym : sym38, scanTF, f_scanStatus())
+st39 = request.security(sym39 == "" ? fbSym : sym39, scanTF, f_scanStatus())
+st40 = request.security(sym40 == "" ? fbSym : sym40, scanTF, f_scanStatus())
+
+// Zkraceni tickeru na cast za dvojteckou (OANDA:EURUSD -> EURUSD)
+f_shortSym(string s) =>
+    string res = s
+    if tblStrip
+        int p = str.pos(s, ":")
+        if not na(p)
+            res := str.substring(s, p + 1)
+    res
+
+// Dekodovani statusu: index svicky s long signalem (-1 = zadny)
+f_longBar(int st) =>
+    st % 10 - 1
+
+// Dekodovani statusu: index svicky se short signalem (-1 = zadny)
+f_shortBar(int st) =>
+    int(math.floor(st / 10.0)) - 1
+
+// Textovy popis statusu vcetne indexu svicky, napr. "SHORT(0)" nebo "LONG(1) + SHORT(0)"
+f_statusText(int st) =>
+    int lb = f_longBar(st)
+    int sb = f_shortBar(st)
+    string res = ""
+    if lb >= 0 and sb >= 0
+        res := "LONG(" + str.tostring(lb) + ") + SHORT(" + str.tostring(sb) + ")"
+    else if lb >= 0
+        res := "LONG(" + str.tostring(lb) + ")"
+    else if sb >= 0
+        res := "SHORT(" + str.tostring(sb) + ")"
+    res
+
+// Barva statusu
+f_statusColor(int st) =>
+    int lb = f_longBar(st)
+    int sb = f_shortBar(st)
+    lb >= 0 and sb >= 0 ? color.orange : sb >= 0 ? color.red : lb >= 0 ? color.green : color.gray
+
+// ==================== NOCNI UPOZORNENI ====================
+
+// Prevod casu ve tvaru "HH:MM" na pocet minut od pulnoci. Vraci na, kdyz je format spatne
+// (chybi dvojtecka nebo neciselna cast) - v takovem pripade se upozorneni neposilaji.
+f_casNaMinuty(string s) =>
+    int res = na
+    int p = str.pos(s, ":")
+    if not na(p)
+        float h = str.tonumber(str.substring(s, 0, p))
+        float m = str.tonumber(str.substring(s, p + 1))
+        if not na(h) and not na(m)
+            res := int(h) * 60 + int(m)
+    res
+
+nocniOdMin = f_casNaMinuty(nocniOd)
+nocniDoMin = f_casNaMinuty(nocniDo)
+
+// Aktualni realny cas prevedeny do minut od pulnoci v nastavene casove zone
+nocniNowMin = hour(timenow, nocniTZ) * 60 + minute(timenow, nocniTZ)
+
+// Poradove cislo dne (UTC) - slouzi k resetu odeslanych upozorneni pri prechodu na dalsi den.
+// Pulnoc UTC lezi mimo obvykle okno, takze reset nikdy nepadne doprostred serie upozorneni.
+nocniDenIdx = int(math.floor(timenow / 86400000.0))
+
+// varip ze stejneho duvodu jako u alertu nize: bezne promenne se v realtime pri kazdem ticku
+// vraci do stavu z uzavreni predchozi svicky, takze priznak "uz odeslano" by se resetoval.
+varip int nocniDenPosledni = -1
+varip int nocniSlotPosledni = -1
+
+if barstate.islast and nocniZapnuty and not na(nocniOdMin) and not na(nocniDoMin) and nocniDoMin >= nocniOdMin
+    // Novy den - cela serie upozorneni se povoli znovu
+    if nocniDenIdx != nocniDenPosledni
+        nocniDenPosledni := nocniDenIdx
+        nocniSlotPosledni := -1
+
+    if nocniNowMin >= nocniOdMin and nocniNowMin <= nocniDoMin
+        // Slot = poradi upozorneni v okne (0 = na jeho zacatku). Zaokrouhleni dolu zajisti,
+        // ze upozorneni odejde i kdyz tick prijde az nekolik minut po presnem case slotu.
+        int nocniSlot = int(math.floor((nocniNowMin - nocniOdMin) / float(nocniInterval)))
+        if nocniSlot > nocniSlotPosledni
+            nocniSlotPosledni := nocniSlot
+            alert("Svopex TTW - prosim uzavrete pozici, blizi se nocni seance.", alert.freq_all)
+
+// ==================== ALERTY ====================
+
+// Cas zavreni prave bezici svicky na scanTF. timenow je aktualni realny cas, takze se
+// zbyvajici doba v realtime prepocitava s kazdym prichozim tickem.
+scanBarClose = time_close(scanTF)
+minutDoZavreni = na(scanBarClose) ? na : (scanBarClose - timenow) / 60000.0
+
+// varip, NE var: v realtime Pine bezne promenne pri kazdem ticku vraci do stavu z uzavreni
+// predchozi svicky, takze obycejny priznak "uz odeslano" by se porad resetoval a notifikace
+// by odesla znovu s kazdym tickem. varip rollbacku nepodleha.
+varip int alertPosledniBar = 0
+varip bool alertOdeslan1 = false
+varip bool alertOdeslan2 = false
+
+// Prechod na novou svicku scanTF - oba prahy se povoli znovu
+if not na(scanBarClose) and scanBarClose != alertPosledniBar
+    alertPosledniBar := scanBarClose
+    alertOdeslan1 := false
+    alertOdeslan2 := false
+
+if barstate.islast
+    // Sber symbolu a jejich statusu do poli
+    array<string> syms = array.from(sym01, sym02, sym03, sym04, sym05, sym06, sym07, sym08, sym09, sym10, sym11, sym12, sym13, sym14, sym15, sym16, sym17, sym18, sym19, sym20, sym21, sym22, sym23, sym24, sym25, sym26, sym27, sym28, sym29, sym30, sym31, sym32, sym33, sym34, sym35, sym36, sym37, sym38, sym39, sym40)
+    array<int> sts = array.from(st01, st02, st03, st04, st05, st06, st07, st08, st09, st10, st11, st12, st13, st14, st15, st16, st17, st18, st19, st20, st21, st22, st23, st24, st25, st26, st27, st28, st29, st30, st31, st32, st33, st34, st35, st36, st37, st38, st39, st40)
+
+    // Vyber radku, ktere se maji zobrazit
+    array<string> rowSym = array.new<string>()
+    array<int> rowSt = array.new<int>()
+    for i = 0 to array.size(syms) - 1
+        string s = array.get(syms, i)
+        int st = array.get(sts, i)
+        if s != "" and (not tblOnlyHits or st > 0)
+            array.push(rowSym, f_shortSym(s))
+            array.push(rowSt, st)
+
+    // --- Alert: trhy se signalem na prave bezici svicce (index 0) ---
+    // Prochazi se vsechny sloty, ne jen radky tabulky: filtr "jen hity" se na alert
+    // nevztahuje a hity na starsich svickach jsou pro vstup uz pozde.
+    string alertSeznam = ""
+    int alertPocet = 0
+    for j = 0 to array.size(syms) - 1
+        string symA = array.get(syms, j)
+        int stA = array.get(sts, j)
+        if symA != ""
+            bool long0 = f_longBar(stA) == 0
+            bool short0 = f_shortBar(stA) == 0
+            if long0 or short0
+                string smer = long0 and short0 ? "LONG+SHORT" : long0 ? "LONG" : "SHORT"
+                alertSeznam := alertSeznam + (alertPocet > 0 ? ", " : "") + f_shortSym(symA) + " " + smer
+                alertPocet += 1
+
+    // Oba prahy jsou nezavisle, na poradi hodnot nezalezi. Kdyz se na jednom ticku prekroci
+    // oba (napr. po dire mezi ticky), odejde jen jedna notifikace - obsah by byl totozny.
+    if alertyZapnuty and alertPocet > 0 and not na(minutDoZavreni) and minutDoZavreni >= 0
+        bool poslat1 = alertMin1 > 0 and not alertOdeslan1 and minutDoZavreni <= alertMin1
+        bool poslat2 = alertMin2 > 0 and not alertOdeslan2 and minutDoZavreni <= alertMin2
+        if poslat1 or poslat2
+            // Do textu jde nastaveny prah, ne dopocitany zbytek casu. Alert vystreli az na
+            // prvnim ticku POD prahem, takze dopocet ukazoval o minutu min, nez je nastaveno
+            // (prah 10 -> text "9 min"). Pri soubehu obou prahu ma prednost ten vyssi.
+            int minutText = poslat1 ? alertMin1 : alertMin2
+            string zprava = "Svopex TTW " + scanTF + " | " + str.tostring(minutText) + " min do zavreni svicky | " + str.tostring(alertPocet) + " trhu: " + alertSeznam
+            alert(zprava, alert.freq_all)
+            if poslat1
+                alertOdeslan1 := true
+            if poslat2
+                alertOdeslan2 := true
+
+    var table scanTbl = table.new(tblPos == "top_left" ? position.top_left : tblPos == "bottom_left" ? position.bottom_left : tblPos == "bottom_right" ? position.bottom_right : tblPos == "middle_right" ? position.middle_right : position.top_right, 2, 41, border_width = 1)
+    table.clear(scanTbl, 0, 0, 1, 40)
+
+    string tsz = tblSize == "tiny" ? size.tiny : tblSize == "small" ? size.small : tblSize == "large" ? size.large : size.normal
+
+    // Hlavicka s aktivnim timeframe
+    table.cell(scanTbl, 0, 0, "Svopex TTW (" + scanTF + ")", bgcolor = color.new(color.blue, 30), text_color = color.white, text_size = tsz)
+    table.cell(scanTbl, 1, 0, "Signal (svicka)", bgcolor = color.new(color.blue, 30), text_color = color.white, text_size = tsz)
+
+    if array.size(rowSym) == 0
+        table.cell(scanTbl, 0, 1, "zadny signal", bgcolor = color.new(color.gray, 50), text_color = color.white, text_size = tsz)
+        table.cell(scanTbl, 1, 1, "-", bgcolor = color.new(color.gray, 50), text_color = color.white, text_size = tsz)
+    else
+        for i = 0 to math.min(array.size(rowSym), 40) - 1
+            int st = array.get(rowSt, i)
+            table.cell(scanTbl, 0, i + 1, array.get(rowSym, i), bgcolor = color.new(color.black, 40), text_color = color.white, text_size = tsz)
+            table.cell(scanTbl, 1, i + 1, f_statusText(st), bgcolor = color.new(f_statusColor(st), 40), text_color = color.white, text_size = tsz)

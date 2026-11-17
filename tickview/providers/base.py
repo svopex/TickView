@@ -364,6 +364,19 @@ class DataProvider(ABC):
         """IANA časové pásmo burzy instrumentu (volba „Exchange“ u času grafu)."""
         return "UTC"
 
+    def symbol_kind(self, symbol: str) -> str:
+        """Druh instrumentu (viz SYMBOL_KINDS) pro indikátory; prázdný = neznámý."""
+        return ""
+
+    def price_tick(self, symbol: str, price: float) -> Optional[float]:
+        """Nejmenší změna ceny instrumentu pro indikátory; None = odhadne se z dat.
+
+        Parametry:
+            symbol: symbol zdroje.
+            price: poslední cena (u forexu odliší JPY páry).
+        """
+        return None
+
     def regular_session(self, symbol: str) -> Optional[tuple[str, str, str]]:
         """Hlavní obchodní seance pro filtr RTH: (pásmo, "HH:MM" od, "HH:MM" do).
 

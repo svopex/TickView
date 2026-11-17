@@ -108,6 +108,29 @@ class YahooProvider(DataProvider):
                 pass
         return result
 
+    def symbol_kind(self, symbol: str) -> str:
+        """Druh instrumentu podle tvaru symbolu Yahoo: EURUSD=X forex, ^GSPC index, ES=F futures."""
+        upper = symbol.upper()
+        if upper.endswith("=X"):
+            return "forex"
+        if upper.startswith("^"):
+            return "index"
+        if upper.endswith("=F"):
+            return "futures"
+        if upper.endswith("-USD") or upper.endswith("-EUR"):
+            return "crypto"
+        return "stock"
+
+    def price_tick(self, symbol: str, price: float) -> Optional[float]:
+        """Forex: standardní tick brokerů (0.00001, JPY páry s cenou nad 20 – 0.001).
+
+        Ceny forexu z Yahoo mají šum plovoucí čárky, odhad z dat by vyšel
+        příliš jemný; ostatní instrumenty se odhadují z dat.
+        """
+        if self.symbol_kind(symbol) != "forex":
+            return None
+        return 0.001 if price >= 20 else 0.00001
+
     def exchange_timezone(self, symbol: str) -> str:
         """Pásmo burzy podle přípony symbolu (AAPL → New York, SAP.DE → Berlín)."""
         for suffix, tz_name in SUFFIX_TIMEZONES.items():

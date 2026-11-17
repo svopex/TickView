@@ -261,6 +261,10 @@ class IbkrProvider(DataProvider):
         self._describe_cache[symbol] = info
         return info
 
+    def symbol_kind(self, symbol: str) -> str:
+        """Forex IDEALPRO ("EUR.USD"), jinak americká akcie."""
+        return "forex" if forex_parts(symbol) else "stock"
+
     def exchange_timezone(self, symbol: str) -> str:
         """Americké akcie i forex IDEALPRO se v TWS řídí newyorským časem."""
         return US_EQUITY_SESSION[0]

@@ -11,7 +11,7 @@ jen čisté funkce.
 import json
 import uuid
 
-from tickview.logic.indicators import indicator_title, normalize_indicators
+from tickview.indicators.compute import indicator_title, normalize_indicators
 from tickview.logic.styles import TIMEFRAMES, clean_name
 
 # Klíč nastavení se seznamem šablon indikátorů

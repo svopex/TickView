@@ -6,7 +6,7 @@ Blokující operace sqlite3 běží přes asyncio.to_thread, aby nikdy nezdržel
 import asyncio
 import json
 import sqlite3
-from typing import Optional
+from typing import Callable, Optional
 
 from tickview.providers.base import TIMEFRAME_MS, Candle, DataProvider, is_closed, utc_now_ms
 
@@ -786,3 +786,59 @@ async def fetch_history(
         )
         result = [merged[open_time] for open_time in sorted(merged)]
     return result
+
+
+# Mezera mezi začátkem okna a první svíčkou, od které se historie bere jako
+# začínající později (mladý symbol); kratší mezera je jen víkend nebo svátek
+HISTORY_START_GAP_MS = 4 * 86_400_000
+
+
+async def fetch_recent(
+    provider: DataProvider,
+    cache: KlineCache,
+    symbol: str,
+    timeframe: str,
+    end_ms: int,
+    *,
+    min_count: int,
+    window_bars: int,
+    attempts: int = 4,
+    transform: Optional[Callable[[list[Candle]], list[Candle]]] = None,
+    should_stop: Optional[Callable[[], bool]] = None,
+) -> list[Candle]:
+    """Aspoň min_count posledních svíček končících v end_ms (graf, scanner).
+
+    Začne oknem window_bars svíček; dokud jich je méně než min_count, stáhne
+    i úsek před ním a okno zdvojnásobí (nejvýš attempts oken) – noc, víkend
+    nebo filtr seance jinak vrátí málo. Stažený úsek se znovu nestahuje.
+    Přestane i tehdy, když data začínají později než okno (mladý symbol) nebo
+    když should_stop vrátí True.
+
+    Parametry:
+        provider, cache, symbol, timeframe: co a odkud se stahuje.
+        end_ms: konec intervalu (ms UTC, včetně).
+        min_count: kolik svíček (po transform) stačí.
+        window_bars: délka prvního okna ve svíčkách.
+        attempts: nejvyšší počet oken.
+        transform: úprava úseku (např. filtr hlavní seance), None = beze změny.
+        should_stop: přerušení (např. mezitím začalo jiné načtení grafu).
+    """
+    span_ms = window_bars * TIMEFRAME_MS[timeframe]
+    candles: list[Candle] = []
+    for _ in range(attempts):
+        start_ms = end_ms - span_ms
+        chunk = await fetch_history(provider, cache, symbol, timeframe, start_ms, end_ms)
+        filtered = transform(chunk) if transform else chunk
+        # Starší úsek jde před dosud stažené svíčky (úseky se nepřekrývají)
+        candles = filtered + candles
+        if len(candles) >= min_count or (should_stop and should_stop()):
+            break
+        # Úsek bez odfiltrovaných svíček začínající dlouho po začátku okna =
+        # data dřív nezačínají; další (prázdné, necachované) dotazy by byly zbytečné
+        if chunk and len(filtered) == len(chunk) and chunk[0].open_time - start_ms > HISTORY_START_GAP_MS:
+            break
+        # Další pokus končí těsně před začátkem staženého úseku (interval je
+        # včetně obou mezí, svíčka by se zdvojila)
+        end_ms = start_ms - 1
+        span_ms *= 2
+    return candles

@@ -1,0 +1,353 @@
+"""Testy rozhraní indikátorů, loaderu, scanneru a časových připomínek (spuštění: python -m unittest)."""
+
+import sys
+import tempfile
+import textwrap
+import unittest
+from datetime import datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+from tests.test_logic import FakeProvider
+from tickview.indicators import registry
+from tickview.indicators.api import Context, Indicator, Param, Result, Signal
+from tickview.indicators.compute import compute_indicators, normalize_indicators
+from tickview.logic.cache import KlineCache, fetch_recent
+from tickview.logic.reminders import ReminderTracker, normalize_reminder, parse_hhmm
+from tickview.logic.scanner import (
+    CloseAlertWindow,
+    alert_message,
+    bar_hits,
+    current_bar_close,
+    normalize_scanner,
+    status_kind,
+    status_text,
+    symbol_row,
+    visible_rows,
+)
+from tickview.providers.base import TIMEFRAME_MS, Candle, utc_now_ms
+from tickview.services.alerts import AlertEngine
+from tickview.services.scanner import ScannerService
+
+
+class ParamTest(unittest.TestCase):
+    """Schéma parametrů: převod a kontrola hodnot."""
+
+    def test_numbers(self) -> None:
+        length = Param.int("length", 20, "Délka", min=1, max=100)
+        self.assertEqual(length.normalize(20.0), 20)
+        self.assertEqual(length.normalize(None), 20)
+        for bad in (0, 101, 2.5, "x"):
+            with self.assertRaises(ValueError):
+                length.normalize(bad)
+        tolerance = Param.float("tol", 0.1, "Tolerance", min=0, max=1)
+        self.assertEqual(tolerance.normalize(0), 0.0)
+        positive = Param.float("mult", 2.0, "Násobek", min=0, max=10, exclusive_min=True)
+        with self.assertRaises(ValueError):
+            positive.normalize(0)
+
+    def test_other_kinds(self) -> None:
+        self.assertIs(Param.bool("b", True).normalize(0), False)
+        color = Param.color("c", "#112233")
+        self.assertEqual(color.normalize("#AABBCC"), "#aabbcc")
+        # Průhledná barva se přijme jako rgba, neplatná = výchozí
+        self.assertEqual(color.normalize("rgba(1, 2, 3, 0.5)"), "rgba(1, 2, 3, 0.5)")
+        self.assertEqual(color.normalize("red"), "#112233")
+        select = Param.select("s", "a", options=[("a", "A"), ("b", "B")])
+        self.assertEqual(select.normalize("b"), "b")
+        with self.assertRaises(ValueError):
+            select.normalize("c")
+        self.assertEqual(Param.timeframe("tf", "1h").normalize("4h"), "4h")
+
+
+class InstancesTest(unittest.TestCase):
+    """Instance indikátorů: nenačtený indikátor se nezahodí."""
+
+    def test_unknown_kind_is_kept(self) -> None:
+        items = normalize_indicators([{"id": "q", "kind": "missing_plugin", "params": {"a": 1}}])
+        self.assertEqual(items, [{"id": "q", "kind": "missing_plugin", "params": {"a": 1}, "visible": True}])
+        candles = [Candle(i * 60_000, 1, 2, 0.5, 1.5, 1) for i in range(50)]
+        payload = compute_indicators(items, candles)
+        self.assertEqual(payload["groups"][0]["title"], "missing_plugin (nenačten)")
+        self.assertEqual(payload["overlays"], [])
+
+    def test_invalid_params_fall_back_to_defaults(self) -> None:
+        items = normalize_indicators([{"id": "s", "kind": "sma", "params": {"length": -5}}])
+        self.assertEqual(items[0]["params"], {"length": 20})
+
+
+class LoaderTest(unittest.TestCase):
+    """Načítání vlastních indikátorů z adresářů (jeden adresář = jeden indikátor)."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name) / "tv_test_custom"
+        files = {
+            "good/indicator.py": """
+                from tickview.indicators.api import Indicator, Result
+                class Good(Indicator):
+                    id = "test_good"
+                    title = name = "Good"
+                    def compute(self, df, params, ctx):
+                        return Result()
+                INDICATOR = Good()
+            """,
+            "broken/indicator.py": "this is not python",
+            "oldapi/indicator.py": """
+                from tickview.indicators.api import Indicator
+                class Old(Indicator):
+                    id = "test_old"
+                    api_version = 0
+                INDICATOR = Old()
+            """,
+            # Adresář bez indicator.py (např. jen Pine verze) se ignoruje
+            "notes/readme.txt": "jen poznámky",
+        }
+        for relative, content in files.items():
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(textwrap.dedent(content))
+        (root / "__init__.py").write_text("")
+        sys.path.insert(0, self.tmp.name)
+        self.saved = (registry.CUSTOM_DIR, registry.CUSTOM_PACKAGE)
+        registry.CUSTOM_DIR, registry.CUSTOM_PACKAGE = root, "tv_test_custom"
+        self._reset()
+
+    def tearDown(self) -> None:
+        registry.CUSTOM_DIR, registry.CUSTOM_PACKAGE = self.saved
+        sys.path.remove(self.tmp.name)
+        for name in [name for name in sys.modules if name.startswith("tv_test_custom")]:
+            del sys.modules[name]
+        self._reset()
+        self.tmp.cleanup()
+
+    @staticmethod
+    def _reset() -> None:
+        registry._registry.clear()
+        registry._errors.clear()
+        registry._loaded = False
+
+    def test_loader_isolates_errors(self) -> None:
+        # Chyby vadných indikátorů jdou do logu (zachytíme je, ať nezaplevelí výstup testů)
+        with self.assertLogs("tickview.indicators.registry", level="ERROR"):
+            indicators = registry.all_indicators()
+        self.assertIn("test_good", indicators)
+        self.assertIn("sma", indicators)
+        self.assertNotIn("test_old", indicators)
+        errors = registry.load_errors()
+        self.assertEqual(set(errors), {"broken", "oldapi"})
+        self.assertIn("verze", errors["oldapi"])
+
+
+class FakeSignals(Indicator):
+    """Testovací indikátor se signálem long na poslední svíčce symbolu „HIT“."""
+
+    id = "test_signals"
+    title = name = "Signals"
+    has_signals = True
+    params = [Param.int("length", 5, min=1, max=50)]
+
+    def compute(self, df, params, ctx: Context) -> Result:
+        if ctx.symbol != "HIT":
+            return Result()
+        return Result(signals=[Signal(int(df["time"].iloc[-1]), "long", 0, "ONE"),
+                               Signal(int(df["time"].iloc[-2]), "short", 1, "ENG")])
+
+
+class ScannerLogicTest(unittest.TestCase):
+    """Řádky scanneru, texty a alert před zavřením svíčky."""
+
+    def test_symbol_row(self) -> None:
+        signals = [Signal(3, "long", 3), Signal(1, "long", 1, "ENG"), Signal(0, "short", 0, "ONE")]
+        row = symbol_row("y", "EURUSD", signals, 2, 1000)
+        self.assertEqual((row["long"], row["short"], row["long_label"]), (1, 0, "ENG"))
+        self.assertEqual(status_text(row), "LONG(1) + SHORT(0)")
+        self.assertEqual(status_kind(row), "both")
+        empty = symbol_row("y", "GBPUSD", signals, 1, 1000)
+        self.assertEqual(status_text(empty), "SHORT(0)")
+        quiet = symbol_row("y", "USDJPY", [], 2, 1000)
+        self.assertEqual(visible_rows([row, quiet], True), [row])
+        self.assertEqual(len(visible_rows([row, quiet], False)), 2)
+        self.assertEqual(bar_hits([row, empty, quiet]), [("EURUSD", "SHORT"), ("GBPUSD", "SHORT")])
+
+    def test_bar_close_and_message(self) -> None:
+        rows = [{"last_open": 3_600_000}, {"last_open": 7_200_000}, {"last_open": None}]
+        self.assertEqual(current_bar_close(rows, 3_600_000, 0), 10_800_000)
+        self.assertEqual(current_bar_close([], 3_600_000, 5_000_000), 7_200_000)
+        message = alert_message("Svopex TTW", "1h", 10, [("EURUSD", "LONG"), ("XAUUSD", "SHORT")])
+        self.assertEqual(message, "Svopex TTW 1h | 10 min do zavření svíčky | 2 trhy: EURUSD LONG, XAUUSD SHORT")
+
+    def test_close_alert_window(self) -> None:
+        window = CloseAlertWindow()
+        # Mimo prahy nic, 10 min před zavřením první práh, 5 min druhý – každý jednou
+        self.assertIsNone(window.check(100, 12.0, 2, 10, 5))
+        self.assertEqual(window.check(100, 9.8, 2, 10, 5), 10)
+        self.assertIsNone(window.check(100, 9.0, 2, 10, 5))
+        self.assertEqual(window.check(100, 4.9, 2, 10, 5), 5)
+        self.assertIsNone(window.check(100, 1.0, 2, 10, 5))
+        # Bez signálu se nic neposílá; nová svíčka povolí prahy znovu
+        self.assertIsNone(window.check(200, 3.0, 0, 10, 5))
+        # Oba prahy najednou (díra mezi kontrolami) = jedna zpráva s prahem 1
+        self.assertEqual(window.check(200, 3.0, 1, 10, 5), 10)
+        self.assertIsNone(window.check(200, 2.0, 1, 10, 5))
+        # commit=False jen zjišťuje
+        self.assertEqual(window.check(300, 4.0, 1, 0, 5, commit=False), 5)
+        self.assertEqual(window.check(300, 4.0, 1, 0, 5), 5)
+
+    def test_normalize_scanner(self) -> None:
+        config = normalize_scanner({"timeframe": "7m", "bars": 99, "watchlist_id": True,
+                                    "alert": {"minutes1": -1, "notify": {"webhook": "ftp://x"}}})
+        self.assertEqual((config["timeframe"], config["bars"], config["watchlist_id"]), ("1h", 2, None))
+        self.assertEqual(config["alert"]["minutes1"], 10)
+        self.assertEqual(config["alert"]["notify"]["webhook"], "")
+        self.assertEqual(config["params"]["bars_to_process"], 360)
+
+
+class RemindersTest(unittest.TestCase):
+    """Časové připomínky: kontrola zadání a sloty okna."""
+
+    @staticmethod
+    def at(text: str) -> int:
+        return int(datetime.fromisoformat(text).replace(tzinfo=ZoneInfo("Europe/Prague")).timestamp() * 1000)
+
+    def test_normalize(self) -> None:
+        self.assertEqual(parse_hhmm("7:05"), 425)
+        self.assertIsNone(parse_hhmm("24:00"))
+        reminder = normalize_reminder({"start": "22:30", "end": "22:55", "interval": 5.0,
+                                       "timezone": "Europe/Prague", "days": [0, 1, 9]})
+        self.assertEqual((reminder["start"], reminder["interval"], reminder["days"]), ("22:30", 5, [0, 1]))
+        for bad in ({"start": "23:00", "end": "22:00"}, {"interval": 0}, {"days": []}, {"timezone": "Mars/Base"}):
+            data = {"start": "22:30", "end": "22:55", "interval": 5, "timezone": "Europe/Prague", "days": [0], **bad}
+            with self.assertRaises(ValueError):
+                normalize_reminder(data)
+
+    def test_tracker_slots(self) -> None:
+        reminder = normalize_reminder({"start": "22:30", "end": "22:55", "interval": 5,
+                                       "timezone": "Europe/Prague", "days": [0, 1, 2, 3, 4]})
+        tracker = ReminderTracker()
+        # 2026-11-16 je pondělí
+        fired = [tracker.check(reminder, self.at(f"2026-11-16T{time}")) for time in
+                 ("22:29", "22:30", "22:32", "22:36", "22:39", "22:55", "22:56")]
+        self.assertEqual(fired, [False, True, False, True, False, True, False])
+        # Další den se série povolí znovu, o víkendu (vybrané jen Po–Pá) nic
+        self.assertTrue(tracker.check(reminder, self.at("2026-11-17T22:31")))
+        self.assertFalse(tracker.check(reminder, self.at("2026-11-21T22:31")))
+
+
+class FakeAlertEngine:
+    """Zachytí notifikace scanneru místo odeslání."""
+
+    def __init__(self) -> None:
+        self.sent: list[dict] = []
+
+    async def notify_external(self, notify: dict, **event) -> None:
+        self.sent.append(event)
+
+
+class ScannerServiceTest(unittest.IsolatedAsyncioTestCase):
+    """Scanner nad testovacím zdrojem a indikátorem se signály."""
+
+    async def asyncSetUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.cache = KlineCache(Path(self.tmp.name) / "test.db")
+        await self.cache.init()
+        registry.all_indicators()
+        registry._registry[FakeSignals.id] = FakeSignals()
+        provider = FakeProvider()
+        provider.name = "Fake"
+        provider.timeframes = {"1h": "1h"}
+        provider.symbol_kind = lambda symbol: "forex"
+        provider.exchange_timezone = lambda symbol: "UTC"
+        provider.price_tick = lambda symbol, price: None
+        self.provider = provider
+
+        def lookup(source: str):
+            if source != "fake":
+                raise KeyError(source)
+            return provider
+
+        self.engine = FakeAlertEngine()
+        self.scanner = ScannerService(self.cache, self.engine, provider_lookup=lookup)
+
+    async def asyncTearDown(self) -> None:
+        registry._registry.pop(FakeSignals.id, None)
+        await self.cache.close()
+        self.tmp.cleanup()
+
+    async def test_scan_and_alert(self) -> None:
+        list_id = (await self.cache.watchlists())[0]["id"]
+        for source, symbol in (("fake", "HIT"), ("fake", "MISS"), ("nope", "X")):
+            await self.cache.watchlist_add(list_id, source, symbol)
+        await self.scanner.update_config({
+            "enabled": True, "indicator": FakeSignals.id, "watchlist_id": list_id, "timeframe": "1h", "bars": 2,
+            "alert": {"enabled": True, "minutes1": 60, "minutes2": 0, "notify": {"toast": True}},
+        })
+        await self.scanner.scan()
+        rows = {row["symbol"]: row for row in self.scanner.results["rows"] if row["symbol"] in ("HIT", "MISS", "X")}
+        self.assertEqual((rows["HIT"]["long"], rows["HIT"]["short"]), (0, 1))
+        self.assertEqual((rows["MISS"]["long"], rows["MISS"]["short"]), (None, None))
+        self.assertIn("Neznámý zdroj", rows["X"]["error"])
+        # Práh 60 min je vždy splněný – alert odejde jednou za svíčku
+        await self.scanner._check_alert()
+        await self.scanner._check_alert()
+        self.assertEqual(len(self.engine.sent), 1)
+        self.assertIn("HIT LONG", self.engine.sent[0]["message"])
+        self.assertEqual(self.engine.sent[0]["source"], "scanner")
+
+
+class NotifyExternalTest(unittest.IsolatedAsyncioTestCase):
+    """Notifikace mimo uložené alerty se zapíše do logu a ohlásí stránkám."""
+
+    async def test_log_and_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = KlineCache(Path(tmp) / "test.db")
+            await cache.init()
+            try:
+                engine = AlertEngine(cache)
+                events: list[dict] = []
+                engine.add_listener(events.append)
+                await engine.notify_external({"telegram": False, "toast": True}, source="reminder",
+                                             symbol="Uzavření pozic", timeframe="připomínka", message="Zavřít!")
+                log = await cache.alert_log()
+                self.assertEqual((log[0]["alert_id"], log[0]["message"], log[0]["price"]), (0, "Zavřít!", 0.0))
+                self.assertEqual([event["type"] for event in events], ["notification", "log_changed"])
+                self.assertIsNone(events[0]["price"])
+            finally:
+                await cache.close()
+
+
+class YoungProvider(FakeProvider):
+    """Testovací zdroj se symbolem, který má jen posledních 30 hodinových svíček."""
+
+    async def history(self, symbol, timeframe, start_ms, end_ms):
+        first_allowed = utc_now_ms() - 30 * TIMEFRAME_MS["1h"]
+        return [c for c in await super().history(symbol, timeframe, start_ms, end_ms) if c.open_time >= first_allowed]
+
+
+class FetchRecentTest(unittest.IsolatedAsyncioTestCase):
+    """Společná smyčka „aspoň N posledních svíček“ (graf a scanner)."""
+
+    async def asyncSetUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.cache = KlineCache(Path(self.tmp.name) / "test.db")
+        await self.cache.init()
+
+    async def asyncTearDown(self) -> None:
+        await self.cache.close()
+        self.tmp.cleanup()
+
+    async def test_window_grows_until_enough(self) -> None:
+        provider = FakeProvider()
+        candles = await fetch_recent(provider, self.cache, "X", "1h", utc_now_ms(), min_count=50, window_bars=20)
+        self.assertGreaterEqual(len(candles), 50)
+        times = [c.open_time for c in candles]
+        self.assertEqual(times, sorted(set(times)))
+        # Okna se nepřekrývají: 20 + 40 svíček = dva dotazy
+        self.assertEqual(len(provider.calls), 2)
+
+    async def test_young_symbol_stops_early(self) -> None:
+        provider = YoungProvider()
+        candles = await fetch_recent(provider, self.cache, "Y", "1h", utc_now_ms(), min_count=500, window_bars=200)
+        self.assertLessEqual(len(candles), 31)
+        # Data začínají dlouho po začátku okna – další okna se nestahují
+        self.assertEqual(len(provider.calls), 1)

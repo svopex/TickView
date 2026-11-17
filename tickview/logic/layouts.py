@@ -8,7 +8,7 @@ grafu, indikátory). Modul obsahuje jen čisté funkce – ukládání řeší U
 
 import json
 
-from tickview.logic.indicators import normalize_indicators
+from tickview.indicators.compute import normalize_indicators
 from tickview.logic.styles import TIMEFRAMES, normalize_chart_type
 
 # Rozložení po řádcích nabídky podle počtu grafů: (počet, [(id, popis)]);

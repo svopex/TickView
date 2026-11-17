@@ -2098,3 +2098,142 @@
 .visibility-range {
   min-width: 80px;
 }
+
+/* Parametry indikátoru generované ze schématu: nadpis skupiny, delší seznam se posouvá */
+.indicator-dialog-params {
+  max-height: 55vh;
+  overflow-y: auto;
+  flex-wrap: nowrap;
+  gap: 8px !important;
+  padding-right: 4px;
+}
+
+.param-group {
+  margin-top: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.85;
+}
+
+.param-check {
+  margin-left: -8px;
+}
+
+/* Vlastní indikátor, který se nenačetl (chyba v souboru) */
+.ind-error {
+  color: #ef5350;
+}
+
+/* Záložka Scanner v pravém panelu */
+.scanner-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-wrap: nowrap;
+  gap: 0 !important;
+}
+
+.scanner-header {
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 2px !important;
+  padding: 6px 6px 0 10px;
+}
+
+.scanner-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.scanner-info {
+  padding: 0 10px 6px;
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.scanner-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-wrap: nowrap;
+  overflow-y: auto;
+  gap: 0 !important;
+}
+
+.scanner-row {
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px !important;
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.18);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.scanner-row:hover {
+  background: rgba(128, 128, 128, 0.14);
+}
+
+.scanner-row-head {
+  cursor: default;
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.scanner-row-head:hover {
+  background: none;
+}
+
+.scanner-symbol {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scanner-status {
+  flex: 0 0 auto;
+  font-weight: 600;
+}
+
+/* Barva stavu jako v tabulce Pine skriptu: long zelená, short červená, oba oranžová */
+.scanner-long {
+  color: #26a69a;
+}
+
+.scanner-short {
+  color: #ef5350;
+}
+
+.scanner-both {
+  color: #ff9800;
+}
+
+.scanner-error,
+.scanner-none {
+  color: #808080;
+  font-weight: 400;
+}
+
+.scanner-settings {
+  width: 480px;
+}
+
+/* Dialog časových připomínek */
+.reminders-dialog {
+  width: 480px;
+}
+
+.reminders-list {
+  max-height: 50vh;
+  overflow-y: auto;
+  flex-wrap: nowrap;
+  gap: 0 !important;
+}
+
+.reminder-days {
+  gap: 0 !important;
+}
+
+.notify-fields {
+  gap: 0 !important;
+}

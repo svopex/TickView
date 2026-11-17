@@ -10,8 +10,9 @@ stránky předaný v konstruktoru.
 import asyncio
 import time
 
-from tickview.logic.cache import KlineCache, fetch_history
-from tickview.logic.indicators import compute_indicators, tail_payload
+from tickview.logic.cache import KlineCache, fetch_history, fetch_recent
+from tickview.indicators.compute import compute_indicators, context_for, tail_payload
+from tickview.indicators.registry import get_indicator
 from tickview.logic.sessions import SESSION_RTH, filter_session, in_session
 from tickview.logic.styles import drawing_visible
 from tickview.providers import get_provider
@@ -197,6 +198,19 @@ class ChartPane:
         elif candle.open_time > candles[-1].open_time:
             candles.append(candle)
 
+    def required_bars(self) -> int:
+        """Kolik svíček grafu potřebují aktivní indikátory (aspoň VISIBLE_BARS)."""
+        needed = VISIBLE_BARS
+        for spec in self.indicators:
+            indicator = get_indicator(spec["kind"])
+            if indicator is not None:
+                try:
+                    needed = max(needed, indicator.required_bars(spec["params"]))
+                except Exception:
+                    # Chybný požadavek indikátoru neblokuje načtení grafu
+                    pass
+        return needed
+
     async def push_indicators(self, tail: bool = False) -> None:
         """Přepočítá indikátory nad svíčkami grafu a pošle je do grafu.
 
@@ -204,7 +218,9 @@ class ChartPane:
         událostí); tail=True pošle jen poslední body (živý přepočet).
         """
         self.indicators_refreshed_at = time.monotonic()
-        payload = await asyncio.to_thread(compute_indicators, list(self.indicators), list(self.candles or []))
+        candles = list(self.candles or [])
+        ctx = context_for(self.provider, self.symbol or "", self.timeframe, candles, live=tail)
+        payload = await asyncio.to_thread(compute_indicators, list(self.indicators), candles, ctx)
         if not self.closed:
             await self.chart.set_indicators(tail_payload(payload) if tail else payload)
 
@@ -232,9 +248,10 @@ class ChartPane:
         self.set_badge(False)
         self.status(f"Načítám {symbol} ({timeframe})…")
         try:
-            # Aspoň tolik svíček, kolik je po načtení vidět (zbytek donačte load_older)
+            # Aspoň tolik svíček, kolik je po načtení vidět a kolik potřebují
+            # indikátory (zbytek donačte load_older při posunu doleva)
             candles = await self.fetch_session_history(
-                provider, symbol, timeframe, utc_now_ms(), min_count=VISIBLE_BARS, seq=seq
+                provider, symbol, timeframe, utc_now_ms(), min_count=self.required_bars(), seq=seq
             )
             if seq != self.load_seq:
                 # Mezitím uživatel zvolil jiný symbol/timeframe – zastaralou odpověď zahodíme
@@ -283,14 +300,10 @@ class ChartPane:
     async def fetch_session_history(
         self, provider, symbol: str, timeframe: str, end_ms: int, *, min_count: int, seq: int
     ) -> list[Candle]:
-        """Stáhne svíčky končící v end_ms, odfiltrované na zvolenou seanci.
+        """Stáhne svíčky končící v end_ms, odfiltrované na zvolenou seanci (viz fetch_recent).
 
-        Začne oknem DEFAULT_BARS svíček; dokud jich je méně než min_count,
-        stáhne i úsek před ním a okno zdvojnásobí (celkem nejvýš
-        OLDER_LOAD_ATTEMPTS oken) – noc, víkend nebo RTH mimo hlavní hodiny
-        jinak vrátí málo nebo nic. Přestane i tehdy, když mezitím začalo jiné
-        načtení (seq), nebo když filtr seance nic neodebral a úsek přesto
-        nestačil (dosažen začátek historie, např. mladý symbol).
+        Začne oknem DEFAULT_BARS svíček; přestane i tehdy, když mezitím
+        začalo jiné načtení (seq).
 
         Parametry:
             provider, symbol, timeframe: co se stahuje.
@@ -298,31 +311,22 @@ class ChartPane:
             min_count: kolik svíček po filtru seance stačí.
             seq: číslo načtení, ke kterému dotaz patří (self.load_seq).
         """
-        span_ms = DEFAULT_BARS * TIMEFRAME_MS[timeframe]
         session = self.active_session()
-        candles: list[Candle] = []
-        for _ in range(OLDER_LOAD_ATTEMPTS):
-            chunk = await fetch_history(provider, self.cache, symbol, timeframe, end_ms - span_ms, end_ms)
-            filtered = filter_session(chunk, timeframe, session)
-            # Starší úsek jde před dosud stažené svíčky (úseky se nepřekrývají)
-            candles = filtered + candles
-            if len(candles) >= min_count or seq != self.load_seq:
-                break
-            # Neprázdný úsek bez mezer po filtru seance a přesto krátký = data
-            # dřív nezačínají; další (prázdné, necachované) dotazy by byly zbytečné
-            if chunk and len(filtered) == len(chunk):
-                break
-            # Stažený úsek už znovu nestahujeme – další pokus končí těsně před
-            # jeho začátkem (interval je včetně obou mezí, svíčka by se zdvojila)
-            end_ms -= span_ms + 1
-            span_ms *= 2
-        return candles
+        return await fetch_recent(
+            provider, self.cache, symbol, timeframe, end_ms,
+            min_count=min_count,
+            window_bars=DEFAULT_BARS,
+            attempts=OLDER_LOAD_ATTEMPTS,
+            transform=lambda chunk: filter_session(chunk, timeframe, session),
+            should_stop=lambda: seq != self.load_seq,
+        )
 
-    async def load_older(self, before_s) -> None:
+    async def load_older(self, before_s, recompute: bool = True) -> None:
         """Donačte starší svíčky před první svíčkou grafu (posun grafu doleva).
 
         Když nic nevrátí ani poslední okno fetch_session_history, graf
-        historii označí za vyčerpanou.
+        historii označí za vyčerpanou. recompute=False = indikátory přepočítá
+        volající až na konci (ensure_history).
         """
         provider, symbol, timeframe = self.provider, self.symbol, self.timeframe
         seq = self.load_seq
@@ -347,9 +351,24 @@ class ChartPane:
                 return
             first_open = self.candles[0].open_time if self.candles else None
             self.candles = [c for c in older if first_open is None or c.open_time < first_open] + (self.candles or [])
-            if self.indicators:
+            if self.indicators and recompute:
                 await self.push_indicators()
             self.show_loaded_status()
+
+    async def ensure_history(self) -> None:
+        """Donačte starší svíčky, dokud jich graf nemá tolik, kolik potřebují indikátory.
+
+        Volá se po přidání nebo změně indikátoru (např. Svopex TTW potřebuje
+        stovky svíček); končí, když starší data nepřibývají. Indikátory
+        nepřepočítává – to udělá volající jednou na konci.
+        """
+        for _ in range(OLDER_LOAD_ATTEMPTS):
+            candles = self.candles or []
+            if not candles or len(candles) >= self.required_bars() or self.closed:
+                return
+            await self.load_older(candles[0].open_time // 1000, recompute=False)
+            if len(self.candles or []) <= len(candles):
+                return
 
     def start_load_older(self, before_s) -> None:
         """Donačítání na pozadí (nezdrží zpracování ostatních událostí grafu)."""

@@ -24,6 +24,7 @@ from tickview.logic.alerts import (
 from tickview.logic.cache import KlineCache
 from tickview.providers import get_provider
 from tickview.providers.base import TIMEFRAME_MS, Candle, StreamStatus, utc_now_ms
+from tickview.services.listeners import Listeners
 from tickview.services.notify import send_telegram, send_webhook, telegram_settings
 
 logger = logging.getLogger(__name__)
@@ -38,7 +39,7 @@ EXPIRY_CHECK_S = 30.0
 StreamKey = tuple[str, str, str]
 
 
-class AlertEngine:
+class AlertEngine(Listeners):
     """Vyhodnocuje aktivní alerty nad živými streamy zdrojů.
 
     Parametry:
@@ -53,6 +54,7 @@ class AlertEngine:
         provider_lookup: Callable = get_provider,
         client: Optional[httpx.AsyncClient] = None,
     ) -> None:
+        super().__init__()
         self._cache = cache
         self._provider_lookup = provider_lookup
         self._client = client
@@ -64,8 +66,6 @@ class AlertEngine:
         # Kresby alertů: id kresby -> kresba / None (smazaná); změnu kresby
         # hlásí UI přes drawing_changed
         self._drawings: dict[int, Optional[dict]] = {}
-        # Posluchači otevřených stránek: callback(událost) – toast, zvuk, obnova seznamu
-        self._listeners: set[Callable[[dict], None]] = set()
         # Silné reference na úlohy odesílání notifikací (jinak je GC může zrušit)
         self._tasks: set[asyncio.Task] = set()
         self._expiry_task: Optional[asyncio.Task] = None
@@ -132,24 +132,6 @@ class AlertEngine:
     def drawing_changed(self, drawing_id: int) -> None:
         """Kresba se posunula nebo smazala (volá UI) – alert si ji příště načte znovu."""
         self._drawings.pop(drawing_id, None)
-
-    # ---------- posluchači stránek ----------
-
-    def add_listener(self, callback: Callable[[dict], None]) -> None:
-        """Přihlásí stránku k událostem alertů (spuštění, změna seznamu)."""
-        self._listeners.add(callback)
-
-    def remove_listener(self, callback: Callable[[dict], None]) -> None:
-        """Odhlásí stránku (odpojení klienta)."""
-        self._listeners.discard(callback)
-
-    def _emit(self, event: dict) -> None:
-        # Chyba jedné stránky (zavřený klient) nesmí zastavit ostatní ani engine
-        for callback in list(self._listeners):
-            try:
-                callback(event)
-            except Exception:
-                logger.exception("Posluchač alertů selhal")
 
     # ---------- streamy a vyhodnocení ----------
 
@@ -288,8 +270,38 @@ class AlertEngine:
     async def _deliver(self, alert: dict, event: dict) -> None:
         """Odešle notifikace spuštěného alertu a zapíše spuštění do logu s výsledkem."""
         delivery = await self.send_notifications(alert["notify"], event)
-        await self._cache.add_alert_log({**event, "delivery": delivery})
+        # Notifikace bez ceny (scanner, připomínka) má v logu cenu 0 (sloupec je povinný)
+        price = event["price"] if event.get("price") is not None else 0.0
+        await self._cache.add_alert_log({**event, "price": price, "delivery": delivery})
         self._emit({"type": "log_changed"})
+
+    async def notify_external(self, notify: dict, *, source: str, symbol: str, timeframe: str, message: str) -> None:
+        """Notifikace mimo uložené alerty (scanner, časová připomínka).
+
+        Stránkám se ohlásí událostí "notification" (toast, zvuk – seznam alertů
+        se nemění), Telegram a webhook se pošlou podle notify a záznam přibude
+        do logu alertů (alert_id 0, bez ceny).
+
+        Parametry:
+            notify: nastavení notifikací ({"telegram", "webhook", "toast", "sound"}).
+            source: původ do logu ("scanner", "reminder").
+            symbol, timeframe: popis do logu a zprávy Telegramu.
+            message: text notifikace.
+        """
+        event = {
+            "type": "notification",
+            "alert_id": 0,
+            "source": source,
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "price": None,
+            "message": message,
+            "fired_at": utc_now_ms(),
+            "toast": notify.get("toast", True),
+            "sound": notify.get("sound", False),
+        }
+        self._emit(event)
+        await self._deliver({"notify": notify}, event)
 
     async def send_notifications(self, notify: dict, event: dict) -> list[dict]:
         """Pošle Telegram a webhook podle nastavení alertu; vrátí výsledky [{"channel", "ok", "error"}].
@@ -303,7 +315,9 @@ class AlertEngine:
         if notify.get("telegram"):
             token, chat_id = telegram_settings()
             if token and chat_id:
-                text = f"⏰ {event['message']}\n{event['symbol']} · {event['timeframe']} · {event['price']:g}"
+                text = f"⏰ {event['message']}\n{event['symbol']} · {event['timeframe']}"
+                if event.get("price") is not None:
+                    text += f" · {event['price']:g}"
                 jobs.append(("telegram", send_telegram(self._client, token, chat_id, text)))
             else:
                 # Kanál bez nastavení se v logu ukáže jako neodeslaný

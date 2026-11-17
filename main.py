@@ -8,6 +8,8 @@ from tickview.config import DB_PATH, PROJECT_ROOT, ensure_dirs
 from tickview.logic.cache import KlineCache
 from tickview.providers import PROVIDERS
 from tickview.services.alerts import AlertEngine
+from tickview.services.reminders import ReminderService
+from tickview.services.scanner import ScannerService
 from tickview.ui import main_window
 
 
@@ -27,19 +29,25 @@ def main() -> None:
     args = parse_args()
     ensure_dirs()
     cache = KlineCache(DB_PATH)
-    # Alerty se vyhodnocují na serveru i bez otevřené stránky
+    # Alerty, scanner a časové připomínky běží na serveru i bez otevřené stránky
     alert_engine = AlertEngine(cache)
+    scanner = ScannerService(cache, alert_engine)
+    reminders = ReminderService(cache, alert_engine)
 
     async def startup() -> None:
-        # Nejdřív databáze (schéma), pak alerty, které z ní čtou
+        # Nejdřív databáze (schéma), pak služby, které z ní čtou
         await cache.init()
         await alert_engine.start()
+        await scanner.start()
+        await reminders.start()
 
     app.on_startup(startup)
 
     async def shutdown() -> None:
         # Při ukončení zastavíme alerty a zavřeme síťová spojení zdrojů (HTTP,
         # websockety, TWS) i databázi
+        await reminders.stop()
+        await scanner.stop()
         await alert_engine.stop()
         for provider in PROVIDERS:
             try:
@@ -54,7 +62,7 @@ def main() -> None:
     # Statické soubory UI: styly, JS komponenta grafu a vendored knihovna
     app.add_static_files("/static", str(PROJECT_ROOT / "tickview" / "ui" / "static"))
 
-    main_window.register(cache, alert_engine)
+    main_window.register(cache, alert_engine, scanner, reminders)
 
     ui.run(title="TickView", port=args.port, reload=False, native=args.native, show=args.open)
 

@@ -155,6 +155,10 @@ class AlpacaProvider(DataProvider):
         )
         self._assets_loaded_at = now
 
+    def symbol_kind(self, symbol: str) -> str:
+        """Alpaca poskytuje jen americké akcie."""
+        return "stock"
+
     def exchange_timezone(self, symbol: str) -> str:
         """Americké akcie – newyorský čas."""
         return US_EQUITY_SESSION[0]

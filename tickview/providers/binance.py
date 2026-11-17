@@ -119,6 +119,10 @@ class BinanceProvider(DataProvider):
         self._symbols.sort(key=lambda si: si.symbol)
         self._symbols_loaded_at = now
 
+    def symbol_kind(self, symbol: str) -> str:
+        """Binance obchoduje jen kryptoměny."""
+        return "crypto"
+
     async def describe(self, symbol: str) -> dict:
         """Nadpis grafu: pár jako "BTC / USDT" na burze Binance."""
         await self._ensure_symbols()

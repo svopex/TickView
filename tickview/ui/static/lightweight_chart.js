@@ -215,9 +215,10 @@ window.TickViewChart = (function () {
     const kind = CHART_TYPE_SERIES[s.chartType] || 'Candlestick';
     s.candleSeries = s.chart['add' + kind + 'Series'](mainSeriesOptions(s));
     s.candleSeries.setData(mainData(s));
-    // Čáry alertů patřily odstraněné sérii – na nové je vytvoříme znovu
+    // Čáry alertů i značky indikátorů patřily odstraněné sérii – na nové je vytvoříme znovu
     s.alertPriceLines = [];
     applyAlertLines(s);
+    applyIndicatorMarkers(s);
   }
 
   // Barva objemového sloupce podle směru svíčky (poloprůhledná)
@@ -773,6 +774,9 @@ window.TickViewChart = (function () {
       overlayMeta: [],
       lastIndicatorPayload: null,
       indicatorStructure: null,
+      // Úsečky a značky indikátorů (kreslí se pod kresbami uživatele)
+      indicatorSegments: [],
+      indicatorMarkers: [],
       // Čas posledního bodu sérií indikátorů (živé doplňování přes update())
       indicatorLastTime: -Infinity,
       finishedQueue: [],
@@ -1868,6 +1872,55 @@ window.TickViewChart = (function () {
     s.panesMap.set(pane.paneId, { chart, wrap, title, series: created });
   }
 
+  // Pozice značky indikátoru → pozice značky Lightweight Charts
+  const MARKER_POSITIONS = { above: 'aboveBar', below: 'belowBar', in: 'inBar' };
+  // Styl úsečky indikátoru (0 plná, 1 tečkovaná, 2 čárkovaná) → přerušování čáry
+  // (stejné vzory jako LINE_DASHES u kreseb – ta konstanta je definovaná až níže)
+  const SEGMENT_DASHES = { 0: [], 1: [1.5, 3], 2: [6, 4] };
+
+  // Značky viditelných indikátorů na hlavní sérii (seřazené podle času, jak LWC vyžaduje)
+  function applyIndicatorMarkers(s) {
+    if (!s.candleSeries) return;
+    const payload = s.lastIndicatorPayload || {};
+    const markers = (s.indicatorMarkers || [])
+      .filter((marker) => groupVisible(payload, marker.group))
+      .map((marker) => ({
+        time: marker.time,
+        position: MARKER_POSITIONS[marker.position] || 'aboveBar',
+        shape: marker.shape,
+        color: marker.color,
+        text: marker.text || '',
+      }))
+      .sort((a, b) => a.time - b.time);
+    s.candleSeries.setMarkers(markers);
+  }
+
+  // Úsečky viditelných indikátorů na překryvném canvasu (pod kresbami uživatele;
+  // skrytí kreseb je neskrývá – patří indikátoru, ne kresbám)
+  function drawIndicatorSegments(ctx, s) {
+    const segments = s.indicatorSegments || [];
+    if (!segments.length) return;
+    // Skryté skupiny jednou za překreslení (ne hledání skupiny pro každou úsečku)
+    const hidden = new Set(
+      ((s.lastIndicatorPayload || {}).groups || []).filter((group) => group.visible === false).map((group) => group.id)
+    );
+    ctx.save();
+    for (const segment of segments) {
+      if (hidden.has(segment.group)) continue;
+      const from = pointToPixel(s, { time: segment.time1, price: segment.price1 });
+      const to = pointToPixel(s, { time: segment.time2, price: segment.price2 });
+      if (!from || !to) continue;
+      ctx.lineWidth = segment.width || 1;
+      ctx.strokeStyle = segment.color;
+      ctx.setLineDash(SEGMENT_DASHES[segment.style] || []);
+      ctx.beginPath();
+      ctx.moveTo(from.x, from.y);
+      ctx.lineTo(to.x, to.y);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   // Nahradí všechny indikátory: overlay čáry + panely pod hlavním grafem
   function setIndicators(id, payload) {
     const s = state.get(id);
@@ -1886,6 +1939,11 @@ window.TickViewChart = (function () {
       rebuilt = applyIndicatorPayload(s, payload, structure, lastTime);
     });
     if (!rebuilt) return;
+    // Úsečky a značky indikátorů přicházejí vždy celé (i v živém přepočtu)
+    s.indicatorSegments = payload.segments || [];
+    s.indicatorMarkers = payload.markers || [];
+    applyIndicatorMarkers(s);
+    redrawOverlay(s);
     // Panely po nových datech srovnáme na rozsah hlavního grafu
     alignPanesToMain(s);
     storeIndicatorValues(s, payload);
@@ -3495,6 +3553,7 @@ window.TickViewChart = (function () {
     ctx.rect(pane.offsetX, pane.offsetY, pane.width, pane.height);
     ctx.clip();
     ctx.translate(pane.offsetX, pane.offsetY);
+    drawIndicatorSegments(ctx, s);
     if (!s.overlay.hidden) {
       const all = [...s.overlay.drawings];
       // Rozepsaná kresba už ve stylu, jaký dostane po dokončení

@@ -14,8 +14,8 @@ from ib_async import BarData, BarDataList
 
 from tickview.config import update_config_section
 from tickview.logic.cache import KlineCache, fetch_history, uncovered_ranges
-from tickview.logic.indicators import (
-    INDICATOR_DEFS,
+from tickview.indicators.builtin import BUILTIN_INDICATORS
+from tickview.indicators.compute import (
     compute_indicators,
     load_saved_indicators,
     new_indicator,
@@ -164,7 +164,7 @@ class IndicatorsTest(unittest.TestCase):
     def test_all_indicators_compute(self) -> None:
         # Každý definovaný indikátor dá nad dostatečnou historií aspoň jednu sérii
         candles = [make_candle(i * 60_000, close=10 + (i % 11) * 0.3) for i in range(300)]
-        specs = [new_indicator(kind) for kind in INDICATOR_DEFS]
+        specs = [new_indicator(indicator.id) for indicator in BUILTIN_INDICATORS]
         payload = compute_indicators(specs, candles)
         drawn = {overlay["group"] for overlay in payload["overlays"]} | {pane["group"] for pane in payload["panes"]}
         self.assertEqual(drawn, {spec["id"] for spec in specs})
@@ -203,7 +203,7 @@ class IndicatorsTest(unittest.TestCase):
                 normalize_params(kind, values)
 
     def test_load_saved_indicators_skips_invalid(self) -> None:
-        raw = '[{"id": "x", "kind": "ema", "params": {"length": 50}}, {"kind": "nope"}, 5]'
+        raw = '[{"id": "x", "kind": "ema", "params": {"length": 50}}, {"params": {}}, 5]'
         self.assertEqual(
             load_saved_indicators(raw),
             [{"id": "x", "kind": "ema", "params": {"length": 50}, "visible": True}],

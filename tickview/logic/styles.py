@@ -455,3 +455,9 @@ def load_panel_position(raw: str | None) -> dict | None:
         return normalize_panel_position(json.loads(raw or "null"))
     except ValueError:
         return None
+
+
+def plural(count: int, one: str, few: str, many: str) -> str:
+    """Počet se správným tvarem slova: 1 graf, 2–4 grafy, 5+ grafů (i 0 grafů)."""
+    word = one if count == 1 else few if 2 <= count <= 4 else many
+    return f"{count} {word}"

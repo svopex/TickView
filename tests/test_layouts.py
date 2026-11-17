@@ -18,7 +18,7 @@ from tickview.logic.indicator_templates import (
     template_indicators,
     update_indicator_template,
 )
-from tickview.logic.indicators import new_indicator
+from tickview.indicators.compute import new_indicator
 from tickview.logic.layouts import LAYOUT_SECTIONS, LAYOUTS, load_layout, normalize_layout, resize_panes
 from tickview.logic.styles import (
     TIMEFRAMES,

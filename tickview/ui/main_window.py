@@ -38,16 +38,15 @@ from tickview.logic.indicator_templates import (
     template_indicators,
     update_indicator_template,
 )
-from tickview.logic.indicators import (
-    CATEGORIES,
-    INDICATOR_DEFS,
-    PARAM_LABELS,
+from tickview.indicators.api import CATEGORIES
+from tickview.indicators.compute import (
     indicator_color,
     indicator_title,
     load_saved_indicators,
     new_indicator,
     normalize_params,
 )
+from tickview.indicators.registry import all_indicators, get_indicator, load_errors
 from tickview.logic.layouts import LAYOUT_SECTIONS, LAYOUTS, SYNC_OPTIONS, load_layout, resize_panes
 from tickview.logic.styles import (
     CHART_DEFAULTS,
@@ -83,6 +82,7 @@ from tickview.logic.styles import (
     normalize_position_points,
     normalize_text_options,
     normalize_visibility,
+    plural,
 )
 from tickview.logic.sessions import (
     SESSION_ETH,
@@ -92,10 +92,15 @@ from tickview.logic.sessions import (
 from tickview.providers import PROVIDERS, get_provider
 from tickview.providers.base import utc_now_ms
 from tickview.services.alerts import AlertEngine
+from tickview.services.reminders import ReminderService
+from tickview.services.scanner import ScannerService
 from tickview.services.notify import find_telegram_chat_id, send_telegram, telegram_configured, telegram_settings
 from tickview.ui.chart_pane import ChartPane
 from tickview.ui.color_button import ColorButton
 from tickview.ui.icons import ICONS, svg
+from tickview.ui.param_form import ParamForm
+from tickview.ui.reminders_dialog import RemindersDialog
+from tickview.ui.scanner_panel import ScannerPanel
 from tickview.ui.templates import TemplateMenu, load_default_template, settings_buttons, settings_header
 
 # Hledání symbolu: kolik výsledků jednoho zdroje a kolik celkem se zobrazí
@@ -131,12 +136,6 @@ def icon_html(name: str) -> ui.html:
     return ui.html(svg(name), sanitize=False).classes("tv-icon-wrap")
 
 
-def plural(count: int, one: str, few: str, many: str) -> str:
-    """Počet se správným tvarem slova: 1 graf, 2–4 grafy, 5+ grafů (i 0 grafů)."""
-    word = one if count == 1 else few if 2 <= count <= 4 else many
-    return f"{count} {word}"
-
-
 def drawing_scope(kind: str) -> str:
     """Rozsah šablon Settings kresby daného typu (šablony i výchozí styl nových kreseb)."""
     return f"drawing.{kind}"
@@ -152,23 +151,27 @@ def provider_code(source: str) -> str:
 
 
 # Obsahy pravého panelu ("" = panel skrytý, zůstane jen pravá lišta)
-RIGHT_PANELS = ("watchlist", "alerts", "")
+RIGHT_PANELS = ("watchlist", "alerts", "scanner", "")
 
 
-def register(cache: KlineCache, alert_engine: AlertEngine) -> None:
+def register(cache: KlineCache, alert_engine: AlertEngine, scanner: ScannerService, reminders: ReminderService) -> None:
     """Registruje hlavní stránku aplikace (volá se z main.py).
 
     Parametry:
         cache: úložiště svíček, nastavení, kreseb a alertů.
         alert_engine: vyhodnocování alertů na pozadí (stránka se k němu přihlásí).
+        scanner: scanner signálů na pozadí (záložka Scanner).
+        reminders: časové připomínky na pozadí (dialog v panelu Alerty).
     """
 
     @ui.page("/")
     async def index() -> None:
-        await _build_index(cache, alert_engine)
+        await _build_index(cache, alert_engine, scanner, reminders)
 
 
-async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
+async def _build_index(
+    cache: KlineCache, alert_engine: AlertEngine, scanner: ScannerService, reminders: ReminderService
+) -> None:
     # Statické soubory (styly + JS grafu + vendored knihovna) do hlavičky stránky;
     # verze v URL zajistí, že prohlížeč po změně souborů nepoužije starou cache
     ui.add_head_html(
@@ -1677,6 +1680,8 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
         # Po každé změně sady indikátorů aktivního grafu: uložit (konfigurace
         # rozložení), přepočítat, obnovit nabídku
         await save_layout()
+        # Indikátor může potřebovat delší historii, než graf má (donačte ji a přepočítá)
+        await active().ensure_history()
         await active().push_indicators()
         # Nabídku přestavujeme jen otevřenou (jinak se postaví při otevření)
         if indicator_dialog.value:
@@ -1750,10 +1755,9 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
 
         return _handler
 
-    def indicator_matches(kind: str, query: str) -> bool:
+    def indicator_matches(indicator, query: str) -> bool:
         # Hledání v nabídce: zkratka, celý název i popis (bez ohledu na velikost)
-        definition = INDICATOR_DEFS[kind]
-        haystack = " ".join((kind, definition["title"], definition["name"], definition["desc"])).lower()
+        haystack = " ".join((indicator.id, indicator.title, indicator.name, indicator.description)).lower()
         return all(word in haystack for word in query.lower().split())
 
     def render_indicator_menu() -> None:
@@ -1780,11 +1784,11 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
                 if not active().indicators:
                     ui.label("Žádný aktivní indikátor – vyberte ze seznamu.").classes("ind-empty")
                 for spec in active().indicators:
-                    definition = INDICATOR_DEFS[spec["kind"]]
+                    indicator = get_indicator(spec["kind"])
                     with ui.row().classes("ind-item ind-item-active w-full"):
                         with ui.column().classes("ind-item-text"):
                             ui.label(indicator_title(spec)).classes("ind-item-title")
-                            ui.label(definition["name"]).classes("ind-item-desc")
+                            ui.label(indicator.name if indicator else "Indikátor se nenačetl").classes("ind-item-desc")
                         ui.space()
                         visible = spec.get("visible", True)
                         ui.button(
@@ -1798,26 +1802,31 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
                             "flat dense round size=sm"
                         ).tooltip("Odebrat")
                 return
-            # Seznam definic: filtr kategorie (při hledání se prohledávají všechny)
+            # Seznam indikátorů registru: filtr kategorie (při hledání se prohledávají všechny)
+            indicators = all_indicators()
             kinds = [
                 kind
-                for kind, definition in INDICATOR_DEFS.items()
-                if (query and indicator_matches(kind, query))
-                or (not query and category in ("all", definition["category"]))
+                for kind, indicator in indicators.items()
+                if (query and indicator_matches(indicator, query))
+                or (not query and category in ("all", indicator.category))
             ]
-            kinds.sort(key=lambda kind: INDICATOR_DEFS[kind]["name"].lower())
+            kinds.sort(key=lambda kind: indicators[kind].name.lower())
             if not kinds:
                 ui.label("Nic nenalezeno.").classes("ind-empty")
+            # Vlastní indikátory, které se nenačetly (chyba v souboru), ukážeme v kategorii Vlastní
+            if category == "custom" and not query:
+                for error in load_errors().values():
+                    ui.label(error).classes("ind-empty ind-error")
             for kind in kinds:
-                definition = INDICATOR_DEFS[kind]
+                indicator = indicators[kind]
                 with ui.row().classes("ind-item w-full").on("click", make_add_click(kind)):
                     with ui.column().classes("ind-item-text"):
                         with ui.row().classes("ind-item-head"):
-                            ui.label(definition["name"]).classes("ind-item-title")
-                            ui.label(definition["title"]).classes("ind-item-abbr")
-                        ui.label(definition["desc"]).classes("ind-item-desc")
+                            ui.label(indicator.name).classes("ind-item-title")
+                            ui.label(indicator.title).classes("ind-item-abbr")
+                        ui.label(indicator.description).classes("ind-item-desc")
                     ui.space()
-                    ui.label(CATEGORIES[definition["category"]]).classes("ind-item-cat")
+                    ui.label(CATEGORIES[indicator.category]).classes("ind-item-cat")
                     if counts.get(kind):
                         ui.badge(str(counts[kind])).classes("ind-item-count").tooltip("Počet aktivních instancí")
 
@@ -1832,23 +1841,15 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
         render_indicator_menu()
         indicator_dialog.open()
 
-    # Upravovaná instance indikátoru a pole parametrů v dialogu nastavení
+    # Upravovaná instance indikátoru (pole parametrů drží settings_form)
     settings_state: dict = {"id": None}
-    settings_fields: dict = {}
 
     def fill_indicator_settings(kind: str, params: dict) -> None:
-        # Pole parametrů podle typu indikátoru (hodnoty z instance / výchozí)
-        settings_fields.clear()
-        settings_params_container.clear()
-        with settings_params_container:
-            if not INDICATOR_DEFS[kind]["params"]:
-                ui.label("Indikátor nemá nastavitelné parametry.").classes("settings-note")
-            for name, default in INDICATOR_DEFS[kind]["params"].items():
-                settings_fields[name] = ui.number(
-                    PARAM_LABELS.get(name, name),
-                    value=params.get(name, default),
-                    step=1 if isinstance(default, int) else 0.1,
-                ).props("outlined dense")
+        # Pole parametrů podle schématu indikátoru (hodnoty z instance / výchozí);
+        # řádek Barva jen u indikátorů s hlavní barvou instance
+        indicator = get_indicator(kind)
+        settings_form.fill(indicator, params)
+        settings_style.set_visibility(bool(indicator and indicator.uses_color))
 
     def indicator_scope() -> str:
         # Rozsah šablon upravovaného indikátoru: šablony platí pro typ indikátoru
@@ -1859,9 +1860,12 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
         spec = find_indicator(indicator_id)
         if not spec:
             return
+        indicator = get_indicator(spec["kind"])
+        if indicator is None:
+            show_status(f"Indikátor {spec['kind']} se nenačetl – zkontrolujte jeho soubor.", error=True)
+            return
         settings_state["id"] = indicator_id
-        definition = INDICATOR_DEFS[spec["kind"]]
-        settings_title.text = f"{definition['name']} ({definition['title']})"
+        settings_title.text = f"{indicator.name} ({indicator.title})"
         fill_indicator_settings(spec["kind"], spec["params"])
         index = active().indicators.index(spec)
         settings_color.value = indicator_color(spec, index)
@@ -1889,7 +1893,7 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
         if not spec:
             return None
         try:
-            params = normalize_params(spec["kind"], {name: field.value for name, field in settings_fields.items()})
+            params = normalize_params(spec["kind"], settings_form.values())
         except ValueError as exc:
             ui.notify(str(exc), type="warning")
             return None
@@ -2248,8 +2252,10 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
                         with ui.row().classes("alert-meta"):
                             ui.label(f"{entry['symbol']}, {entry['timeframe']}").classes("alert-meta-symbol")
                             ui.label("·")
-                            ui.label(format_price(entry["price"]))
-                            ui.label("·")
+                            # Scanner a připomínky (alert_id 0) cenu nemají
+                            if entry["alert_id"]:
+                                ui.label(format_price(entry["price"]))
+                                ui.label("·")
                             ui.label(format_local_time(entry["fired_at"]))
                         if entry["delivery"]:
                             with ui.row().classes("alert-meta"):
@@ -2332,6 +2338,8 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
         await cache.set_setting("right_panel", state["right_panel"])
         paint_right_panel()
         await render_alerts_panel()
+        if state["right_panel"] == "scanner":
+            await scanner_panel.render()
 
     def paint_right_panel() -> None:
         # Viditelnost panelu a jeho sekcí, zvýraznění tlačítek pravé lišty
@@ -2339,6 +2347,7 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
         right_panel.set_visibility(bool(current))
         watchlist_section.set_visibility(current == "watchlist")
         alerts_section.set_visibility(current == "alerts")
+        scanner_section.set_visibility(current == "scanner")
         mark_active(right_buttons, current, "active")
         paint_alerts_tab()
 
@@ -2355,7 +2364,7 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
             if alerts_visible():
                 background_tasks.create(render_alert_log())
             return
-        if event_type == "fired":
+        if event_type in ("fired", "notification"):
             with page_root:
                 if event.get("toast"):
                     ui.notify(
@@ -2368,8 +2377,10 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
                     )
                 if event.get("sound") and panes:
                     active().chart.play_sound()
-            # Log obnoví následná událost log_changed
-            background_tasks.create(refresh_alerts_ui(with_log=False))
+            # Log obnoví následná událost log_changed; notifikace scanneru
+            # a připomínek seznam alertů nemění
+            if event_type == "fired":
+                background_tasks.create(refresh_alerts_ui(with_log=False))
             return
         background_tasks.create(refresh_alerts_ui())
 
@@ -2625,6 +2636,11 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
 
     # ---------- UI ----------
 
+    # Záložka Scanner (klik na řádek načte symbol do aktivního grafu) a dialog
+    # časových připomínek (nabídka ⋯ v panelu Alerty)
+    scanner_panel = ScannerPanel(cache, scanner, load_symbol)
+    reminders_dialog = RemindersDialog(reminders)
+
     with ui.column().classes("page-root w-full") as page_root:
         with ui.row().classes("topbar w-full"):
             ui.label("TickView").classes("brand")
@@ -2826,6 +2842,8 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
                                 ui.menu_item("Smazat všechny", on_click=make_bulk_alerts("remove_all")).classes(
                                     "wl-danger"
                                 )
+                                ui.separator()
+                                ui.menu_item("Časové připomínky…", on_click=reminders_dialog.open)
                     # Lišta logu: vymazání logu
                     with ui.row().classes("alerts-toolbar w-full") as log_toolbar:
                         ui.space()
@@ -2841,10 +2859,16 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
                     alert_search.set_visibility(False)
                     alerts_list = ui.column().classes("alerts-list w-full")
                     alert_log_list = ui.column().classes("alerts-list w-full")
+                # Scanner signálů indikátoru přes seznam symbolů (klik na řádek načte symbol)
+                scanner_section = scanner_panel.build()
             # Svislá lišta úplně vpravo: přepínání obsahu pravého panelu
             with ui.column().classes("right-bar"):
                 right_buttons = {}
-                for panel, icon, tooltip in (("watchlist", "format_list_bulleted", "Watchlist"), ("alerts", "alarm", "Alerty")):
+                for panel, icon, tooltip in (
+                    ("watchlist", "format_list_bulleted", "Watchlist"),
+                    ("alerts", "alarm", "Alerty"),
+                    ("scanner", "radar", "Scanner"),
+                ):
                     with ui.button(color=None, on_click=lambda panel=panel: toggle_right_panel(panel)).props(
                         "flat dense"
                     ).classes("right-bar-btn").tooltip(tooltip) as bar_button:
@@ -2916,11 +2940,12 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
     with ui.dialog() as indicator_settings_dialog, ui.card().classes("tv-settings"):
         settings_title = settings_header(indicator_settings_dialog)
         ui.label("Inputs").classes("tv-settings-section")
-        settings_params_container = ui.column().classes("indicator-dialog-params w-full")
-        ui.label("Style").classes("tv-settings-section")
-        with ui.row().classes("tv-settings-row"):
-            ui.label("Barva").classes("tv-settings-label")
-            settings_color = ColorButton(indicator_color({}, 0), title="Barva indikátoru")
+        settings_form = ParamForm(ui.column().classes("indicator-dialog-params w-full"))
+        with ui.column().classes("w-full") as settings_style:
+            ui.label("Style").classes("tv-settings-section")
+            with ui.row().classes("tv-settings-row"):
+                ui.label("Barva").classes("tv-settings-label")
+                settings_color = ColorButton(indicator_color({}, 0), title="Barva indikátoru")
         with ui.row().classes("tv-settings-actions w-full"):
             indicator_templates = TemplateMenu(
                 cache,
@@ -3196,10 +3221,26 @@ async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
     alert_engine.add_listener(on_alert_event)
     ui.timer(0.3, refresh_alerts_ui, once=True)
 
+    def on_scanner_event(event: dict) -> None:
+        # Nový výsledek scanneru překreslí tabulku jen v zobrazené záložce Scanner;
+        # začátek průchodu mění jen informační řádek
+        if state["right_panel"] != "scanner":
+            return
+        if event.get("running"):
+            with page_root:
+                scanner_panel.update_info()
+        else:
+            background_tasks.create(scanner_panel.render())
+
+    scanner.add_listener(on_scanner_event)
+    if state["right_panel"] == "scanner":
+        ui.timer(0.3, scanner_panel.render, once=True)
+
     def on_disconnect() -> None:
-        # Při odpojení klienta ukončíme živé streamy jeho grafů a odhlásíme ho od alertů
+        # Při odpojení klienta ukončíme živé streamy jeho grafů a odhlásíme ho od alertů a scanneru
         for pane in panes:
             pane.close()
         alert_engine.remove_listener(on_alert_event)
+        scanner.remove_listener(on_scanner_event)
 
     context.client.on_disconnect(on_disconnect)
