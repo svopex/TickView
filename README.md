@@ -258,7 +258,12 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   přepne graf, dvojklik alert upraví, při najetí jsou tlačítka spustit /
   pozastavit, upravit, smazat a ⋯, pravý klik otevře stejnou nabídku
   (Upravit…, Klonovat…, Pozastavit / Spustit znovu, Zobrazit v grafu,
-  Smazat). Log spuštění ukazuje výsledek odeslání (✓ / ✗ Telegram, webhook;
+  Test alertu, Smazat); nabídka zůstane otevřená i po přejetí myší mimo
+  řádek. Test alertu hned pošle zapnuté notifikace alertu – webhook se
+  zprávou jako při skutečném spuštění, Telegram s označením „🧪 TEST“, toast
+  a zvuk jen v aktuální stránce ({{close}} = poslední cena grafu se symbolem
+  alertu, {{signal}} / {{message}} zkušební texty); stav alertu ani log se
+  nemění a výsledek odeslání (✓ / ✗ s chybou) ukáže notifikace. Log spuštění ukazuje výsledek odeslání (✓ / ✗ Telegram, webhook;
   chyba v tooltipu); nepřečtený záznam má modrý proužek vlevo a klik na řádek
   ho označí jako přečtený (sníží počet u přepínače Log i v bublině tlačítka
   Alerty na pravé liště, která ukazuje počet nepřečtených záznamů logu). Aktivní cenové alerty

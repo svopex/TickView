@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tests import STATIC_CSS
 from tickview.logic.cache import KlineCache
 from tickview.logic.indicator_templates import (
     delete_indicator_template,
@@ -28,8 +29,6 @@ from tickview.logic.styles import (
     normalize_visibility,
     timeframe_unit,
 )
-
-STATIC_CSS = Path(__file__).resolve().parent.parent / "tickview" / "ui" / "static" / "style.css"
 
 
 class LayoutTest(unittest.TestCase):

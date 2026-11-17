@@ -1800,7 +1800,11 @@
   cursor: pointer;
 }
 
-.alert-row:hover {
+/* Otevřená nabídka ⋯ (Quasar dá kotvě aria-expanded="true") drží zvýraznění
+   řádku i jeho akce, i když myš řádek opustí a přejede do nabídky; jinak by
+   skrytá kotva nabídku zavřela */
+.alert-row:hover,
+.alert-row:has([aria-expanded="true"]) {
   background: rgba(128, 128, 128, 0.14);
 }
 
@@ -1869,7 +1873,8 @@
   border-radius: 4px;
 }
 
-.alert-row:hover .alert-actions {
+.alert-row:hover .alert-actions,
+.alert-actions:has([aria-expanded="true"]) {
   display: flex;
 }
 

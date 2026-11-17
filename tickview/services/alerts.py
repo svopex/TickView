@@ -445,19 +445,48 @@ class AlertEngine(Listeners):
         self._emit(event)
         await self._deliver({"notify": notify}, event)
 
-    async def send_notifications(self, notify: dict, event: dict) -> list[dict]:
+    def render_test_message(self, alert: dict, price: Optional[float] = None) -> str:
+        """Zpráva alertu pro test z nabídky (zástupné texty doplněné).
+
+        Parametry:
+            alert: testovaný alert.
+            price: cena pro {{close}} (None = prázdné, např. symbol není v žádném grafu).
+        """
+        # Zástupné texty signálu a zprávy scanneru dostanou zkušební hodnoty,
+        # aby zpráva typu {{message}} nebyla prázdná
+        context = message_context(alert, price, self._exchange_name(alert), utc_now_ms(),
+                                  signal="TEST", message="Test alertu")
+        return render_message(alert["message"], context)
+
+    async def send_test(self, alert: dict, message: str, price: Optional[float] = None) -> list[dict]:
+        """Zkušební odeslání Telegramu a webhooku alertu; vrátí výsledky [{"channel", "ok", "error"}].
+
+        Stav alertu, log ani ostatní stránky se nemění (toast a zvuk řeší
+        stránka, která test vyvolala). Webhook dostane zprávu přesně jako při
+        skutečném spuštění, Telegram ji označí jako test.
+
+        Parametry:
+            alert: testovaný alert (aktivní i pozastavený).
+            message: zpráva z render_test_message.
+            price: cena do zprávy Telegramu (None = bez ceny).
+        """
+        event = {"symbol": alert["symbol"], "timeframe": alert["timeframe"], "price": price, "message": message}
+        return await self.send_notifications(alert["notify"], event, telegram_prefix="🧪 TEST: ")
+
+    async def send_notifications(self, notify: dict, event: dict, telegram_prefix: str = "⏰ ") -> list[dict]:
         """Pošle Telegram a webhook podle nastavení alertu; vrátí výsledky [{"channel", "ok", "error"}].
 
         Parametry:
             notify: nastavení notifikací alertu ({"telegram", "webhook", …}).
             event: událost spuštění ({"message", "symbol", "timeframe", "price", …}).
+            telegram_prefix: začátek zprávy Telegramu (test ji označí jako zkušební).
         """
         jobs: list[tuple[str, object]] = []
         delivery: list[dict] = []
         if notify.get("telegram"):
             token, chat_id = telegram_settings()
             if token and chat_id:
-                text = f"⏰ {event['message']}\n{event['symbol']} · {event['timeframe']}"
+                text = f"{telegram_prefix}{event['message']}\n{event['symbol']} · {event['timeframe']}"
                 if event.get("price") is not None:
                     text += f" · {event['price']:g}"
                 jobs.append(("telegram", send_telegram(self._client, token, chat_id, text)))

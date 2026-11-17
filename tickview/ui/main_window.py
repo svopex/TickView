@@ -2400,6 +2400,63 @@ async def _build_index(
         await cache.set_alert_state(alert["id"], active, "active" if active else "paused")
         await alert_engine.reload()
 
+    def show_alert_popup(message: str, toast: bool, sound: bool, icon: str = "⏰") -> None:
+        """Toast a zvuk spuštěného (nebo testovaného) alertu v této stránce.
+
+        Parametry:
+            message: hotová zpráva alertu.
+            toast, sound: zda ukázat toast / přehrát zvuk (nastavení alertu).
+            icon: značka před zprávou (⏰ spuštění, 🧪 test).
+        """
+        # Volá se i z úlohy na pozadí nebo po zániku nabídky – UI do kořene stránky
+        with page_root:
+            if toast:
+                ui.notify(
+                    f"{icon} {message}",
+                    type="warning",
+                    position="top-right",
+                    close_button="OK",
+                    timeout=20000,
+                    multi_line=True,
+                )
+            if sound and panes:
+                active().chart.play_sound()
+
+    async def test_alert(alert: dict) -> None:
+        """Test alertu z nabídky: toast a zvuk hned, pak odeslání Telegramu a webhooku.
+
+        Stav alertu ani log se nemění; výsledek odeslání ohlásí notifikace.
+
+        Parametry:
+            alert: testovaný alert.
+        """
+        # Cena pro {{close}}: poslední svíčka grafu, který symbol alertu zobrazuje
+        price = None
+        for pane in panes:
+            if pane.candles and (pane.provider_id, pane.symbol) == (alert["source"], alert["symbol"]):
+                price = pane.candles[-1].close
+                break
+        message = alert_engine.render_test_message(alert, price)
+        show_alert_popup(message, alert["notify"].get("toast"), alert["notify"].get("sound"), icon="🧪")
+        delivery = await alert_engine.send_test(alert, message, price)
+        # Souhrn odeslání ve formátu logu (✓ / ✗ kanál, u chyby její text);
+        # bez Telegramu i webhooku jen upozornění, že není co posílat ven
+        with page_root:
+            if not delivery:
+                ui.notify("Test alertu: Telegram ani webhook nejsou zapnuté.", type="info")
+                return
+            all_ok = all(item["ok"] for item in delivery)
+            parts = [
+                f"✓ {item['channel']}" if item["ok"] else f"✗ {item['channel']}: {item['error']}"
+                for item in delivery
+            ]
+            ui.notify(
+                "Test alertu: " + ", ".join(parts),
+                type="positive" if all_ok else "negative",
+                multi_line=True,
+                timeout=5000 if all_ok else 15000,
+            )
+
     async def delete_alert(alert: dict) -> None:
         await cache.delete_alert(alert["id"])
         await alert_engine.reload()
@@ -2439,7 +2496,8 @@ async def _build_index(
         """Handler akce u alertu (řádek, tlačítka při najetí, nabídka ⋯ a pravý klik).
 
         Parametry:
-            action: edit, clone, pause, resume, delete nebo show (přepnout graf na symbol).
+            action: edit, clone, pause, resume, test (zkušební odeslání notifikací),
+                delete nebo show (přepnout graf na symbol).
             alert: alert, kterého se akce týká.
         """
 
@@ -2452,6 +2510,8 @@ async def _build_index(
                 await set_alert_active(alert, False)
             elif action == "resume":
                 await set_alert_active(alert, True)
+            elif action == "test":
+                await test_alert(alert)
             elif action == "delete":
                 await delete_alert(alert)
             elif action == "show":
@@ -2468,6 +2528,7 @@ async def _build_index(
         else:
             ui.menu_item("Spustit znovu", on_click=make_alert_action("resume", alert))
         ui.menu_item("Zobrazit v grafu", on_click=make_alert_action("show", alert))
+        ui.menu_item("Test alertu", on_click=make_alert_action("test", alert))
         ui.separator()
         ui.menu_item("Smazat", on_click=make_alert_action("delete", alert)).classes("wl-danger")
 
@@ -2693,18 +2754,7 @@ async def _build_index(
             background_tasks.create(render_alert_log())
             return
         if event_type in ("fired", "notification"):
-            with page_root:
-                if event.get("toast"):
-                    ui.notify(
-                        f"⏰ {event['message']}",
-                        type="warning",
-                        position="top-right",
-                        close_button="OK",
-                        timeout=20000,
-                        multi_line=True,
-                    )
-                if event.get("sound") and panes:
-                    active().chart.play_sound()
+            show_alert_popup(event["message"], event.get("toast"), event.get("sound"))
             # Log obnoví následná událost log_changed; notifikace scanneru
             # a připomínek seznam alertů nemění
             if event_type == "fired":

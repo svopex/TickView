@@ -5,9 +5,11 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 
+from tests import STATIC_CSS
 from tickview.logic.alerts import (
     AlertTracker,
     condition_met,
@@ -138,6 +140,17 @@ class AlertLogicTest(unittest.TestCase):
         self.assertEqual(filter_alerts(alerts, "neexistuje"), [])
 
 
+class AlertPanelCssTest(unittest.TestCase):
+    """Styly řádku alertu v pravém panelu."""
+
+    def test_open_menu_keeps_row_actions_visible(self) -> None:
+        # Akce řádku (s kotvou nabídky ⋯) jsou vidět jen při najetí na řádek;
+        # nabídka leží mimo řádek, takže bez pravidla pro otevřenou nabídku
+        # (aria-expanded="true" na kotvě) by kotva při přejezdu myši zmizela
+        # a s ní i nabídka – do nabídky by se nedalo vjet
+        self.assertIn('.alert-actions:has([aria-expanded="true"])', STATIC_CSS.read_text())
+
+
 class PositionStyleTest(unittest.TestCase):
     """Parametry a ceny pozice Long / Short."""
 
@@ -208,10 +221,17 @@ class AlertEngineTest(unittest.IsolatedAsyncioTestCase):
         self.cache = KlineCache(Path(self.tmp.name) / "test.db")
         await self.cache.init()
         self.provider = FakeStreamProvider()
-        self.client = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200)))
+        # Falešný HTTP transport si pamatuje odeslané požadavky (Telegram, webhook)
+        self.requests: list[httpx.Request] = []
+        self.client = httpx.AsyncClient(transport=httpx.MockTransport(self.record_request))
         self.engine = AlertEngine(self.cache, provider_lookup=lambda _id: self.provider, client=self.client)
         self.events: list[dict] = []
         self.engine.add_listener(self.events.append)
+
+    def record_request(self, request: httpx.Request) -> httpx.Response:
+        """Odpověď falešného HTTP transportu; požadavek si uloží do self.requests."""
+        self.requests.append(request)
+        return httpx.Response(200, json={"ok": True})
 
     async def asyncTearDown(self) -> None:
         await self.engine.stop()
@@ -242,6 +262,32 @@ class AlertEngineTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((alert["status"], alert["fire_count"]), ("triggered", 1))
         log = await self.cache.alert_log()
         self.assertEqual(log[0]["delivery"], [{"channel": "webhook", "ok": True, "error": ""}])
+
+    async def test_test_alert_sends_without_changing_state(self) -> None:
+        # Test alertu z nabídky: webhook dostane zprávu jako při spuštění,
+        # Telegram ji označí jako test; stav alertu, log ani stránky se nemění
+        notify = {"telegram": True, "toast": True, "sound": False, "webhook": "https://example.test/hook"}
+        alert_id = await self.cache.save_alert(alert_spec(message="{{ticker}} {{close}} {{message}}", notify=notify))
+        alert = await self.cache.get_alert(alert_id)
+        message = self.engine.render_test_message(alert, 10.5)
+        self.assertEqual(message, "X 10.5 Test alertu")
+        with patch("tickview.services.alerts.telegram_settings", return_value=("TOKEN", "42")):
+            delivery = await self.engine.send_test(alert, message, 10.5)
+        self.assertEqual({item["channel"]: item["ok"] for item in delivery}, {"telegram": True, "webhook": True})
+        telegram = next(r for r in self.requests if "sendMessage" in r.url.path)
+        self.assertTrue(json.loads(telegram.content)["text"].startswith("🧪 TEST: X 10.5"))
+        webhook = next(r for r in self.requests if r.url.host == "example.test")
+        self.assertEqual(webhook.content.decode(), "X 10.5 Test alertu")
+        self.assertEqual(self.events, [])
+        self.assertEqual(await self.cache.alert_log(), [])
+        self.assertEqual((await self.cache.get_alert(alert_id))["fire_count"], 0)
+
+    async def test_test_alert_without_external_channels(self) -> None:
+        # Bez Telegramu i webhooku se nic neodesílá (toast a zvuk řeší stránka)
+        alert = alert_spec(notify={"telegram": False, "toast": True, "sound": True, "webhook": ""})
+        self.assertEqual(self.engine.render_test_message(alert), "X, 1m Crossing 10")
+        self.assertEqual(await self.engine.send_test(alert, "zpráva"), [])
+        self.assertEqual(self.requests, [])
 
     async def test_alert_log_seen(self) -> None:
         # Nový záznam logu je nepřečtený, klik na řádek ho označí jako přečtený
