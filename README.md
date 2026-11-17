@@ -422,7 +422,11 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   grafu“ dokončí další svíčku aktivního grafu, „1 bar základu“ jednu
   základní svíčku), rychlost 1×–100× (základních svíček za sekundu), skok
   na datum a čas (vpřed se obchody vyhodnotí svíčku po svíčce, dřív = krok
-  zpět), čas replaye, Buy / Sell, zůstatek, equity a Open P&L, panel
+  zpět), skok na čas dne (pole s časem, výchozí 9:00, ukládá se do session;
+  tlačítko ☀ posune replay těsně před nejbližší svíčku toho času – čas replaye
+  = 9:00 – a každý další klik na další den; dny bez dat se přeskočí,
+  víkendové otevření forexu v neděli večer také, a když trh otevírá později,
+  skok skončí před první svíčkou dne), čas replaye, Buy / Sell, zůstatek, equity a Open P&L, panel
   obchodů, nastavení session (změna nákladů či účtu přepočítá celou
   session) a ukončení replaye (session zůstane uložená i s kurzorem).
   Příkazy: Market, Limit a Stop (buy stop / sell stop), SL a TP v cenách,

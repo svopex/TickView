@@ -7,7 +7,6 @@ odesílání řeší tickview/services/reminders.py.
 """
 
 import json
-import re
 import uuid
 from datetime import datetime
 from typing import Optional
@@ -15,6 +14,7 @@ from zoneinfo import ZoneInfo
 
 from tickview.indicators.api import Param
 from tickview.logic.alerts import DEFAULT_NOTIFY, MAX_MESSAGE_LENGTH, normalize_notify
+from tickview.logic.sessions import parse_hhmm
 
 # Klíč nastavení se seznamem připomínek (JSON)
 REMINDERS_SETTINGS_KEY = "reminders"
@@ -35,18 +35,6 @@ DEFAULT_REMINDER: dict = {
 
 # Rozestup upozornění v minutách
 _INTERVAL = Param.int("interval", DEFAULT_REMINDER["interval"], "Rozestup (minuty)", min=1, max=240)
-
-# Čas ve tvaru HH:MM (hodiny 0–23, minuty 00–59)
-_HHMM = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
-
-
-def parse_hhmm(text) -> Optional[int]:
-    """Čas "HH:MM" na minuty od půlnoci; neplatný tvar = None."""
-    match = _HHMM.match(str(text or "").strip())
-    if not match:
-        return None
-    return int(match.group(1)) * 60 + int(match.group(2))
-
 
 def normalize_reminder(data) -> dict:
     """Zkontroluje připomínku z dialogu; chyba vyhodí ValueError s českou zprávou."""

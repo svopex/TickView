@@ -30,6 +30,7 @@ from tickview.logic.replay import (
     order_dict,
     plan_conversion,
     simulate,
+    time_of_day_stopper,
     trade_dict,
     trade_stats,
 )
@@ -537,13 +538,32 @@ class ReplayController:
             1_000_000, stop=lambda bar: bucket_start(bar.open_time, anchor, step_ms) != target, honor_pause=False
         )
 
-    async def jump(self, time_ms: int) -> None:
-        """Skok vpřed na čas time_ms (otevřené obchody se vyhodnotí svíčku po svíčce)."""
-        if not self.active or time_ms <= self.cursor:
-            return
+    async def _skip_until(self, stop: Callable[[Candle], bool], label: str = "") -> None:
+        """Skok vpřed až po svíčku, pro kterou platí stop (obchody se vyhodnotí svíčku po svíčce)."""
         self.pause()
-        self.on_status("Přeskakuji…", False)
-        await self.advance(10_000_000, stop=lambda bar: bar.open_time > time_ms, honor_pause=False)
+        self.on_status(f"Přeskakuji{label}…", False)
+        await self.advance(10_000_000, stop=stop, honor_pause=False)
+
+    async def jump(self, time_ms: int) -> None:
+        """Skok vpřed na čas time_ms."""
+        if self.active and time_ms > self.cursor:
+            await self._skip_until(lambda bar: bar.open_time > time_ms)
+
+    async def jump_to_time_of_day(self, time_of_day: str) -> None:
+        """Skok vpřed na nejbližší čas dne `time_of_day` („HH:MM“, místní čas).
+
+        Replay skončí těsně před svíčkou tohoto času (čas replaye = např. 9:00),
+        dny bez dat (víkend, svátek) se přeskočí – viz time_of_day_stopper.
+        """
+        if self.active:
+            stopper = time_of_day_stopper(self.now_ms, time_of_day)
+            await self._skip_until(lambda bar: stopper(bar.open_time), f" na {time_of_day}")
+
+    async def set_jump_time(self, time_of_day: str) -> None:
+        """Uloží čas dne pro skok na další den (jen nastavení, bez přepočtu session)."""
+        if self.active and time_of_day != self.settings.get("jump_time"):
+            self.settings["jump_time"] = time_of_day
+            await self.cache.update_replay_session(self.session_id, settings=self.settings)
 
     def trades_after(self, time_ms: int) -> int:
         """Kolik příkazů / obchodů vzniklo po čase time_ms (krok zpět je smaže)."""

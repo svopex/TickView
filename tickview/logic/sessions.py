@@ -6,6 +6,7 @@ rozšířené hodiny posílají (IBKR, Alpaca), stahují vždy ETH data; RTH se
 z nich vybírá filtrem (cache tak drží jednu sadu dat pro obě seance).
 """
 
+import re
 from datetime import datetime, time, timedelta, timezone
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -15,6 +16,8 @@ from tickview.providers.base import TIMEFRAME_MS, Candle
 # Hodnoty nastavení seance
 SESSION_RTH = "rth"
 SESSION_ETH = "eth"
+# Čas ve tvaru HH:MM (hodiny 0–23, minuty 00–59), volitelně s vteřinami (pole type=time)
+_HHMM = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?$")
 
 # Časová pásma nabídky (jako v TradingView): IANA název -> město
 TIMEZONE_CITIES = [
@@ -102,6 +105,14 @@ TIMEZONE_CITIES = [
     ("Pacific/Auckland", "Auckland"),
     ("Pacific/Chatham", "Chatham Islands"),
 ]
+
+
+def parse_hhmm(text) -> Optional[int]:
+    """Čas "HH:MM" na minuty od půlnoci; neplatný tvar = None."""
+    match = _HHMM.match(str(text or "").strip())
+    if not match:
+        return None
+    return int(match.group(1)) * 60 + int(match.group(2))
 
 
 def utc_offset_label(tz_name: str, now: Optional[datetime] = None) -> str:

@@ -14,8 +14,11 @@ a od další svíčky se vyhodnocuje.
 import bisect
 import math
 from dataclasses import asdict, dataclass, field
+from datetime import date, datetime, timedelta
+from datetime import time as dt_time
 from typing import Callable, Optional
 
+from tickview.logic.sessions import parse_hhmm
 from tickview.logic.styles import clean_name
 from tickview.providers.base import TIMEFRAME_MS, Candle
 
@@ -67,6 +70,8 @@ DEFAULT_SETTINGS = {
     "pause_on_fill": False,
     "pause_on_exit": False,
     "pause_on_signal": False,
+    # Čas dne pro skok „na další den“ (místní čas, HH:MM) – např. začátek obchodování
+    "jump_time": "09:00",
 }
 
 
@@ -122,7 +127,61 @@ def normalize_settings(data, kind: str = "", contract_size: Optional[float] = No
     for key in ("pause_on_fill", "pause_on_exit", "pause_on_signal"):
         if key in data:
             settings[key] = bool(data[key])
+    settings["jump_time"] = clean_time_of_day(data.get("jump_time")) or settings["jump_time"]
     return settings
+
+
+def clean_time_of_day(text) -> Optional[str]:
+    """Čas dne „H:MM“ / „HH:MM“ (i s vteřinami z pole type=time) → „HH:MM“; neplatný = None."""
+    minutes = parse_hhmm(text)
+    return None if minutes is None else f"{minutes // 60:02d}:{minutes % 60:02d}"
+
+
+def time_of_day_stopper(after_ms: int, time_of_day: str) -> Callable[[int], bool]:
+    """Podmínka zastavení skoku na nejbližší místní čas dne `time_of_day` („HH:MM“).
+
+    Cílem je nejbližší výskyt času ostře po `after_ms` (replay přesně na tomto
+    čase skočí na další den). Svíčky před cílem se odkrývají. Když další svíčka
+    padne do dne cíle (v cíli nebo po něm – trh otevírá později), skok končí
+    před ní. Když cílový den nemá data (víkend, svátek), cíl se přesune na
+    stejný čas dne svíčky; víkendový den po mezeře v datech (forex otevírá
+    v neděli večer) se přeskočí na pondělí.
+
+    Parametry:
+        after_ms: aktuální čas replaye (ms UTC).
+        time_of_day: čas dne „HH:MM“ (místní čas).
+    Vrací funkci (otevření další svíčky v ms) → True = tu už neodkrývat.
+    """
+    minutes = parse_hhmm(time_of_day)
+    at = dt_time(minutes // 60, minutes % 60)
+
+    def target_on(day: date) -> int:
+        # Čas dne v místním dni → ms UTC
+        return int(datetime.combine(day, at).timestamp() * 1000)
+
+    today = datetime.fromtimestamp(after_ms / 1000).date()
+    target = target_on(today)
+    if target <= after_ms:
+        target = target_on(today + timedelta(days=1))
+
+    def stop(bar_ms: int) -> bool:
+        nonlocal target
+        if bar_ms < target:
+            return False
+        bar_day = datetime.fromtimestamp(bar_ms / 1000).date()
+        if bar_day == datetime.fromtimestamp(target / 1000).date():
+            return True
+        # Cílový den bez dat: cíl se posune na den svíčky
+        target = target_on(bar_day)
+        if bar_ms < target:
+            return False
+        if bar_day.weekday() >= 5:
+            # Víkendová svíčka po mezeře (nedělní otevření forexu) – cílem je pondělí
+            target = target_on(bar_day + timedelta(days=7 - bar_day.weekday()))
+            return False
+        return True
+
+    return stop
 
 
 def clean_session_name(name, fallback: str) -> str:

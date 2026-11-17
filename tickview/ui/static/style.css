@@ -2549,6 +2549,13 @@
   flex-shrink: 0;
 }
 
+/* Pole času dne pro skok na další den (lišta replaye) */
+.replay-day-time {
+  width: 72px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
 .replay-time {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;

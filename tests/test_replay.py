@@ -2,6 +2,7 @@
 
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 
 from tickview.logic.cache import KlineCache, replay_drawing_source
@@ -9,6 +10,7 @@ from tickview.logic.replay import (
     CurrencyConversion,
     ReplayEngine,
     bucket_start,
+    clean_time_of_day,
     commands_until,
     equity_curve,
     merge_into,
@@ -17,6 +19,7 @@ from tickview.logic.replay import (
     position_size,
     round_to_step,
     simulate,
+    time_of_day_stopper,
     trade_stats,
     trades_csv,
 )
@@ -264,6 +267,57 @@ class SessionStorageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await cache.load_drawings("binance", "BTCUSDT"), [])
         await cache.delete_replay_session(first)
         self.assertEqual(await cache.load_drawings(replay_drawing_source(first), "BTCUSDT"), [])
+
+
+def local_ms(*parts: int) -> int:
+    """Místní datum a čas (rok, měsíc, den, hodina, minuta) → ms UTC."""
+    return int(datetime(*parts).timestamp() * 1000)
+
+
+def run_jump(start_ms: int, bars: list[int], time_of_day: str) -> int | None:
+    """Skok na čas dne nad svíčkami (ms): otevření svíčky, před kterou skončí (None = konec dat)."""
+    stop = time_of_day_stopper(start_ms, time_of_day)
+    return next((bar_ms for bar_ms in bars if bar_ms > start_ms and stop(bar_ms)), None)
+
+
+def hourly(start: tuple, end: tuple) -> list[int]:
+    """Hodinové svíčky (ms) od start do end včetně (místní čas)."""
+    first, last = local_ms(*start), local_ms(*end)
+    return list(range(first, last + 1, 60 * MINUTE))
+
+
+class TimeOfDayJumpTests(unittest.TestCase):
+    def test_clean_time_of_day(self):
+        # Pole type=time vrací HH:MM (příp. s vteřinami); neplatný čas = None
+        self.assertEqual(clean_time_of_day("9:00"), "09:00")
+        self.assertEqual(clean_time_of_day("09:30:00"), "09:30")
+        self.assertIsNone(clean_time_of_day("24:00"))
+        self.assertIsNone(clean_time_of_day(""))
+        self.assertEqual(normalize_settings({})["jump_time"], "09:00")
+        self.assertEqual(normalize_settings({"jump_time": "x"})["jump_time"], "09:00")
+
+    def test_today_or_next_day(self):
+        # Před 9:00 = dnes, v 9:00 a po ní = zítra
+        bars = hourly((2024, 3, 5, 0, 0), (2024, 3, 6, 23, 0))
+        self.assertEqual(run_jump(local_ms(2024, 3, 5, 7, 0), bars, "09:00"), local_ms(2024, 3, 5, 9, 0))
+        self.assertEqual(run_jump(local_ms(2024, 3, 5, 9, 0), bars, "09:00"), local_ms(2024, 3, 6, 9, 0))
+
+    def test_jump_next_day(self):
+        # Krypto 24/7: skok končí před svíčkou 9:00 dalšího dne (i o víkendu)
+        bars = hourly((2024, 3, 8, 0, 0), (2024, 3, 11, 23, 0))
+        self.assertEqual(run_jump(local_ms(2024, 3, 8, 12, 0), bars, "09:00"), local_ms(2024, 3, 9, 9, 0))
+
+    def test_forex_weekend_skips_to_monday(self):
+        # Forex: pátek do 22:00, neděle od 23:00 – skok z pátku jde na pondělí 9:00
+        bars = hourly((2024, 3, 8, 0, 0), (2024, 3, 8, 22, 0)) + hourly((2024, 3, 10, 23, 0), (2024, 3, 11, 23, 0))
+        self.assertEqual(run_jump(local_ms(2024, 3, 8, 12, 0), bars, "09:00"), local_ms(2024, 3, 11, 9, 0))
+
+    def test_late_open_stops_at_first_bar(self):
+        # Akcie otevírají až 15:30: skok na 9:00 skončí před první svíčkou dne (i po víkendu)
+        friday = hourly((2024, 3, 8, 15, 30), (2024, 3, 8, 21, 30))
+        monday = hourly((2024, 3, 11, 15, 30), (2024, 3, 11, 21, 30))
+        self.assertEqual(run_jump(local_ms(2024, 3, 8, 16, 30), friday + monday, "09:00"), local_ms(2024, 3, 11, 15, 30))
+        self.assertIsNone(run_jump(local_ms(2024, 3, 11, 16, 30), friday + monday, "09:00"))
 
 if __name__ == "__main__":
     unittest.main()

@@ -29,6 +29,7 @@ from tickview.logic.replay import (
     SPEEDS,
     STEP_UNITS,
     clean_session_name,
+    clean_time_of_day,
     normalize_settings,
     position_size,
     positive_number,
@@ -300,6 +301,13 @@ class ReplayUI:
             ui.button(icon="event", color=None, on_click=self.open_jump).props("flat dense").classes(
                 "replay-btn"
             ).tooltip("Skok na datum a čas")
+            # Skok na čas dne (např. začátek obchodování) – každý klik = další den
+            self.day_time_input = ui.input(on_change=self._on_jump_time_change).props(
+                "dense borderless type=time").classes("replay-day-time").tooltip(
+                "Čas dne pro skok na další den (místní čas)")
+            ui.button(icon="wb_sunny", color=None, on_click=self.jump_to_day_time).props("flat dense").classes(
+                "replay-btn"
+            ).tooltip("Skok na nejbližší zvolený čas dne (další klik = další den, víkendy a dny bez dat se přeskočí)")
             self.time_label = ui.label("").classes("replay-time")
             ui.separator().props("vertical").classes("replay-sep")
             ui.button("Buy", color=None, on_click=lambda: self.open_order("buy")).props("unelevated dense no-caps").classes(
@@ -420,6 +428,10 @@ class ReplayUI:
             self.unit_select.value = controller.step_unit
         if self.speed_select.value != controller.speed:
             self.speed_select.value = controller.speed
+        # Čas skoku podle session (po otevření jiné session), ne během psaní do pole
+        jump_time = controller.settings.get("jump_time")
+        if clean_time_of_day(self.day_time_input.value) != jump_time:
+            self.day_time_input.value = jump_time
 
     def toggle_panel(self) -> None:
         """Zobrazí / skryje panel obchodů."""
@@ -915,6 +927,20 @@ class ReplayUI:
             await self.controller.jump(target)
         elif target < self.controller.cursor:
             await self.request_rewind(target)
+
+    async def _on_jump_time_change(self, event) -> None:
+        """Uloží platný čas dne pro skok do nastavení session."""
+        time_of_day = clean_time_of_day(event.value)
+        if time_of_day:
+            await self.controller.set_jump_time(time_of_day)
+
+    async def jump_to_day_time(self) -> None:
+        """Skok vpřed na nejbližší čas dne z pole v liště (další klik = další den)."""
+        time_of_day = clean_time_of_day(self.day_time_input.value)
+        if time_of_day is None:
+            ui.notify("Zadejte čas dne (HH:MM).", type="warning")
+            return
+        await self.controller.jump_to_time_of_day(time_of_day)
 
     # ---------- nastavení session ----------
 
