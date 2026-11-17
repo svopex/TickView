@@ -239,6 +239,10 @@ class IbkrProvider(DataProvider):
         # Popisek návrhu forexového páru: "EUR.USD – Euro / Americký dolar (Forex)"
         return f"{pair} – {forex_name(*pair.split('.'))} (Forex)"
 
+    def _forex_info(self, pair: str) -> SymbolInfo:
+        # Návrh forexového páru pro vyhledávání (trh IDEALPRO)
+        return SymbolInfo(self.id, pair, self._forex_label(pair), forex_name(*pair.split(".")), "forex", "IDEALPRO")
+
     async def describe(self, symbol: str) -> dict:
         """Název a burza pro nadpis grafu (forex lokálně, akcie z contract details TWS)."""
         if parts := forex_parts(symbol):
@@ -295,10 +299,8 @@ class IbkrProvider(DataProvider):
         if not q:
             # Prázdný dotaz: oblíbené tickery pro rychlý start
             popular = ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "SPY"]
-            return [SymbolInfo(self.id, symbol, symbol) for symbol in popular]
-        results: list[SymbolInfo] = [
-            SymbolInfo(self.id, pair, self._forex_label(pair)) for pair in forex_suggestions(q)
-        ]
+            return [SymbolInfo(self.id, symbol, symbol, kind="stock") for symbol in popular]
+        results: list[SymbolInfo] = [self._forex_info(pair) for pair in forex_suggestions(q)]
         try:
             ib = await self._ensure_connected()
             await self._limiter.acquire()
@@ -320,7 +322,7 @@ class IbkrProvider(DataProvider):
                 pair = f"{contract.symbol}.{contract.currency}"
                 if forex_parts(pair) and pair not in seen:
                     seen.add(pair)
-                    results.append(SymbolInfo(self.id, pair, self._forex_label(pair)))
+                    results.append(self._forex_info(pair))
                 continue
             # Jinak jen akcie/ETF; duplicity napříč burzami sloučíme podle symbolu
             if sec_type != "STK":
@@ -329,9 +331,11 @@ class IbkrProvider(DataProvider):
             if not symbol or symbol in seen:
                 continue
             seen.add(symbol)
-            long_name = getattr(contract, "longName", "") or ""
+            # Název firmy: novější TWS ho posílá v description, starší v longName
+            long_name = getattr(contract, "description", "") or getattr(contract, "longName", "") or ""
             label = f"{symbol} – {long_name}" if long_name else symbol
-            results.append(SymbolInfo(self.id, symbol, label))
+            exchange = getattr(contract, "primaryExchange", "") or getattr(contract, "exchange", "") or ""
+            results.append(SymbolInfo(self.id, symbol, label, long_name, "stock", exchange))
             if len(results) >= min(limit, 12):
                 break
         return results

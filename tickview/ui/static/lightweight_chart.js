@@ -37,6 +37,8 @@ window.TickViewChart = (function () {
   const pendingToolGroups = new Map();
   // SVG piktogramy nástrojů (název -> SVG z icons.py); společné všem grafům
   let toolIcons = {};
+  // Druhy kreseb, na které lze nastavit alert (posílá Python z logic/alerts.py)
+  let alertLineKinds = [];
 
   // Neviditelná barva (vypnuté tělo svíčky)
   const TRANSPARENT = 'rgba(0, 0, 0, 0)';
@@ -202,6 +204,9 @@ window.TickViewChart = (function () {
     const kind = CHART_TYPE_SERIES[s.chartType] || 'Candlestick';
     s.candleSeries = s.chart['add' + kind + 'Series'](mainSeriesOptions(s));
     s.candleSeries.setData(mainData(s));
+    // Čáry alertů patřily odstraněné sérii – na nové je vytvoříme znovu
+    s.alertPriceLines = [];
+    applyAlertLines(s);
   }
 
   // Barva objemového sloupce podle směru svíčky (poloprůhledná)
@@ -235,6 +240,22 @@ window.TickViewChart = (function () {
       numberFormats.set(digits, new Intl.NumberFormat('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits }));
     }
     return numberFormats.get(digits).format(value);
+  }
+
+  // Nejmenší krok ceny instrumentu (tick) podle přesnosti dat: 0.01, 0.00001…
+  function priceTick(s) {
+    return 1 / Math.pow(10, s.priceDecimals || 2);
+  }
+
+  // Zaokrouhlí cenu na přesnost instrumentu (alert z menu, nová pozice)
+  function roundPrice(s, price) {
+    const factor = Math.pow(10, s.priceDecimals || 2);
+    return Math.round(price * factor) / factor;
+  }
+
+  // Počet ticků cenového rozdílu (měřič, štítky pozice)
+  function priceTicks(s, diff) {
+    return Math.round(diff / priceTick(s));
   }
 
   // Cena instrumentu s pevným počtem desetinných míst (legenda, měřič, Fibonacci)
@@ -697,7 +718,12 @@ window.TickViewChart = (function () {
         drag: null,
         // Bod pod kurzorem při aktivním nástroji (po přichycení magnetem)
         hover: null,
+        // Pozice (Long/Short) pod kurzorem v režimu kurzoru – ukazuje štítky Target/Stop
+        hovered: null,
       },
+      // Cenové úrovně alertů aktuálního symbolu (čárkované čáry s popiskem na ose)
+      alertLines: [],
+      alertPriceLines: [],
       // Nadpis tickeru a prvky legendy (buildLegend)
       symbolInfo: null,
       legendEls: null,
@@ -859,6 +885,16 @@ window.TickViewChart = (function () {
       } else if ((event.key === 'Delete' || event.key === 'Backspace') && s.overlay.selected >= 0) {
         // Smazání označené kresby klávesou Delete
         deleteSelected(s);
+      } else if (
+        /^[a-z0-9]$/i.test(event.key) &&
+        !event.ctrlKey && !event.metaKey && !event.altKey &&
+        !document.querySelector('.q-dialog')
+      ) {
+        // Písmeno / číslice nad grafem otevře hledání symbolu s napsaným textem;
+        // znaky napsané do otevření dialogu se připojí k čekající události
+        const pending = s.finishedQueue.find((e) => e.type === 'symbol_search');
+        if (pending) pending.text += event.key.toUpperCase();
+        else s.finishedQueue.push({ type: 'symbol_search', text: event.key.toUpperCase() });
       }
     });
 
@@ -893,6 +929,17 @@ window.TickViewChart = (function () {
       },
       true
     );
+    // Najetí na pozici (Long/Short) v režimu kurzoru: štítky Target / Stop jako v TradingView
+    mainHost.addEventListener('mousemove', (event) => {
+      if (s.overlay.mode || s.overlay.drag || !s.overlay.drawings.some(isPosition)) return;
+      const { x, y } = localPoint(s, event);
+      const index = s.locked ? -1 : hitTest(s, x, y);
+      const drawing = index >= 0 && isPosition(s.overlay.drawings[index]) ? s.overlay.drawings[index] : null;
+      if (drawing !== s.overlay.hovered) {
+        s.overlay.hovered = drawing;
+        redrawOverlay(s);
+      }
+    });
     window.addEventListener('mousemove', (event) => {
       const drag = s.overlay.drag;
       if (!drag) return;
@@ -944,7 +991,7 @@ window.TickViewChart = (function () {
           showContextMenu(event.clientX, event.clientY, indicatorMenuItems(s, group));
           return;
         }
-        showContextMenu(event.clientX, event.clientY, chartMenuItems(s));
+        showContextMenu(event.clientX, event.clientY, chartMenuItems(s, s.candleSeries.coordinateToPrice(y)));
       },
       true
     );
@@ -1064,15 +1111,19 @@ window.TickViewChart = (function () {
       color: drawing.color,
       text: drawing.text || null,
       options: drawing.options || {},
+      points: drawing.points,
     });
   }
 
-  // Položky menu kresby: Settings a smazání
+
+  // Položky menu kresby: Settings, alert (u čar) a smazání
   function drawingMenuItems(s, drawing) {
-    return [
-      ['Settings…', () => requestDrawingSettings(s, drawing), 'settings'],
-      ['Smazat objekt', () => { deleteSelected(s); redrawOverlay(s); }, 'delete', 'danger'],
-    ];
+    const items = [['Settings…', () => requestDrawingSettings(s, drawing), 'settings']];
+    if (alertLineKinds.includes(drawing.kind) && drawing.id) {
+      items.push(['Přidat alert…', () => s.finishedQueue.push({ type: 'alert_request', drawingId: drawing.id, kind: drawing.kind }), 'alarm_add']);
+    }
+    items.push(['Smazat objekt', () => { deleteSelected(s); redrawOverlay(s); }, 'delete', 'danger']);
+    return items;
   }
 
   // Položky menu indikátoru: Settings, skrytí/zobrazení a odebrání
@@ -1086,9 +1137,15 @@ window.TickViewChart = (function () {
     ];
   }
 
-  // Položky menu grafu: Settings grafu (zobrazení objemu…)
-  function chartMenuItems(s) {
-    return [['Settings…', () => s.finishedQueue.push({ type: 'chart_settings' }), 'settings']];
+  // Položky menu grafu: alert na ceně pod kurzorem (když je známá) a Settings grafu
+  function chartMenuItems(s, price) {
+    const items = [];
+    if (price !== null && price !== undefined && isFinite(price) && s.candles.length) {
+      const rounded = roundPrice(s, Number(price));
+      items.push(['Přidat alert na ' + formatInstrumentPrice(s, rounded), () => s.finishedQueue.push({ type: 'alert_request', price: rounded }), 'alarm_add']);
+    }
+    items.push(['Settings…', () => s.finishedQueue.push({ type: 'chart_settings' }), 'settings']);
+    return items;
   }
 
   // Najde overlay indikátor, jehož čára vede blízko kurzoru (id skupiny / null)
@@ -1288,6 +1345,11 @@ window.TickViewChart = (function () {
   // SVG ikony nástrojů z Pythonu (posílají se jednou, i před init grafu)
   function setIcons(id, icons) {
     toolIcons = icons || {};
+  }
+
+  // Druhy kreseb s nabídkou „Přidat alert…“ (posílají se jednou, i před init grafu)
+  function setAlertKinds(id, kinds) {
+    alertLineKinds = Array.isArray(kinds) ? kinds : [];
   }
 
   // Položka flyout nabídky (ikona + popisek); klik pošle událost a zavře nabídku
@@ -2013,6 +2075,7 @@ window.TickViewChart = (function () {
     }));
     s.overlay.selected = -1;
     s.overlay.drag = null;
+    s.overlay.hovered = null;
     redrawOverlay(s);
   }
 
@@ -2059,6 +2122,8 @@ window.TickViewChart = (function () {
     drawing.color = settings.color || drawing.color;
     if (settings.text !== undefined && settings.text !== null) drawing.text = settings.text;
     drawing.options = settings.options || {};
+    // Pozice: ceny vstupu, cíle a stopu z dialogu
+    if (Array.isArray(settings.points)) drawing.points = settings.points;
     redrawOverlay(s);
   }
 
@@ -2116,6 +2181,8 @@ window.TickViewChart = (function () {
     vline: 1,
     hray: 1,
     cross: 1,
+    long: 1,
+    short: 1,
     channel: 3,
     pitchfork: 3,
     brush: 0,
@@ -2129,7 +2196,8 @@ window.TickViewChart = (function () {
     const needed = DRAWING_CLICKS[kind] !== undefined ? DRAWING_CLICKS[kind] : 2;
     if (!s.overlay.pending) {
       if (needed === 1) {
-        finishDrawing(s, { kind: kind, points: [point] });
+        // Pozice dostane z kliku vstup a výchozí cíl, stop a šířku
+        finishDrawing(s, { kind: kind, points: POSITION_KINDS[kind] ? positionPoints(s, point, kind) : [point] });
         return;
       }
       s.overlay.pending = { kind: kind, points: [point] };
@@ -2177,6 +2245,7 @@ window.TickViewChart = (function () {
     // timerem přes popEvents (DOM eventy z Vue komponenty nejsou spolehlivé;
     // fronta zvládne i více kreseb mezi dvěma ticky)
     queueNewDrawing(s, { kind: drawing.kind, points: drawing.points });
+    if (POSITION_KINDS[drawing.kind]) s.overlay.selected = s.overlay.drawings.length - 1;
     returnToCursor(s);
   }
 
@@ -2244,6 +2313,16 @@ window.TickViewChart = (function () {
     }
   }
 
+  // Úchopy kresby v pixelech [{x, y, handle}] (null = bod mimo graf): body
+  // kresby, u pozice vlastní úchopy (vstup, cíl, stop, šířka)
+  function drawingHandles(s, drawing) {
+    if (isPosition(drawing)) return positionHandles(s, drawing);
+    return drawing.points.map((point, index) => {
+      const pixel = pointToPixel(s, point);
+      return pixel ? { x: pixel.x, y: pixel.y, handle: index } : null;
+    });
+  }
+
   // Vzdálenost bodu od úsečky (pro test, zda kurzor míří na kresbu)
   function distToSegment(px, py, x1, y1, x2, y2) {
     const dx = x2 - x1;
@@ -2260,14 +2339,8 @@ window.TickViewChart = (function () {
     if (index < 0) return null;
     const drawing = s.overlay.drawings[index];
     if (!drawing || drawing.kind === 'brush') return null;
-    const pixels = drawing.points.map((point) => pointToPixel(s, point));
-    if (pixels.some((p) => p === null)) return null;
-    for (let i = 0; i < pixels.length; i++) {
-      if (Math.hypot(x - pixels[i].x, y - pixels[i].y) <= 8) {
-        return { index: index, handle: i };
-      }
-    }
-    return null;
+    const handle = drawingHandles(s, drawing).find((h) => h && Math.hypot(x - h.x, y - h.y) <= 8);
+    return handle ? { index: index, handle: handle.handle } : null;
   }
 
   // Překrytí: najde kresbu pod kurzorem (index v s.overlay.drawings) nebo -1
@@ -2277,7 +2350,11 @@ window.TickViewChart = (function () {
       const drawing = s.overlay.drawings[i];
       const points = drawing.points.map((point) => pointToPixel(s, point));
       if (points.some((p) => p === null)) continue;
-      if (drawing.kind === 'hline') {
+      if (isPosition(drawing)) {
+        // Pozice: kdekoli v obdélníku zón cíle a stopu
+        const box = positionBox(s, drawing);
+        if (box && x >= box.left - 3 && x <= box.right + 3 && y >= box.top - 3 && y <= box.bottom + 3) return i;
+      } else if (drawing.kind === 'hline') {
         if (Math.abs(y - points[0].y) <= threshold) return i;
       } else if (drawing.kind === 'vline') {
         if (Math.abs(x - points[0].x) <= threshold) return i;
@@ -2399,6 +2476,11 @@ window.TickViewChart = (function () {
         time: logicalToTime(s, timeToLogical(s, point.time) + dBars),
         price: point.price + dPrice,
       }));
+    } else if (isPosition(drawing)) {
+      // Úchop pozice: vstup, cíl, stop nebo pravý okraj (šířka)
+      const snapped = snapPoint(s, x, y, magnet);
+      if (!snapped) return;
+      dragPositionHandle(s, drawing, drag.handle, snapped);
     } else {
       // Posun koncového bodu (úchop) na bar a cenu pod kurzorem
       const snapped = snapPoint(s, x, y, magnet);
@@ -2463,8 +2545,7 @@ window.TickViewChart = (function () {
     if (drawing.kind === 'brush') return;
     // Úchopy vždy plnou čarou (i u přerušované kresby)
     ctx.setLineDash([]);
-    for (const point of drawing.points) {
-      const pixel = pointToPixel(s, point);
+    for (const pixel of drawingHandles(s, drawing)) {
       if (!pixel) continue;
       const px = pixel.x;
       const py = pixel.y;
@@ -2521,8 +2602,7 @@ window.TickViewChart = (function () {
   function measureLines(s, p1, p2) {
     const diff = p2.price - p1.price;
     const pct = p1.price ? (diff / p1.price) * 100 : 0;
-    // Tick = nejmenší krok ceny instrumentu (podle přesnosti dat)
-    const ticks = Math.round(diff * Math.pow(10, s.priceDecimals || 2));
+    const ticks = priceTicks(s, diff);
     // Počet barů = rozdíl logických indexů (i mimo rozsah dat)
     const bars = Math.round(timeToLogical(s, p2.time) - timeToLogical(s, p1.time));
     const lines = [
@@ -2572,29 +2652,35 @@ window.TickViewChart = (function () {
     if (height > 8) drawArrowLine(ctx, centerX, a.y, centerX, b.y);
     if (width > 8) drawArrowLine(ctx, a.x, centerY, b.x, centerY);
 
-    // Štítek: plný obdélník se zaoblenými rohy a bílým textem na středu
-    const lines = measureLines(s, p1, p2);
-    ctx.font = '13px -apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, sans-serif';
-    const lineHeight = 20;
-    const padX = 10;
-    const padY = 7;
-    const boxWidth = Math.max(...lines.map((line) => ctx.measureText(line).width)) + 2 * padX;
-    const boxHeight = lines.length * lineHeight + 2 * padY;
-    const boxX = Math.min(Math.max(2, centerX - boxWidth / 2), paneWidth - boxWidth - 2);
-    // Růst: štítek nad obdélníkem, pokles pod ním (a vždy uvnitř grafu)
-    let boxY = up ? top - boxHeight - 8 : top + height + 8;
-    boxY = Math.min(Math.max(2, boxY), paneHeight - boxHeight - 2);
+    // Štítek se statistikami: růst nad obdélníkem, pokles pod ním
+    drawLabelBox(ctx, measureLines(s, p1, p2), centerX, up ? top : top + height, up, color, MEASURE_LABEL, paneWidth, paneHeight);
+    ctx.restore();
+  }
+
+  // Rozměry štítků: měřič (větší) a pozice Long / Short
+  const LABEL_FONT = '-apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, sans-serif';
+  const MEASURE_LABEL = { font: '13px ' + LABEL_FONT, lineHeight: 20, padX: 10, padY: 7, radius: 4, gap: 8 };
+  const POSITION_LABEL = { font: '12px ' + LABEL_FONT, lineHeight: 16, padX: 8, padY: 4, radius: 3, gap: 4 };
+
+  // Štítek jako v TradingView: plný zaoblený obdélník s bílým textem,
+  // vodorovně na středu centerX, nad (above) nebo pod úrovní y; vždy celý
+  // uvnitř grafu. size = rozměry (MEASURE_LABEL / POSITION_LABEL)
+  function drawLabelBox(ctx, lines, centerX, y, above, color, size, paneWidth, paneHeight) {
+    ctx.font = size.font;
+    const width = Math.max(...lines.map((line) => ctx.measureText(line).width)) + 2 * size.padX;
+    const height = lines.length * size.lineHeight + 2 * size.padY;
+    const boxX = Math.min(Math.max(2, centerX - width / 2), paneWidth - width - 2);
+    const boxY = Math.min(Math.max(2, above ? y - height - size.gap : y + size.gap), paneHeight - height - 2);
     ctx.fillStyle = color;
     ctx.beginPath();
-    ctx.roundRect(boxX, boxY, boxWidth, boxHeight, 4);
+    ctx.roundRect(boxX, boxY, width, height, size.radius);
     ctx.fill();
     ctx.fillStyle = '#ffffff';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    lines.forEach((line, index) => {
-      ctx.fillText(line, boxX + boxWidth / 2, boxY + padY + lineHeight * (index + 0.5));
-    });
-    ctx.restore();
+    lines.forEach((line, index) => ctx.fillText(line, boxX + width / 2, boxY + size.padY + size.lineHeight * (index + 0.5)));
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
   }
 
   // Šipka na konci přímky (trojúhelník ve směru čáry)
@@ -2626,6 +2712,11 @@ window.TickViewChart = (function () {
 
     const toPixel = (point) => pointToPixel(s, point);
 
+    if (isPosition(drawing)) {
+      drawPosition(ctx, s, drawing, paneWidth, paneHeight);
+      renderHandles(ctx, s, drawing);
+      return;
+    }
     if (drawing.kind === 'hline') {
       const p = toPixel(points[0]);
       if (!p) return;
@@ -2896,6 +2987,289 @@ window.TickViewChart = (function () {
     }
   }
 
+  // ---------- Long / Short position (jako v TradingView) ----------
+
+  // Druhy kresby pozice; body: [vstup {čas začátku, cena vstupu},
+  // cíl {čas konce, cena cíle}, stop {čas konce, cena stopu}]
+  const POSITION_KINDS = { long: true, short: true };
+  // Barvy zón a štítků pozice jako v TradingView
+  const POSITION_PROFIT = '#089981';
+  const POSITION_LOSS = '#f23645';
+  const POSITION_NEUTRAL = '#787b86';
+
+  function isPosition(drawing) {
+    return !!(drawing && POSITION_KINDS[drawing.kind]);
+  }
+
+  // Body nové pozice po kliknutí: vstup v místě kliku, cíl a stop ve
+  // vzdálenosti ~8 % výšky grafu (risk/reward 1:1), šířka ~15 % viditelných barů
+  function positionPoints(s, point, kind) {
+    const range = s.chart.timeScale().getVisibleLogicalRange();
+    const bars = Math.max(8, Math.round(range ? (range.to - range.from) * 0.15 : 20));
+    const end = logicalToTime(s, timeToLogical(s, point.time) + bars);
+    const pane = getPaneGeometry(s);
+    const top = s.candleSeries.coordinateToPrice(0);
+    const bottom = s.candleSeries.coordinateToPrice(pane.height);
+    const span = top !== null && bottom !== null ? Math.abs(top - bottom) : Math.abs(point.price) * 0.02;
+    const tick = priceTick(s);
+    const distance = Math.max(tick, roundPrice(s, span * 0.08));
+    const entry = roundPrice(s, point.price);
+    const sign = kind === 'long' ? 1 : -1;
+    return [
+      { time: point.time, price: entry },
+      { time: end, price: roundPrice(s, entry + sign * distance) },
+      { time: end, price: roundPrice(s, entry - sign * distance) },
+    ];
+  }
+
+  // Obdélník pozice v pixelech (levý/pravý okraj, y vstupu, cíle a stopu)
+  function positionBox(s, drawing) {
+    const [start, target, stop] = drawing.points;
+    if (!start || !target || !stop) return null;
+    const x1 = timeToX(s, start.time);
+    const x2 = timeToX(s, target.time);
+    const yEntry = s.candleSeries.priceToCoordinate(start.price);
+    const yTarget = s.candleSeries.priceToCoordinate(target.price);
+    const yStop = s.candleSeries.priceToCoordinate(stop.price);
+    if ([x1, x2, yEntry, yTarget, yStop].some((value) => value === null)) return null;
+    return {
+      x1, x2, yEntry, yTarget, yStop,
+      left: Math.min(x1, x2),
+      right: Math.max(x1, x2),
+      top: Math.min(yTarget, yStop),
+      bottom: Math.max(yTarget, yStop),
+    };
+  }
+
+  // Úchopy pozice: 0 vstup, 1 cíl, 2 stop (na levém okraji), 3 šířka (pravý okraj u vstupu)
+  function positionHandles(s, drawing) {
+    const box = positionBox(s, drawing);
+    if (!box) return [];
+    return [
+      { x: box.x1, y: box.yEntry, handle: 0 },
+      { x: box.x1, y: box.yTarget, handle: 1 },
+      { x: box.x1, y: box.yStop, handle: 2 },
+      { x: box.x2, y: box.yEntry, handle: 3 },
+    ];
+  }
+
+  // Tažení úchopu pozice; ceny zůstávají ve správném pořadí (long: stop <
+  // vstup < cíl, short obráceně) a konec je vždy aspoň bar za začátkem
+  function dragPositionHandle(s, drawing, handle, snapped) {
+    const points = drawing.points;
+    const long = drawing.kind === 'long';
+    const tick = priceTick(s);
+    if (handle === 0) {
+      const low = Math.min(points[1].price, points[2].price) + tick;
+      const high = Math.max(points[1].price, points[2].price) - tick;
+      if (high < low) return;
+      const latest = logicalToTime(s, timeToLogical(s, points[1].time) - 1);
+      points[0] = { time: Math.min(snapped.time, latest), price: Math.min(high, Math.max(low, snapped.price)) };
+    } else if (handle === 1) {
+      const price = long ? Math.max(snapped.price, points[0].price + tick) : Math.min(snapped.price, points[0].price - tick);
+      points[1] = { time: points[1].time, price: price };
+    } else if (handle === 2) {
+      const price = long ? Math.min(snapped.price, points[0].price - tick) : Math.max(snapped.price, points[0].price + tick);
+      points[2] = { time: points[2].time, price: price };
+    } else if (handle === 3) {
+      const earliest = logicalToTime(s, timeToLogical(s, points[0].time) + 1);
+      const time = Math.max(snapped.time, earliest);
+      points[1] = { time: time, price: points[1].price };
+      points[2] = { time: time, price: points[2].price };
+    }
+  }
+
+  // Výpočet pozice: množství podle rizika a simulace obchodu nad svíčkami.
+  // Obchod se aktivuje první svíčkou od začátku pozice, která zasáhne cenu
+  // vstupu; uzavře ho první svíčka, která zasáhne stop nebo cíl (při zásahu
+  // obou ve stejné svíčce konzervativně stop); jinak je otevřený s P&L
+  // podle závěru poslední svíčky v rozsahu pozice.
+  function positionStats(s, drawing) {
+    const [start, target, stop] = drawing.points;
+    const long = drawing.kind === 'long';
+    const entry = start.price;
+    // Parametry výpočtu z kresby; chybějící doplní výchozí styl typu (normalizuje Python)
+    const options = Object.assign({}, defaultStyle(s, drawing.kind).options, drawing.options || {});
+    const account = Number(options.accountSize) || 0;
+    const reward = Math.abs(target.price - entry);
+    const risk = Math.abs(entry - stop.price);
+    const riskAmount = options.riskUnit === 'amount' ? Number(options.risk) || 0 : (account * (Number(options.risk) || 0)) / 100;
+    const lot = Number(options.lotSize) || 1;
+    const qty = risk > 0 ? riskAmount / risk / lot : 0;
+    const from = Math.min(start.time, target.time);
+    const to = Math.max(start.time, target.time);
+    let activated = null;
+    let closed = null;
+    let last = null;
+    for (let index = firstCandleIndex(s, from); index < s.candles.length; index++) {
+      const candle = s.candles[index];
+      if (candle.time > to) break;
+      if (!activated) {
+        if (candle.low > entry || candle.high < entry) continue;
+        activated = candle;
+      }
+      const hitStop = long ? candle.low <= stop.price : candle.high >= stop.price;
+      const hitTarget = long ? candle.high >= target.price : candle.low <= target.price;
+      if (hitStop || hitTarget) {
+        closed = { time: candle.time, price: hitStop ? stop.price : target.price };
+        break;
+      }
+      last = candle;
+    }
+    const exit = closed ? closed.price : activated && last ? last.close : null;
+    const pnl = exit === null ? null : long ? exit - entry : entry - exit;
+    return {
+      long, entry, account, reward, risk, riskAmount, lot, qty,
+      activated, closed, exit, pnl,
+      exitTime: closed ? closed.time : last ? last.time : null,
+      ratio: risk > 0 ? reward / risk : 0,
+    };
+  }
+
+  // Množství pozice: velká čísla celá (forex 4464285), malá na 4 místa (krypto 0.2)
+  function formatQty(value) {
+    if (!isFinite(value)) return '—';
+    if (Math.abs(value) >= 100) return String(Math.round(value));
+    return String(Number(value.toFixed(4)));
+  }
+
+  // Částka účtu na 2 desetinná místa bez zbytečných nul (252500, 9875.5)
+  function formatAmount(value) {
+    return isFinite(value) ? String(Number(value.toFixed(2))) : '—';
+  }
+
+  // Nakreslí pozici: zóna cíle (zelená) a stopu (červená), čára vstupu,
+  // průběh obchodu (sytější zóna a čárkovaná spojnice vstup → výstup) a štítky;
+  // Target / Stop jen u označené pozice nebo pod kurzorem (jako v TradingView)
+  function drawPosition(ctx, s, drawing, paneWidth, paneHeight) {
+    const box = positionBox(s, drawing);
+    if (!box) return;
+    const width = Math.max(1, box.right - box.left);
+    const stats = positionStats(s, drawing);
+    ctx.save();
+    ctx.setLineDash([]);
+    ctx.fillStyle = withAlpha(POSITION_PROFIT, 0.2);
+    ctx.fillRect(box.left, Math.min(box.yEntry, box.yTarget), width, Math.abs(box.yTarget - box.yEntry));
+    ctx.fillStyle = withAlpha(POSITION_LOSS, 0.2);
+    ctx.fillRect(box.left, Math.min(box.yEntry, box.yStop), width, Math.abs(box.yStop - box.yEntry));
+    // Průběh obchodu od aktivace do uzavření / poslední svíčky
+    if (stats.activated && stats.exit !== null && stats.exitTime !== null) {
+      const startX = timeToX(s, stats.activated.time);
+      const endX = timeToX(s, stats.exitTime);
+      const exitY = s.candleSeries.priceToCoordinate(stats.exit);
+      if (startX !== null && endX !== null && exitY !== null) {
+        const fromX = Math.max(box.left, Math.min(startX, endX));
+        const toX = Math.min(box.right, Math.max(startX, endX));
+        ctx.fillStyle = withAlpha(stats.pnl >= 0 ? POSITION_PROFIT : POSITION_LOSS, 0.25);
+        ctx.fillRect(fromX, Math.min(box.yEntry, exitY), Math.max(1, toX - fromX), Math.abs(exitY - box.yEntry));
+        ctx.strokeStyle = POSITION_NEUTRAL;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(startX, box.yEntry);
+        ctx.lineTo(endX, exitY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+    // Čára vstupu přes celou šířku pozice
+    ctx.strokeStyle = POSITION_NEUTRAL;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(box.left, box.yEntry);
+    ctx.lineTo(box.right, box.yEntry);
+    ctx.stroke();
+
+    // Štítky: střed (P&L, množství, risk/reward) vždy, Target / Stop jen při výběru / najetí
+    const centerX = (box.left + box.right) / 2;
+    const percent = (diff) => (stats.entry ? ((diff / stats.entry) * 100).toFixed(2) : '0.00');
+    const centerLines = [];
+    const qtyText = 'Qty: ' + formatQty(stats.qty);
+    if (stats.pnl !== null) {
+      const sign = stats.pnl >= 0 ? '' : '−';
+      const pnlText = sign + formatInstrumentPrice(s, Math.abs(stats.pnl));
+      centerLines.push((stats.closed ? 'Closed P&L: ' : 'Open P&L: ') + pnlText + ', ' + qtyText);
+    } else {
+      centerLines.push(qtyText);
+    }
+    centerLines.push('Risk/reward ratio: ' + Number(stats.ratio.toFixed(2)));
+    const centerColor = stats.pnl === null ? POSITION_NEUTRAL : stats.pnl >= 0 ? POSITION_PROFIT : POSITION_LOSS;
+    // Long: střední štítek pod vstupem (v zóně stopu), short nad ním
+    drawLabelBox(ctx, centerLines, centerX, box.yEntry, !stats.long, centerColor, POSITION_LABEL, paneWidth, paneHeight);
+    const selected = s.overlay.drawings.indexOf(drawing) === s.overlay.selected;
+    if (selected || s.overlay.hovered === drawing) {
+      // „Target: Δcena (Δ %) ticky, Amount: účet ± výsledek“, u stopu se znaménkem minus
+      const levelText = (title, diff, sign) =>
+        title + ': ' + formatInstrumentPrice(s, diff) + ' (' + percent(diff) + '%) ' + priceTicks(s, diff) +
+        ', Amount: ' + formatAmount(stats.account + sign * stats.qty * stats.lot * diff);
+      drawLabelBox(ctx, [levelText('Target', stats.reward, 1)], centerX, box.yTarget, stats.long, POSITION_PROFIT, POSITION_LABEL, paneWidth, paneHeight);
+      drawLabelBox(ctx, [levelText('Stop', stats.risk, -1)], centerX, box.yStop, !stats.long, POSITION_LOSS, POSITION_LABEL, paneWidth, paneHeight);
+    }
+    ctx.restore();
+  }
+
+  // ---------- alerty (čáry na grafu, zvuk) ----------
+
+  // Barva čar alertů (jako hodiny alertu v TradingView)
+  const ALERT_COLOR = '#ff9800';
+
+  // Cenové úrovně aktivních alertů aktuálního symbolu: [{price, title}]
+  function setAlertLines(id, lines) {
+    const s = state.get(id);
+    if (!s) return;
+    const next = Array.isArray(lines) ? lines : [];
+    // Obnova seznamu alertů posílá čáry i beze změny – přestavíme je jen při změně
+    if (JSON.stringify(next) === JSON.stringify(s.alertLines)) return;
+    s.alertLines = next;
+    applyAlertLines(s);
+  }
+
+  // Nahradí čáry alertů na hlavní sérii (čárkovaná čára s popiskem na cenové ose)
+  function applyAlertLines(s) {
+    if (!s.candleSeries) return;
+    for (const line of s.alertPriceLines || []) s.candleSeries.removePriceLine(line);
+    s.alertPriceLines = (s.alertLines || []).map((line) =>
+      s.candleSeries.createPriceLine({
+        price: line.price,
+        color: ALERT_COLOR,
+        lineWidth: 1,
+        lineStyle: LightweightCharts.LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: line.title || 'Alert',
+      })
+    );
+  }
+
+  // Odroluje prvek stránky (řádek výsledků hledání) do viditelné části seznamu
+  function scrollIntoView(elementId) {
+    const node = document.getElementById(elementId);
+    if (node) node.scrollIntoView({ block: 'nearest' });
+  }
+
+  // Sdílený zvukový kontext (prohlížeče omezují počet současných kontextů)
+  let alertAudio = null;
+
+  // Krátký dvojitý tón při spuštění alertu (Web Audio – bez zvukového souboru)
+  function playSound() {
+    try {
+      if (!alertAudio) alertAudio = new (window.AudioContext || window.webkitAudioContext)();
+      const audio = alertAudio;
+      if (audio.state === 'suspended') audio.resume();
+      [0, 0.22].forEach((offset) => {
+        const oscillator = audio.createOscillator();
+        const gain = audio.createGain();
+        oscillator.frequency.value = 880;
+        gain.gain.setValueAtTime(0.25, audio.currentTime + offset);
+        gain.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + offset + 0.18);
+        oscillator.connect(gain).connect(audio.destination);
+        oscillator.start(audio.currentTime + offset);
+        oscillator.stop(audio.currentTime + offset + 0.2);
+      });
+    } catch (error) {
+      // Prohlížeč bez Web Audio (nebo zablokovaný zvuk) – alert ukáže aspoň toast
+    }
+  }
+
   // Překreslí všechny kresby na překryvném canvasu
   function redrawOverlay(s) {
     const canvas = s.overlay.canvas;
@@ -2979,5 +3353,9 @@ window.TickViewChart = (function () {
     setLocked: setLocked,
     addSticker: addSticker,
     popEvents: popEvents,
+    setAlertLines: setAlertLines,
+    setAlertKinds: setAlertKinds,
+    playSound: playSound,
+    scrollIntoView: scrollIntoView,
   };
 })();

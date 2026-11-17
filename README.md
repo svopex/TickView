@@ -102,11 +102,16 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
 
 ### Stav funkcí
 
-- Hotovo: vyhledání symbolů v jednom poli s autocomplete (návrhy napříč
-  zdroji, max 12 se řazením přesná shoda > prefix > výskyt; klik na návrh
-  přidá do watchlistu, jen když tam ještě není, a načte graf; Enter přidá
-  bez přepnutí grafu; šipky/Esc ovládají nabídku; do watchlistu lze přidávat
-  i tlačítkem +), svíčkové grafy
+- Hotovo: hledání symbolu jako v TradingView – v horní liště je pilulka
+  s aktuálním symbolem, klik otevře dialog s označeným symbolem (psaní ho
+  přepíše); hledání otevře i psaní písmen / číslic přímo nad grafem. Dialog
+  hledá napříč zdroji souběžně a výsledky ukazuje průběžně (pomalá TWS
+  nezdrží ostatní), řazení přesná shoda > prefix > výskyt, max 60 výsledků;
+  kategorie Vše / Akcie / Fondy / Futures / Forex / Krypto / Indexy, výběr
+  zdroje, u výsledku logo, symbol, název, druh, burza a zkratka zdroje;
+  klik nebo Enter načte graf, šipky posouvají výběr, Esc zavře, tlačítko +
+  přidá symbol do aktivního seznamu (fajfka = už v seznamu); do watchlistu
+  lze přidat i aktuální symbol tlačítkem v hlavičce watchlistu. Svíčkové grafy
   + objem, timeframy 1m/2m/5m/10m/15m/1h/4h/1D/1W (jen co zdroj podporuje;
   2m a 10m, které Binance ani Yahoo nemají, se skládají z 1m / 5m svíček
   včetně živé svíčky), tmavý a světlý motiv, crosshair s OHLC legendou,
@@ -125,7 +130,8 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   stylu TradingView: skupiny nástrojů s flyout nabídkami — trendová čára,
   polopřímka, přímka, trendová šipka, horizontální/svislá linie, horizontální
   polopřímka, kříž, Fibonacci retracement i extension (s popisky), paralelní
-  kanál, pitchfork, obdélník, štětec, text, sticker (emoji), měřič; výběr
+  kanál, pitchfork, obdélník, štětec, text, sticker (emoji), Long a Short
+  position (viz níže), měřič; výběr
   kresby klikem s úchopy a tažením (celá kresba i jednotlivé body; výběr
   zůstává i po uložení), kresby lze umístit i mimo existující svíčky
   (vpravo do budoucna, přes víkendové mezery), mazání
@@ -159,6 +165,43 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   Hodiny, Dny) s hvězdičkami; timeframe zvolený z nabídky, který oblíbený
   není, je v liště jen dočasně. Oblíbené se ukládají.
 - Vyskakovací nabídky mají zkrácenou animaci (90 ms, dialogy 120 ms).
+- Long / Short position jako v TradingView (skupina Prognózy a měření):
+  klik do grafu vytvoří pozici se vstupem v místě kliku, cílem a stopem ve
+  vzdálenosti ~8 % výšky grafu (risk/reward 1:1) a šířkou ~15 % viditelných
+  barů; zelená zóna cíle, červená zóna stopu. Úchopy: vstup (cena a začátek),
+  cíl, stop a pravý okraj (šířka), tažení za plochu posune celou pozici.
+  Štítek uprostřed ukazuje Qty (množství = riziko / vzdálenost stopu / lot),
+  Risk/reward ratio a P&L simulovaného obchodu: obchod se aktivuje první
+  svíčkou, která zasáhne vstup, uzavře ho první zásah stopu nebo cíle (oba
+  ve stejné svíčce = stop), jinak je otevřený („Open P&L“ podle poslední
+  svíčky); průběh ukazuje sytější zóna a čárkovaná spojnice vstup → výstup.
+  U označené pozice nebo pod kurzorem jsou štítky Target / Stop (rozdíl
+  ceny, %, ticky, Amount = účet ± zisk / ztráta). Settings pozice: velikost
+  účtu, riziko (% účtu nebo částka), velikost lotu a ceny vstupu, cíle
+  a stopu; šablony včetně „Save as default“ pro nové pozice.
+- Alerty jako v TradingView: tlačítko Alert v horní liště (poslední cena),
+  pravý klik do grafu „Přidat alert na <cena>“ nebo pravý klik na čáru
+  (horizontální linie / polopřímka, trendová čára, polopřímka, přímka)
+  „Přidat alert…“. Dialog „Create alert on SYMBOL, timeframe“: podmínka
+  Crossing / Crossing Up / Crossing Down / Greater Than / Less Than, cíl cena
+  nebo čára kresby (šikmé čáry se interpolují podle času a prodlužují; posun
+  kresby se projeví do 5 s, smazaná kresba alert vypne se stavem Chyba),
+  trigger Only Once / Once Per Bar / Once Per Bar Close / Once Per Minute,
+  expirace (výchozí 30 dní) nebo bez expirace, zpráva se zástupnými texty
+  `{{ticker}}`, `{{exchange}}`, `{{interval}}`, `{{close}}`, `{{time}}` (bez
+  ruční úpravy se sama skládá z podmínky) a notifikace: Telegram, toast
+  v aplikaci, zvuk a Webhook URL (POST se zprávou; platný JSON jako
+  application/json, jinak text/plain – jako v TradingView). Alerty
+  vyhodnocuje server na pozadí i bez otevřené stránky (jeden živý stream na
+  symbol a timeframe, po výpadku znovupřipojení). Tlačítko se zvonkem (počet
+  aktivních alertů) otevře seznam alertů (klik přepne graf, pozastavit /
+  spustit znovu, upravit, smazat) a log spuštění s výsledkem odeslání
+  (✓ / ✗ Telegram, webhook; chyba v tooltipu). Aktivní cenové alerty
+  zobrazeného symbolu jsou v grafu oranžové čárkované čáry s popiskem na ose.
+- Telegram pro alerty: ozubené kolečko v horní liště → bot token (od
+  @BotFather, příkaz /newbot), po zprávě botovi tlačítko „Zjistit chat ID“
+  doplní chat, „Odeslat test“ pošle zkušební zprávu; ukládá se do
+  `config.yaml` (sekce `telegram`) a platí hned bez restartu.
 - Měřič jako v TradingView: obdélník modrý při růstu / červený při poklesu,
   šipky středem (cena svisle, čas vodorovně) a štítek s Δcenou, % a počtem
   ticků, počtem barů a délkou úseku a součtem objemu.
@@ -184,7 +227,10 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   dvojklik rovnou Settings; jinde v grafu „Settings…“ grafu: barvy těla,
   okrajů a knotů svíček pro růst / pokles (každý prvek lze vypnout),
   obarvení svíček podle předchozího závěru a zobrazení objemu (Volume; objem
-  lze skrýt i okem v řádku Vol). Změny v Settings grafu se hned ukazují
+  lze skrýt i okem v řádku Vol; u instrumentu bez objemu – forex IBKR
+  MIDPOINT, indexy – se objem nezobrazí a dialog to vysvětlí). Když se
+  data symbolu nepodaří načíst, graf se vyprázdní (nezůstanou v něm svíčky
+  předchozího symbolu pod novým nadpisem). Změny v Settings grafu se hned ukazují
   v grafu, uloží se tlačítkem Ok, Cancel / zavření je vrátí.
 - Výběr barvy jako v TradingView (Settings grafu, indikátoru a kresby): řada šedých, hlavní barvy, šest řad odstínů,
   vlastní barvy (tlačítko + otevře systémový výběr; ukládají se v prohlížeči)
@@ -302,7 +348,7 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   timeframy), aktivace po zadání klíčů
 - `tickview/providers/__init__.py` – registr zdrojů (nový zdroj = jeden řádek)
 - `tickview/logic/cache.py` – SQLite cache svíček, nastavení, kreseb,
-  seznamů symbolů (watchlistů) a evidence stažených intervalů; skládání historie z cache a sítě
+  alertů a jejich logu, seznamů symbolů (watchlistů) a evidence stažených intervalů; skládání historie z cache a sítě
   (ze sítě stahuje jen chybějící úseky)
 - `tickview/logic/indicators.py` – definice (kategorie, popis, parametry)
   a výpočet 28 indikátorů přes pandas-ta, payload overlay čar, panelů
@@ -310,6 +356,14 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
 - `tickview/logic/styles.py` – kontrola barev (`#rrggbb` / `rgba`), styl
   svíček a typy grafu, styl kreseb, šablony nastavení (Template), názvy
   a oblíbené nástroje
+- `tickview/logic/alerts.py` – logika alertů: podmínky, triggery
+  (AlertTracker), cena čáry kresby v čase, kontrola definice, zpráva se
+  zástupnými texty a tělo webhooku
+- `tickview/services/alerts.py` – AlertEngine: vyhodnocování aktivních
+  alertů na pozadí nad živými streamy zdrojů, vypršení, log a ohlášení
+  otevřeným stránkám
+- `tickview/services/notify.py` – Telegram bot (sendMessage, zjištění chat
+  id) a webhook
 - `tickview/logic/sessions.py` – filtr hlavní obchodní seance (RTH) a seznam
   časových pásem pro nabídku
 - `tickview/ui/lightweight_chart.py` – vlastní komponenta NiceGUI obalující
@@ -320,13 +374,15 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
 - `tickview/ui/icons.py` – SVG piktogramy lišty kreslení a typů grafu
 - `tickview/ui/templates.py` – dialogy Settings (hlavička, tlačítka) a nabídka
   šablon „Template“
-- `tickview/ui/main_window.py` – hlavní stránka: vyhledání symbolu, timeframy,
+- `tickview/ui/main_window.py` – hlavní stránka: hledání symbolu (dialog),
+  alerty (dialog, seznam, log, Telegram v Settings), timeframy,
   watchlist, nabídka a Settings indikátorů, lišta kreslení, Settings kreseb
   a grafu, živý stream, stavová lišta se seancí a časovým pásmem
 - `tickview/ui/static/lightweight_chart.js` – JS komponenta grafu (svíčky,
   objem, nadpis a legenda ve stylu TradingView, motivy, časové pásmo,
   inkrementální update, donačítání historie, panely indikátorů, kontextová
-  menu, kreslicí nástroje na překryvném canvasu, plovoucí panel oblíbených
+  menu, kreslicí nástroje na překryvném canvasu včetně Long / Short position,
+  čáry alertů a zvuk alertu, plovoucí panel oblíbených
   nástrojů, styl svíček)
 - `tickview/ui/static/color_picker.js` – výběr barvy ve stylu TradingView
   (paleta, vlastní barvy, průhlednost)
@@ -335,5 +391,6 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   knihovna TradingView Lightweight Charts 4.2.3 (licence Apache-2.0)
 - `tests/` – unit testy logiky (cache, indikátory, polling, omezovač dotazů,
   konfigurace, skládání timeframů, seance, časová pásma, forex, barvy,
-  šablony a oblíbené nástroje);
+  šablony a oblíbené nástroje; alerty, engine alertů, Telegram/webhook přes
+  falešný HTTP transport a pozice Long/Short);
   spuštění `python -m unittest`

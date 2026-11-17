@@ -227,13 +227,29 @@ class StreamStatus:
 StreamItem = Union[Candle, StreamStatus]
 
 
+# Druhy instrumentů pro kategorie vyhledávání (jako v TradingView)
+SYMBOL_KINDS = ("stock", "fund", "futures", "forex", "crypto", "index")
+
+
 @dataclass(slots=True)
 class SymbolInfo:
-    """Výsledek vyhledání symbolu u zdroje."""
+    """Výsledek vyhledání symbolu u zdroje.
+
+    Atributy:
+        provider_id: id zdroje.
+        symbol: symbol zdroje (např. "BTCUSDT", "EUR.USD").
+        label: krátký popisek „symbol – název“.
+        description: celý název instrumentu (firma, pár) pro vyhledávací dialog.
+        kind: druh instrumentu (viz SYMBOL_KINDS; prázdný = neznámý).
+        exchange: burza / trh (prázdný = název zdroje).
+    """
 
     provider_id: str
     symbol: str
     label: str
+    description: str = ""
+    kind: str = ""
+    exchange: str = ""
 
 
 class DataProvider(ABC):

@@ -68,6 +68,32 @@ CREATE TABLE IF NOT EXISTS fetched_ranges (
 );
 CREATE INDEX IF NOT EXISTS idx_fetched_ranges
     ON fetched_ranges (source, symbol, timeframe);
+-- Alerty (jako v TradingView): stav ve sloupcích, definice (podmínka, cíl,
+-- trigger, expirace, zpráva, notifikace) jako JSON ve sloupci spec
+CREATE TABLE IF NOT EXISTS alerts (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    source        TEXT    NOT NULL,
+    symbol        TEXT    NOT NULL,
+    timeframe     TEXT    NOT NULL,
+    spec          TEXT    NOT NULL,
+    active        INTEGER NOT NULL DEFAULT 1,
+    status        TEXT    NOT NULL DEFAULT 'active',
+    created_at    INTEGER NOT NULL,
+    last_fired_at INTEGER,
+    fire_count    INTEGER NOT NULL DEFAULT 0
+);
+-- Historie spuštěných alertů (log) včetně výsledku odeslání notifikací
+CREATE TABLE IF NOT EXISTS alert_log (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    alert_id   INTEGER NOT NULL,
+    fired_at   INTEGER NOT NULL,
+    source     TEXT    NOT NULL,
+    symbol     TEXT    NOT NULL,
+    timeframe  TEXT    NOT NULL,
+    price      REAL    NOT NULL,
+    message    TEXT    NOT NULL,
+    delivery   TEXT
+);
 """
 
 # Název seznamu, který vznikne při prvním spuštění (a do kterého se převede
@@ -449,6 +475,24 @@ class KlineCache:
         )
         self._conn.commit()
 
+    async def get_drawing(self, drawing_id: int) -> Optional[dict]:
+        """Vrátí kresbu podle id {"id", "source", "symbol", "timeframe", "kind", "points"}, nebo None."""
+        row = await self._run(
+            lambda: self._conn.execute(
+                "SELECT id, source, symbol, timeframe, kind, points FROM drawings WHERE id = ?", (drawing_id,)
+            ).fetchone()
+        )
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "source": row[1],
+            "symbol": row[2],
+            "timeframe": row[3],
+            "kind": row[4],
+            "points": json.loads(row[5]),
+        }
+
     # ---------- watchlisty (pojmenované seznamy symbolů) ----------
 
     async def _run(self, func, *args):
@@ -535,6 +579,148 @@ class KlineCache:
             "DELETE FROM watchlist_items WHERE list_id = ? AND source = ? AND symbol = ?",
             (list_id, source, symbol),
         )
+
+    # ---------- alerty ----------
+
+    # Sloupce tabulky alerts v pořadí, v jakém je čte _alert_from_row
+    _ALERT_COLUMNS = "id, source, symbol, timeframe, spec, active, status, created_at, last_fired_at, fire_count"
+
+    @staticmethod
+    def _alert_from_row(row) -> dict:
+        # Řádek tabulky alerts → slovník alertu (definice ze sloupce spec + stav)
+        alert = json.loads(row[4])
+        alert.update(
+            {
+                "id": row[0],
+                "source": row[1],
+                "symbol": row[2],
+                "timeframe": row[3],
+                "active": bool(row[5]),
+                "status": row[6],
+                "created_at": row[7],
+                "last_fired_at": row[8],
+                "fire_count": row[9],
+            }
+        )
+        return alert
+
+    async def alerts(self, active_only: bool = False) -> list[dict]:
+        """Vrátí alerty (nejnovější první); active_only = jen aktivní (pro vyhodnocení)."""
+        where = "WHERE active = 1" if active_only else ""
+        rows = await self._run(
+            lambda: self._conn.execute(f"SELECT {self._ALERT_COLUMNS} FROM alerts {where} ORDER BY id DESC").fetchall()
+        )
+        return [self._alert_from_row(row) for row in rows]
+
+    async def get_alert(self, alert_id: int) -> Optional[dict]:
+        """Vrátí alert podle id, nebo None."""
+        row = await self._run(
+            lambda: self._conn.execute(f"SELECT {self._ALERT_COLUMNS} FROM alerts WHERE id = ?", (alert_id,)).fetchone()
+        )
+        return self._alert_from_row(row) if row else None
+
+    async def save_alert(self, spec: dict, alert_id: Optional[int] = None, now_ms: Optional[int] = None) -> int:
+        """Uloží definici alertu (normalize_alert); nový alert i upravený se (znovu) aktivuje.
+
+        Parametry:
+            spec: definice alertu včetně source, symbol a timeframe.
+            alert_id: id upravovaného alertu (None = nový).
+            now_ms: čas vytvoření (výchozí aktuální čas).
+        """
+        definition = {key: value for key, value in spec.items() if key not in ("source", "symbol", "timeframe")}
+        payload = json.dumps(definition)
+        created_at = now_ms if now_ms is not None else utc_now_ms()
+
+        def save_sync() -> int:
+            if alert_id is None:
+                cur = self._conn.execute(
+                    "INSERT INTO alerts (source, symbol, timeframe, spec, created_at) VALUES (?, ?, ?, ?, ?)",
+                    (spec["source"], spec["symbol"], spec["timeframe"], payload, created_at),
+                )
+                new_id = int(cur.lastrowid)
+            else:
+                # Úprava alert znovu zapne (jako v TradingView po uložení změn)
+                self._conn.execute(
+                    "UPDATE alerts SET source = ?, symbol = ?, timeframe = ?, spec = ?, active = 1, status = 'active' "
+                    "WHERE id = ?",
+                    (spec["source"], spec["symbol"], spec["timeframe"], payload, alert_id),
+                )
+                new_id = alert_id
+            self._conn.commit()
+            return new_id
+
+        return await self._run(save_sync)
+
+    async def set_alert_state(
+        self,
+        alert_id: int,
+        active: bool,
+        status: str,
+        fired_at: Optional[int] = None,
+    ) -> None:
+        """Změní stav alertu; s fired_at zaznamená i spuštění (čas a počet)."""
+        if fired_at is None:
+            sql = "UPDATE alerts SET active = ?, status = ? WHERE id = ?"
+            params: tuple = (int(active), status, alert_id)
+        else:
+            sql = "UPDATE alerts SET active = ?, status = ?, last_fired_at = ?, fire_count = fire_count + 1 WHERE id = ?"
+            params = (int(active), status, fired_at, alert_id)
+        await self._run(self._execute_sync, sql, params)
+
+    async def delete_alert(self, alert_id: int) -> None:
+        """Smaže alert (záznamy v logu zůstanou)."""
+        await self._run(self._execute_sync, "DELETE FROM alerts WHERE id = ?", (alert_id,))
+
+    async def add_alert_log(self, entry: dict) -> None:
+        """Zapíše spuštění alertu do logu.
+
+        Parametry:
+            entry: {"alert_id", "fired_at", "source", "symbol", "timeframe",
+                "price", "message", "delivery"} – delivery je seznam výsledků
+                odeslání notifikací (uloží se jako JSON).
+        """
+        await self._run(
+            self._execute_sync,
+            "INSERT INTO alert_log (alert_id, fired_at, source, symbol, timeframe, price, message, delivery) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                entry["alert_id"],
+                entry["fired_at"],
+                entry["source"],
+                entry["symbol"],
+                entry["timeframe"],
+                entry["price"],
+                entry["message"],
+                json.dumps(entry.get("delivery") or []),
+            ),
+        )
+
+    async def alert_log(self, limit: int = 200) -> list[dict]:
+        """Vrátí posledních limit spuštění alertů (nejnovější první)."""
+        rows = await self._run(
+            lambda: self._conn.execute(
+                "SELECT alert_id, fired_at, source, symbol, timeframe, price, message, delivery "
+                "FROM alert_log ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        )
+        return [
+            {
+                "alert_id": row[0],
+                "fired_at": row[1],
+                "source": row[2],
+                "symbol": row[3],
+                "timeframe": row[4],
+                "price": row[5],
+                "message": row[6],
+                "delivery": json.loads(row[7] or "[]"),
+            }
+            for row in rows
+        ]
+
+    async def clear_alert_log(self) -> None:
+        """Vymaže log spuštěných alertů."""
+        await self._run(self._execute_sync, "DELETE FROM alert_log", ())
 
 
 def uncovered_ranges(

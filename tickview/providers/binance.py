@@ -109,6 +109,9 @@ class BinanceProvider(DataProvider):
                 provider_id=self.id,
                 symbol=s["symbol"],
                 label=s["symbol"],
+                description=f"{s.get('baseAsset')} / {s.get('quoteAsset')}",
+                kind="crypto",
+                exchange=self.name,
             )
             for s in data["symbols"]
             if s.get("status") == "TRADING"

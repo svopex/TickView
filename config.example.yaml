@@ -13,3 +13,9 @@ ibkr:
   host: 127.0.0.1
   port: 7497
   client_id: 30
+
+# Telegram – notifikace alertů; token bota od @BotFather, chat id zjistí
+# aplikace (Settings → Zjistit chat ID) po první zprávě botovi
+telegram:
+  bot_token: ""
+  chat_id: ""

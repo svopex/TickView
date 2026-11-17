@@ -50,60 +50,47 @@
   letter-spacing: 0.5px;
 }
 
-/* Sloučené vyhledávání: pole + návrhy symbolů v dropdownu */
-.search-wrap {
-  position: relative;
-  min-width: 180px;
-  flex: 1 1 340px;
-  max-width: 420px;
+/* Pilulka s aktuálním symbolem v horní liště (klik otevře hledání symbolu) */
+.symbol-pill {
+  border-radius: 18px;
+  padding: 2px 14px 2px 10px;
+  min-height: 32px;
+  background: rgba(128, 128, 128, 0.16);
+  color: inherit;
+  font-weight: 600;
+  letter-spacing: 0.3px;
 }
 
-.symbol-search {
-  width: 100%;
+.symbol-pill:hover {
+  background: rgba(128, 128, 128, 0.28);
 }
 
-.autocomplete {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
-  z-index: 60;
-  max-height: 320px;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 4px;
-  gap: 2px !important;
-  background: #ffffff;
-  border: 1px solid rgba(128, 128, 128, 0.45);
-  border-radius: 4px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+.symbol-pill .q-btn__content {
+  gap: 6px;
+  flex-wrap: nowrap;
 }
 
-.body--dark .autocomplete {
-  background: #1e222d;
+.symbol-pill-icon {
+  font-size: 18px;
+  opacity: 0.7;
 }
 
-.autocomplete-item {
-  padding: 6px 10px;
-  border-radius: 4px;
-  font-size: 13px;
-  cursor: pointer;
-  white-space: nowrap;
+.symbol-pill-text {
+  font-size: 14px;
+  max-width: 160px;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.autocomplete-item:hover,
-.autocomplete-item.active {
-  background: rgba(41, 98, 255, 0.18);
+/* Tlačítka Alert a správy alertů v horní liště */
+.topbar-btn {
+  color: inherit;
 }
 
-.body--dark .autocomplete-item {
-  color: #d1d4dc;
-}
-
-.body--light .autocomplete-item {
-  color: #131722;
+.alerts-badge {
+  font-size: 10px;
+  background: #f23645;
 }
 
 .source-badge {
@@ -1337,4 +1324,307 @@
 .body--light .wl-quick-btn.active {
   background: #131722;
   color: #ffffff;
+}
+
+/* ---------- Hledání symbolu (dialog ve stylu TradingView) ---------- */
+
+.sym-dialog {
+  width: 760px;
+  max-width: 96vw;
+  height: 600px;
+  max-height: 86vh;
+  margin-top: 6vh;
+  padding: 10px 0 0 !important;
+  display: flex;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  gap: 6px !important;
+}
+
+.sym-search-row {
+  flex-wrap: nowrap;
+  align-items: center;
+  padding: 0 12px;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.25);
+}
+
+.sym-search-input {
+  flex: 1 1 auto;
+  font-size: 16px;
+  text-transform: uppercase;
+}
+
+.sym-chips {
+  gap: 6px !important;
+  padding: 4px 14px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* Kategorie: zaoblená tlačítka, aktivní plné */
+.sym-chip {
+  border: 1px solid rgba(128, 128, 128, 0.45);
+  border-radius: 16px;
+  padding: 0 12px;
+  min-height: 28px;
+  font-size: 13px;
+  color: inherit;
+}
+
+.body--dark .sym-chip.active {
+  background: #d1d4dc;
+  color: #131722;
+}
+
+.body--light .sym-chip.active {
+  background: #131722;
+  color: #ffffff;
+}
+
+.sym-source-select {
+  min-width: 150px;
+  font-size: 13px;
+}
+
+.sym-results {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  gap: 0 !important;
+  padding: 0 4px 8px;
+}
+
+.sym-row {
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 10px !important;
+  padding: 7px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.sym-row:hover,
+.sym-row.active {
+  background: rgba(128, 128, 128, 0.16);
+}
+
+/* Logo instrumentu: kolečko s prvním znakem, barva podle druhu */
+.sym-logo {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: #ffffff;
+  background: #787b86;
+}
+
+.sym-logo-stock { background: #2962ff; }
+.sym-logo-fund { background: #9c27b0; }
+.sym-logo-forex { background: #089981; }
+.sym-logo-crypto { background: #f7931a; }
+.sym-logo-index { background: #e91e63; }
+.sym-logo-futures { background: #795548; }
+
+.sym-text {
+  gap: 0 !important;
+  min-width: 0;
+}
+
+.sym-symbol {
+  color: #2962ff;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.sym-desc-row {
+  gap: 6px !important;
+  align-items: center;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.sym-desc {
+  font-size: 12px;
+  opacity: 0.85;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+}
+
+/* Druh instrumentu jako malý štítek (FOREX, STOCK…) */
+.sym-kind {
+  flex: 0 0 auto;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: rgba(128, 128, 128, 0.22);
+}
+
+.sym-exchange {
+  flex: 0 0 auto;
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+/* Zkratka zdroje dat (BIN, YAH, IBK, ALP) jako u watchlistu */
+.sym-source {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid rgba(128, 128, 128, 0.5);
+}
+
+.sym-add {
+  flex: 0 0 auto;
+  color: inherit;
+}
+
+.sym-empty {
+  padding: 24px;
+  opacity: 0.7;
+}
+
+/* ---------- Alerty ---------- */
+
+.alert-dialog {
+  width: 520px;
+}
+
+.alert-grid {
+  gap: 10px 12px !important;
+  align-items: start;
+}
+
+.alert-label {
+  padding-top: 8px;
+  font-size: 13px;
+  opacity: 0.75;
+}
+
+.alert-field {
+  gap: 6px !important;
+}
+
+.alert-static {
+  font-size: 14px;
+  padding: 4px 0;
+}
+
+.alerts-dialog {
+  width: 680px;
+  height: 600px;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  flex-wrap: nowrap;
+}
+
+.alerts-panels {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  background: transparent !important;
+}
+
+.alerts-list {
+  gap: 2px !important;
+}
+
+.alert-row {
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px !important;
+  padding: 8px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.alert-row:hover {
+  background: rgba(128, 128, 128, 0.14);
+}
+
+.alert-text {
+  gap: 1px !important;
+  min-width: 0;
+}
+
+.alert-symbol {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.alert-desc {
+  font-size: 12px;
+}
+
+.alert-msg {
+  font-size: 12px;
+  opacity: 0.7;
+  overflow-wrap: anywhere;
+}
+
+.alert-status {
+  flex: 0 0 auto;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgba(128, 128, 128, 0.22);
+}
+
+.alert-status-active { background: rgba(8, 153, 129, 0.25); }
+.alert-status-triggered { background: rgba(255, 152, 0, 0.25); }
+.alert-status-error { background: rgba(242, 54, 69, 0.3); }
+
+.alert-btn {
+  color: inherit;
+}
+
+/* Výsledek odeslání notifikace v logu (✓ telegram / ✗ webhook) */
+.alert-delivery {
+  flex: 0 0 auto;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+.alert-delivery.ok { background: rgba(8, 153, 129, 0.25); }
+.alert-delivery.failed { background: rgba(242, 54, 69, 0.3); }
+
+.alert-time {
+  flex: 0 0 auto;
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.alert-empty {
+  padding: 20px;
+  opacity: 0.7;
+}
+
+/* ---------- Settings pozice (Long / Short) a objemu ---------- */
+
+.position-fields {
+  gap: 8px !important;
+}
+
+.position-row {
+  flex-wrap: nowrap;
+  gap: 8px !important;
+}
+
+.position-row > * {
+  flex: 1 1 0;
+}
+
+.volume-note {
+  max-width: none;
 }

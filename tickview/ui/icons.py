@@ -39,6 +39,9 @@ _ICON_PATHS: dict[str, str] = {
     "text": '<path d="M8 7h12M14 7v15M11 22h6"/>',
     "sticker": '<circle cx="14" cy="14" r="9"/><path d="M10.5 16.5c2 2.6 5 2.6 7 0"/>'
                '<circle cx="11" cy="11.5" r=".6" fill="currentColor"/><circle cx="17" cy="11.5" r=".6" fill="currentColor"/>',
+    # Long / Short position: obdélník rozdělený čarou vstupu, šipka ke zóně cíle
+    "long": '<rect x="5" y="5" width="18" height="18" rx="1"/><path d="M5 15h18M14 12V7.5M11.5 10 14 7.5l2.5 2.5"/>',
+    "short": '<rect x="5" y="5" width="18" height="18" rx="1"/><path d="M5 13h18M14 16v4.5M11.5 18l2.5 2.5 2.5-2.5"/>',
     # Měřič: pravítko s dílky
     "measure": '<path d="M4 19 19 4l5 5L9 24z"/><path d="M7.5 15.5l2 2M10.5 12.5l3 3M13.5 9.5l2 2M16.5 6.5l3 3"/>',
     # Magnet (a vypnutý magnet s přeškrtnutím)

@@ -4,11 +4,25 @@ import asyncio
 import hashlib
 import json
 import time
+from datetime import datetime
 from pathlib import Path
 
-from nicegui import context, ui
+import httpx
+from nicegui import background_tasks, context, ui
 
 from tickview.config import load_config, update_config_section
+from tickview.logic.alerts import (
+    CONDITIONS,
+    DEFAULT_EXPIRATION_MS,
+    DEFAULT_NOTIFY,
+    LINE_KINDS,
+    STATUSES,
+    TRIGGERS,
+    default_message,
+    describe_alert,
+    format_price,
+    normalize_alert,
+)
 from tickview.logic.cache import KlineCache, fetch_history
 from tickview.logic.indicators import (
     CATEGORIES,
@@ -33,6 +47,9 @@ from tickview.logic.styles import (
     DRAWING_LINE_STYLES,
     DRAWING_LINE_WIDTHS,
     MAX_NAME_LENGTH,
+    POSITION_DEFAULTS,
+    POSITION_KINDS,
+    POSITION_RISK_UNITS,
     TIMEFRAME_SECTIONS,
     TIMEFRAMES,
     clean_name,
@@ -46,6 +63,7 @@ from tickview.logic.styles import (
     normalize_drawing_style,
     normalize_favorites,
     normalize_panel_position,
+    normalize_position_points,
 )
 from tickview.logic.sessions import (
     SESSION_ETH,
@@ -56,6 +74,8 @@ from tickview.logic.sessions import (
 )
 from tickview.providers import PROVIDERS, get_provider
 from tickview.providers.base import TIMEFRAME_MS, Candle, StreamStatus, is_closed, utc_now_ms
+from tickview.services.alerts import AlertEngine
+from tickview.services.notify import find_telegram_chat_id, send_telegram, telegram_configured, telegram_settings
 from tickview.ui.color_button import ColorButton
 from tickview.ui.icons import ICONS, svg
 from tickview.ui.lightweight_chart import LightweightChart
@@ -70,6 +90,9 @@ VISIBLE_BARS = 150
 OLDER_LOAD_ATTEMPTS = 4
 # Jak často nejvýš se z živých svíček přepočítají indikátory (sekundy)
 LIVE_INDICATOR_REFRESH_S = 2.0
+# Hledání symbolu: kolik výsledků jednoho zdroje a kolik celkem se zobrazí
+SEARCH_PER_PROVIDER = 15
+SEARCH_LIMIT = 60
 # Kratší animace vyskakovacích nabídek a dialogů (Quasar má výchozí 300 ms)
 ui.menu.default_props("transition-duration=90")
 ui.select.default_props("transition-duration=90")
@@ -105,15 +128,20 @@ def drawing_scope(kind: str) -> str:
     return f"drawing.{kind}"
 
 
-def register(cache: KlineCache) -> None:
-    """Registruje hlavní stránku aplikace (volá se z main.py)."""
+def register(cache: KlineCache, alert_engine: AlertEngine) -> None:
+    """Registruje hlavní stránku aplikace (volá se z main.py).
+
+    Parametry:
+        cache: úložiště svíček, nastavení, kreseb a alertů.
+        alert_engine: vyhodnocování alertů na pozadí (stránka se k němu přihlásí).
+    """
 
     @ui.page("/")
     async def index() -> None:
-        await _build_index(cache)
+        await _build_index(cache, alert_engine)
 
 
-async def _build_index(cache: KlineCache) -> None:
+async def _build_index(cache: KlineCache, alert_engine: AlertEngine) -> None:
     # Statické soubory (styly + JS grafu + vendored knihovna) do hlavičky stránky;
     # verze v URL zajistí, že prohlížeč po změně souborů nepoužije starou cache
     ui.add_head_html(
@@ -150,8 +178,6 @@ async def _build_index(cache: KlineCache) -> None:
         "symbol": None,
         "timeframe": last_timeframe,
         "load_seq": 0,
-        # Pořadí hledání: pomalejší starší hledání nesmí přepsat novější návrhy
-        "search_seq": 0,
         # Zámek řadí vykreslení: starší (pomalejší) odpověď nesmí přepsat
         # novější data po rychlém přepnutí timeframu
         "load_lock": asyncio.Lock(),
@@ -186,73 +212,193 @@ async def _build_index(cache: KlineCache) -> None:
             status_label.text = message
             status_label.classes(add="error" if error else "", remove="" if error else "error")
 
-    async def search_symbols() -> None:
-        # Vyhledání napříč zdroji; výsledky se ukazují jako návrhy pod polem
-        query = (search_input.value or "").strip()
-        state["search_seq"] += 1
-        seq = state["search_seq"]
-        state["suggestions"] = []
-        state["highlight"] = 0
-        if not query:
-            hide_suggestions()
-            return
-        # Zdroje se dotazují souběžně – pomalý zdroj (Yahoo, nedostupná TWS)
-        # nesmí zdržet ostatní; pořadí výsledků odpovídá pořadí PROVIDERS
-        responses = await asyncio.gather(
-            *(provider.search(query) for provider in PROVIDERS), return_exceptions=True
-        )
-        if seq != state["search_seq"]:
-            # Mezitím uživatel psal dál – zastaralé výsledky zahodíme
-            return
-        results: list[dict] = []
-        for provider, found in zip(PROVIDERS, responses):
-            if isinstance(found, BaseException):
-                show_status(f"Zdroj {provider.name} není dostupný: {found}", error=True)
-                continue
-            for symbol_info in found[:6]:
-                key = f"{symbol_info.provider_id}:{symbol_info.symbol}"
-                results.append(
+    # ---------- hledání symbolu (dialog ve stylu TradingView) ----------
+
+    # Kategorie hledání (druhy instrumentů zdrojů) s popisky tlačítek
+    SEARCH_CATEGORIES = {
+        "all": "Vše",
+        "stock": "Akcie",
+        "fund": "Fondy",
+        "futures": "Futures",
+        "forex": "Forex",
+        "crypto": "Krypto",
+        "index": "Indexy",
+    }
+    # Stav dialogu: kategorie, zdroj, výsledky, zvýrazněný řádek, pořadí hledání
+    search_state: dict = {
+        "category": "all",
+        "source": "all",
+        "results": [],
+        "visible": [],
+        "rows": [],
+        "highlight": 0,
+        "seq": 0,
+        "query": None,
+        "errors": [],
+    }
+
+    async def run_symbol_search() -> None:
+        # Vyhledání napříč zdroji souběžně; výsledky se zobrazují průběžně, jak
+        # zdroje odpovídají (pomalá TWS nezdrží Binance). Pomalejší starší
+        # hledání nesmí přepsat novější výsledky
+        query = (symbol_search_input.value or "").strip()
+        search_state["query"] = query
+        search_state["seq"] += 1
+        seq = search_state["seq"]
+        providers = [p for p in PROVIDERS if search_state["source"] in ("all", p.id)]
+        found_by_provider: dict[str, list[dict]] = {}
+        search_state["errors"] = []
+        search_state["highlight"] = 0
+
+        async def search_one(provider) -> None:
+            try:
+                found = await provider.search(query)
+            except Exception:
+                found = None
+            if seq != search_state["seq"]:
+                return
+            if found is None:
+                search_state["errors"].append(provider.name)
+            else:
+                found_by_provider[provider.id] = [
                     {
-                        "key": key,
-                        "label": f"{symbol_info.label} · {provider.name}",
-                        "symbol": symbol_info.symbol,
+                        "key": f"{info.provider_id}:{info.symbol}",
+                        "symbol": info.symbol,
+                        "description": info.description,
+                        "kind": info.kind,
+                        "exchange": info.exchange or provider.name,
+                        "provider": provider.name,
+                        "code": PROVIDER_CODES.get(provider.id, provider.id[:3].upper()),
                     }
-                )
-        # Přesná shoda > prefix > výskyt; celkový počet návrhů omezíme na 12.
-        # Porovnává se bez oddělovačů, aby "EURUSD" našlo i EUR.USD a EURUSD=X
+                    for info in found[:SEARCH_PER_PROVIDER]
+                ]
+            # Výsledky v pořadí zdrojů, pak podle relevance (stabilní řazení)
+            results = [r for p in providers for r in found_by_provider.get(p.id, [])]
+            results.sort(key=lambda result: search_relevance(result["symbol"], query))
+            search_state["results"] = results[:SEARCH_LIMIT]
+            render_search_results()
+
+        await asyncio.gather(*(search_one(provider) for provider in providers))
+
+    def search_relevance(symbol: str, query: str) -> int:
+        # Přesná shoda > prefix > výskyt; porovnává se bez oddělovačů, aby
+        # "EURUSD" našlo i EUR.USD a EURUSD=X
         def compact(text: str) -> str:
             return "".join(ch for ch in text.upper() if ch.isalnum())
 
-        upper = compact(query)
+        symbol, wanted = compact(symbol), compact(query)
+        if symbol == wanted:
+            return 0
+        if symbol.startswith(wanted):
+            return 1
+        return 2
 
-        def relevance(result: dict) -> int:
-            symbol = compact(result["symbol"])
-            if symbol == upper:
-                return 0
-            if symbol.startswith(upper):
-                return 1
-            return 2
+    def on_search_input(event) -> None:
+        # Psaní v dialogu: nové hledání jen při změně textu (programové
+        # nastavení hodnoty při otevření hledání spouští samo)
+        if (event.value or "").strip() != search_state["query"]:
+            background_tasks.create(run_symbol_search())
 
-        results.sort(key=relevance)
-        state["suggestions"] = results[:12]
-        render_suggestions()
+    def render_search_results() -> None:
+        # Přestaví seznam výsledků podle zvolené kategorie
+        category = search_state["category"]
+        visible = [r for r in search_state["results"] if category == "all" or r["kind"] == category]
+        search_state["visible"] = visible
+        search_state["rows"] = []
+        search_state["highlight"] = min(search_state["highlight"], max(0, len(visible) - 1))
+        for key, chip in search_chips.items():
+            chip.classes(add="active" if key == category else "", remove="" if key == category else "active")
+        symbol_search_results.clear()
+        with symbol_search_results:
+            if not visible:
+                empty = "Nic nenalezeno."
+                if search_state["errors"]:
+                    empty += " Nedostupné zdroje: " + ", ".join(search_state["errors"]) + "."
+                ui.label(empty).classes("sym-empty")
+            for index, result in enumerate(visible):
+                classes = "sym-row w-full" + (" active" if index == search_state["highlight"] else "")
+                with ui.row().classes(classes).on("click", make_pick_symbol(result["key"])) as row:
+                    # Logo: první znak symbolu v kolečku barvy druhu instrumentu
+                    ui.label(result["symbol"].lstrip("^")[:1]).classes(f"sym-logo sym-logo-{result['kind'] or 'other'}")
+                    with ui.column().classes("sym-text"):
+                        ui.label(result["symbol"]).classes("sym-symbol")
+                        with ui.row().classes("sym-desc-row"):
+                            if result["description"]:
+                                ui.label(result["description"]).classes("sym-desc")
+                            if result["kind"]:
+                                ui.label(result["kind"]).classes("sym-kind")
+                    ui.space()
+                    ui.label(result["exchange"]).classes("sym-exchange")
+                    ui.label(result["code"]).classes("sym-source").tooltip(f"Zdroj {result['provider']}")
+                    # Přidání do aktivního seznamu (nepřepne graf); symbol už v seznamu = fajfka
+                    in_list = result["key"] in watch_rows
+                    ui.button(icon="check" if in_list else "add", color=None).props("flat dense round size=sm").classes(
+                        "sym-add"
+                    ).tooltip(
+                        f"V seznamu {state.get('watchlist_name', '')}" if in_list else f"Přidat do seznamu {state.get('watchlist_name', '')}"
+                    ).on("click.stop", make_search_watch_add(result["key"]))
+                search_state["rows"].append(row)
 
-    def hide_suggestions() -> None:
-        suggestions_container.classes(add="hidden")
+    def make_pick_symbol(key: str):
+        # Klik na výsledek: zavře hledání a načte graf symbolu (jako v TradingView)
+        async def _handler(_event=None):
+            symbol_search_dialog.close()
+            await load_symbol(key)
 
-    def render_suggestions() -> None:
-        # Přestaví nabídku pod vyhledávacím polem; zvýrazněný řádek reaguje na šipky
-        suggestions_container.clear()
-        suggestions = state.get("suggestions") or []
-        if not suggestions:
-            hide_suggestions()
+        return _handler
+
+    def make_search_watch_add(key: str):
+        # Tlačítko + u výsledku: přidá symbol do aktivního seznamu, dialog zůstane otevřený
+        async def _handler(_event=None):
+            await add_key_to_watchlist(key)
+            render_search_results()
+
+        return _handler
+
+    def make_search_category(category: str):
+        def _handler(_event=None):
+            search_state["category"] = category
+            search_state["highlight"] = 0
+            render_search_results()
+
+        return _handler
+
+    async def set_search_source(event) -> None:
+        # Výběr zdroje: hledá se znovu jen ve zvoleném zdroji
+        search_state["source"] = event.value or "all"
+        await run_symbol_search()
+
+    def move_search_highlight(delta: int) -> None:
+        # Šipky v dialogu posouvají zvýraznění a řádek se odroluje do pohledu
+        rows = search_state["rows"]
+        if not rows:
             return
-        suggestions_container.classes(remove="hidden")
-        with suggestions_container:
-            for index, suggestion in enumerate(suggestions):
-                classes = "autocomplete-item" + (" active" if index == state["highlight"] else "")
-                item = ui.label(suggestion["label"]).classes(classes)
-                item.on("click", make_load_from_search(suggestion["key"]))
+        old = search_state["highlight"]
+        new = (old + delta) % len(rows)
+        search_state["highlight"] = new
+        rows[old].classes(remove="active")
+        rows[new].classes(add="active")
+        ui.run_javascript(f"window.TickViewChart.scrollIntoView({json.dumps(f'c{rows[new].id}')})")
+
+    async def pick_highlighted() -> None:
+        # Enter v dialogu: načte zvýrazněný výsledek
+        visible = search_state["visible"]
+        if visible:
+            await make_pick_symbol(visible[min(search_state["highlight"], len(visible) - 1)]["key"])()
+
+    async def open_symbol_search(text: str | None = None) -> None:
+        """Otevře hledání symbolu: bez textu s označeným aktuálním symbolem
+        (psaní ho přepíše, jako v TradingView), jinak se znaky napsanými nad grafem."""
+        if symbol_search_dialog.value and text:
+            # Dialog už je otevřený (rychlé psaní nad grafem) – znaky připojíme
+            symbol_search_input.value = (symbol_search_input.value or "") + text
+            return
+        symbol_search_input.value = (state.get("symbol") or "") if text is None else text
+        search_state["category"] = "all"
+        symbol_search_dialog.open()
+        await run_symbol_search()
+        if text is None:
+            symbol_search_input.run_method("select")
 
     async def add_key_to_watchlist(key: str) -> None:
         # Přidá symbol "zdroj:symbol" do watchlistu, jen když tam ještě není
@@ -264,32 +410,6 @@ async def _build_index(cache: KlineCache) -> None:
         await cache.watchlist_add(state["watchlist_id"], provider_id, symbol)
         await rebuild_watchlist()
         show_status(f"{symbol} přidán do seznamu {list_name} ({provider_id}).")
-
-    def make_load_from_search(key: str):
-        # Klik na návrh: přidá do watchlistu (jen když tam ještě není), načte graf
-        async def _handler(_event):
-            hide_suggestions()
-            await add_key_to_watchlist(key)
-            await load_symbol(key)
-
-        return _handler
-
-    def move_highlight(delta: int) -> None:
-        suggestions = state.get("suggestions") or []
-        if not suggestions:
-            return
-        state["highlight"] = (state["highlight"] + delta) % len(suggestions)
-        render_suggestions()
-
-    async def add_search_to_watchlist() -> None:
-        # Enter: přidá označený (nebo první) návrh do watchlistu, jen když tam není
-        suggestions = state.get("suggestions") or []
-        if not suggestions:
-            show_status("Nejdřív hledejte symbol, poté ho Enterem přidáte do watchlistu.")
-            return
-        suggestion = suggestions[min(state["highlight"], len(suggestions) - 1)]
-        hide_suggestions()
-        await add_key_to_watchlist(suggestion["key"])
 
     async def load_symbol(key) -> None:
         if not key or ":" not in str(key):
@@ -303,6 +423,7 @@ async def _build_index(cache: KlineCache) -> None:
         state["provider_id"] = provider_id
         state["provider"] = provider
         state["symbol"] = symbol
+        symbol_pill_label.text = symbol
         refresh_watchlist_active()
         # Nabídneme jen timeframy, které zdroj podporuje; dosavadní výběr případně nahradíme
         timeframes = list(provider.timeframes.keys())
@@ -320,6 +441,7 @@ async def _build_index(cache: KlineCache) -> None:
         push_symbol_info()
         asyncio.create_task(describe_symbol(provider, symbol, key))
         await cache.set_setting("last_symbol", key)
+        await push_alert_lines()
         await reload_chart()
 
     def push_symbol_info() -> None:
@@ -545,6 +667,7 @@ async def _build_index(cache: KlineCache) -> None:
                 return
             if not candles:
                 show_status(f"Pro {symbol} ({timeframe}) nejsou dostupná data.", error=True)
+                await clear_chart(timeframe)
                 return
             # Vykreslení držíme pod zámkem a číslo požadavku kontrolujeme znovu
             # uvnitř: data do grafu smí zapsat jen nejnovější načtení
@@ -563,7 +686,23 @@ async def _build_index(cache: KlineCache) -> None:
             # Historie načtena → spustíme živý stream pro aktuální zobrazení
             start_stream()
         except Exception as exc:
+            if seq != state["load_seq"]:
+                return
             show_status(f"Načtení dat selhalo: {exc}", error=True)
+            await clear_chart(timeframe)
+
+    async def clear_chart(timeframe: str) -> None:
+        # Bez dat nesmí v grafu zůstat svíčky ani kresby předchozího symbolu
+        # pod nadpisem nového (např. MSFT s cenami EUR.USD po výpadku TWS);
+        # pod zámkem vykreslení jako úspěšné načtení
+        seq = state["load_seq"]
+        async with state["load_lock"]:
+            if seq != state["load_seq"]:
+                return
+            state["candles"] = []
+            await chart.set_candles([], TIMEFRAME_MS[timeframe], visible_bars=VISIBLE_BARS)
+            await chart.set_drawings([])
+            await push_indicators()
 
     async def load_older(before_s) -> None:
         """Donačte starší svíčky před první svíčkou grafu (posun grafu doleva).
@@ -751,6 +890,7 @@ async def _build_index(cache: KlineCache) -> None:
     DRAWING_KINDS = [
         "hline", "vline", "trend", "ray", "extended", "arrow", "hray", "cross",
         "channel", "fib", "fibext", "pitchfork", "rect", "brush", "text", "sticker",
+        "long", "short",
     ]
     # Skupiny nástrojů lišty (jako v TradingView): id, ikona, tooltip, nástroje;
     # položka {"section": …} je jen nadpis sekce ve flyout nabídce
@@ -788,8 +928,14 @@ async def _build_index(cache: KlineCache) -> None:
              {"mode": "text", "tooltip": "Text", "icon": "text"},
              {"mode": "sticker", "tooltip": "Sticker (emoji)", "icon": "sticker"},
          ]},
-        {"id": "g_measure", "icon": "measure", "tooltip": "Měřič (Δcena, %, bary)",
-         "tools": [{"mode": "measure", "tooltip": "Měřič (Δcena, %, bary)", "icon": "measure"}]},
+        {"id": "g_forecast", "icon": "long", "tooltip": "Prognózy a měření (Long / Short position, měřič)",
+         "tools": [
+             {"section": "Prognózy"},
+             {"mode": "long", "tooltip": "Long position", "icon": "long"},
+             {"mode": "short", "tooltip": "Short position", "icon": "short"},
+             {"section": "Měření"},
+             {"mode": "measure", "tooltip": "Měřič (Δcena, %, bary)", "icon": "measure"},
+         ]},
     ]
     # Režimy všech nástrojů v pořadí lišty (oblíbené v plovoucím panelu)
     TOOL_MODES = [tool["mode"] for group in DRAWING_GROUPS for tool in group["tools"] if "mode" in tool]
@@ -810,6 +956,8 @@ async def _build_index(cache: KlineCache) -> None:
         "brush": "Štětec",
         "text": "Text",
         "sticker": "Sticker",
+        "long": "Long position",
+        "short": "Short position",
     }
     EMOJIS = ["😀", "🚀", "💰", "📈", "📉", "👍", "⚡", "🎯"]
 
@@ -840,7 +988,7 @@ async def _build_index(cache: KlineCache) -> None:
                 template = json.loads(saved.get(default_template_key(drawing_scope(kind))) or "{}")
             except ValueError:
                 template = {}
-            defaults[kind] = normalize_drawing_style(template)
+            defaults[kind] = normalize_drawing_style(template, kind)
         chart.set_drawing_defaults(defaults)
 
     # ---------- oblíbené nástroje (plovoucí panel) ----------
@@ -959,13 +1107,20 @@ async def _build_index(cache: KlineCache) -> None:
     NO_LINE_KINDS = {"text", "sticker"}
 
     def apply_drawing_template(values: dict) -> None:
-        # Promítne hodnoty šablony (barva, šířka a styl čáry, velikost písma)
-        # do polí dialogu; neplatné nebo chybějící hodnoty nahradí výchozími
-        style = normalize_drawing_style(values)
+        # Promítne hodnoty šablony (barva, šířka a styl čáry, velikost písma,
+        # u pozice parametry výpočtu) do polí dialogu; neplatné nebo chybějící
+        # hodnoty nahradí výchozími
+        kind = (state.get("drawing_settings") or {}).get("kind")
+        style = normalize_drawing_style(values, kind)
         drawing_color.value = style["color"]
         drawing_width.value = style["options"]["width"]
         drawing_style.value = style["options"]["lineStyle"]
         drawing_font.value = style["options"]["fontSize"]
+        if kind in POSITION_KINDS:
+            position_account.value = style["options"]["accountSize"]
+            position_risk.value = style["options"]["risk"]
+            position_risk_unit.value = style["options"]["riskUnit"]
+            position_lot.value = style["options"]["lotSize"]
 
     def apply_drawing_factory() -> None:
         # „Apply defaults“ bez uložené výchozí šablony: tovární styl kresby
@@ -982,19 +1137,33 @@ async def _build_index(cache: KlineCache) -> None:
                     "width": drawing_width.value,
                     "lineStyle": drawing_style.value,
                     "fontSize": drawing_font.value,
+                    # Parametry pozice (u ostatních kreseb je normalizace zahodí)
+                    "accountSize": position_account.value,
+                    "risk": position_risk.value,
+                    "riskUnit": position_risk_unit.value,
+                    "lotSize": position_lot.value,
                 },
-            }
+            },
+            state["drawing_settings"]["kind"],
         )
 
     async def open_drawing_settings(payload: dict) -> None:
         # Dialog Settings kresby podle jejího typu: barva, šířka a styl čáry,
         # u textu obsah a velikost písma; šablony podle typu kresby
         kind = payload.get("kind")
-        state["drawing_settings"] = {"id": int(payload["id"]), "kind": kind}
+        points = drawing_points(payload)
+        state["drawing_settings"] = {"id": int(payload["id"]), "kind": kind, "points": points}
         drawing_settings_title.text = DRAWING_LABELS.get(kind, kind)
         apply_drawing_template({"color": payload.get("color"), "options": payload.get("options") or {}})
-        has_line = kind not in NO_LINE_KINDS
-        drawing_color_row.set_visibility(kind != "sticker")
+        # Pozice: parametry výpočtu a ceny vstupu, cíle a stopu místo barvy a čáry
+        is_position = kind in POSITION_KINDS
+        position_fields.set_visibility(is_position)
+        if is_position and len(points) >= 3:
+            position_entry.value = points[0]["price"]
+            position_target.value = points[1]["price"]
+            position_stop.value = points[2]["price"]
+        has_line = kind not in NO_LINE_KINDS and not is_position
+        drawing_color_row.set_visibility(kind != "sticker" and not is_position)
         drawing_width.set_visibility(has_line)
         drawing_style.set_visibility(has_line)
         drawing_text.value = payload.get("text") or ""
@@ -1020,12 +1189,25 @@ async def _build_index(cache: KlineCache) -> None:
             if not text:
                 ui.notify("Text nesmí být prázdný.", type="warning")
                 return
+        # Pozice: ceny vstupu, cíle a stopu z dialogu (časy zůstanou)
+        points = None
+        if kind in POSITION_KINDS:
+            try:
+                points = normalize_position_points(
+                    kind, position_entry.value, position_target.value, position_stop.value, current["points"]
+                )
+            except ValueError as exc:
+                ui.notify(str(exc), type="warning")
+                return
         # Sticker barvu nemá (emoji) – necháme ji prázdnou jako dosud
         color = values["color"] if kind != "sticker" else None
         options = values["options"]
         drawing_settings_dialog.close()
         await cache.update_drawing_style(provider_id, symbol, timeframe, current["id"], color, text, options)
-        chart.apply_drawing_settings(current["id"], {"color": color, "text": text, "options": options})
+        if points is not None:
+            await cache.update_drawing(provider_id, symbol, timeframe, current["id"], points, None)
+            alert_engine.drawing_changed(current["id"])
+        chart.apply_drawing_settings(current["id"], {"color": color, "text": text, "options": options, "points": points})
         show_status(f"{DRAWING_LABELS.get(kind, kind)}: nastavení uloženo.")
 
     async def set_volume_visible(visible: bool) -> None:
@@ -1114,9 +1296,15 @@ async def _build_index(cache: KlineCache) -> None:
         chart.set_chart_style(normalize_chart_style(values))
         chart.set_volume_visible(values["volume"])
 
+    def has_volume() -> bool:
+        # Posílá zdroj u zobrazeného instrumentu objem? (forex MIDPOINT ani indexy ne)
+        return any(candle.volume > 0 for candle in state.get("candles") or [])
+
     async def open_chart_settings() -> None:
         # Pole se vyplní uloženým stavem bez náhledu (graf ho už ukazuje)
         fill_chart_values({**state["chart_style"], "volume": state["show_volume"]}, preview=False)
+        # Objem se u instrumentu bez objemu nezobrazí ani zapnutý – vysvětlíme proč
+        volume_note.set_visibility(not has_volume())
         chart_dialog_state["dirty"] = False
         await chart_templates.refresh()
         chart_settings_dialog.open()
@@ -1204,6 +1392,8 @@ async def _build_index(cache: KlineCache) -> None:
                 drawing_id = payload.get("id")
                 if drawing_id:
                     await cache.delete_drawing(provider_id, symbol, timeframe, int(drawing_id))
+                    # Alert na kresbu si změnu (posun / smazání) načte znovu
+                    alert_engine.drawing_changed(int(drawing_id))
                     show_status("Kresba smazána.")
             elif payload.get("type") == "update":
                 drawing_id = payload.get("id")
@@ -1212,6 +1402,7 @@ async def _build_index(cache: KlineCache) -> None:
                         provider_id, symbol, timeframe, int(drawing_id),
                         drawing_points(payload), payload.get("text"),
                     )
+                    alert_engine.drawing_changed(int(drawing_id))
             elif payload.get("type") == "text_request":
                 await open_text_dialog(payload.get("time"), payload.get("price"))
             elif payload.get("type") == "drawing_settings" and payload.get("id"):
@@ -1220,9 +1411,18 @@ async def _build_index(cache: KlineCache) -> None:
                 await open_chart_settings()
             elif payload.get("type") == "volume":
                 await set_volume_visible(bool(payload.get("visible")))
+            elif payload.get("type") == "symbol_search":
+                # Psaní nad grafem otevře hledání symbolu s napsanými znaky
+                await open_symbol_search(str(payload.get("text") or ""))
+            elif payload.get("type") == "alert_request":
+                # Pravý klik: alert na ceně pod kurzorem, nebo na čáře kresby
+                drawing_id = payload.get("drawingId")
+                await open_alert_dialog(
+                    price=payload.get("price"), drawing_id=int(drawing_id) if drawing_id else None
+                )
             elif payload.get("type") == "add" and payload.get("kind") in DRAWING_KINDS:
                 # Styl nové kresby (výchozí šablona typu poslaná z grafu) zkontrolujeme
-                style = normalize_drawing_style(payload)
+                style = normalize_drawing_style(payload, payload["kind"])
                 drawing_id = await cache.add_drawing(
                     provider_id,
                     symbol,
@@ -1457,25 +1657,71 @@ async def _build_index(cache: KlineCache) -> None:
 
     async def save_settings() -> None:
         # Uloží klíče do config.yaml v kořenu projektu (necommituje se); zbytek
-        # souboru včetně komentářů a vlastního endpointu zůstane beze změny
-        values = {
+        # souboru včetně komentářů a vlastního endpointu zůstane beze změny.
+        # Zapisují se jen změněné sekce (Telegram platí hned, Alpaca po restartu)
+        config = load_config()
+        messages = []
+        telegram = {
+            "bot_token": (settings_telegram_token.value or "").strip(),
+            "chat_id": (settings_telegram_chat.value or "").strip(),
+        }
+        if telegram != dict(zip(("bot_token", "chat_id"), telegram_settings(config))):
+            update_config_section("telegram", telegram)
+            messages.append("Telegram uložen")
+        alpaca_config = config.get("alpaca") or {}
+        alpaca = {
             "api_key": (settings_key.value or "").strip(),
             "secret": (settings_secret.value or "").strip(),
         }
-        if not (load_config().get("alpaca") or {}).get("endpoint"):
-            values = {"endpoint": "https://paper-api.alpaca.markets/v2", **values}
-        update_config_section("alpaca", values)
+        if alpaca != {key: str(alpaca_config.get(key) or "") for key in alpaca}:
+            if not alpaca_config.get("endpoint"):
+                alpaca = {"endpoint": "https://paper-api.alpaca.markets/v2", **alpaca}
+            update_config_section("alpaca", alpaca)
+            messages.append("Alpaca klíče uloženy – zdroj se aktivuje po restartu aplikace")
         settings_dialog.close()
-        show_status(
-            "Alpaca klíče uloženy do config.yaml – zdroj se aktivuje po restartu aplikace."
-        )
+        show_status((" · ".join(messages) + " (config.yaml).") if messages else "Nastavení beze změny.")
 
     def open_settings_dialog() -> None:
-        # Vyplníme aktuální klíče z konfigurace pro kontrolu/přepis
-        alpaca_config = load_config().get("alpaca", {})
+        # Vyplníme aktuální hodnoty z konfigurace pro kontrolu/přepis
+        config = load_config()
+        alpaca_config = config.get("alpaca") or {}
         settings_key.value = alpaca_config.get("api_key", "")
         settings_secret.value = alpaca_config.get("secret", "")
+        settings_telegram_token.value, settings_telegram_chat.value = telegram_settings(config)
         settings_dialog.open()
+
+    async def detect_telegram_chat() -> None:
+        # Chat id z poslední zprávy botovi (uživatel mu musí nejdřív napsat)
+        token = (settings_telegram_token.value or "").strip()
+        if not token:
+            ui.notify("Nejdřív vložte token bota od @BotFather.", type="warning")
+            return
+        try:
+            async with httpx.AsyncClient() as client:
+                chat_id = await find_telegram_chat_id(client, token)
+        except Exception as exc:
+            ui.notify(f"Telegram: {exc}", type="negative")
+            return
+        if not chat_id:
+            ui.notify("Bot zatím nemá žádnou zprávu – napište mu (např. /start) a zkuste to znovu.", type="warning")
+            return
+        settings_telegram_chat.value = chat_id
+        ui.notify(f"Chat ID {chat_id} doplněno – nezapomeňte uložit.", type="positive")
+
+    async def test_telegram() -> None:
+        # Testovací zpráva s hodnotami z dialogu (i neuloženými)
+        token = (settings_telegram_token.value or "").strip()
+        chat_id = (settings_telegram_chat.value or "").strip()
+        if not token or not chat_id:
+            ui.notify("Vyplňte token bota i chat ID.", type="warning")
+            return
+        try:
+            async with httpx.AsyncClient() as client:
+                await send_telegram(client, token, chat_id, "✅ TickView: testovací zpráva alertů.")
+        except Exception as exc:
+            ui.notify(f"Odeslání selhalo: {exc}", type="negative")
+            return
+        ui.notify("Testovací zpráva odeslána.", type="positive")
 
     # ---------- indikátory ----------
 
@@ -1724,16 +1970,327 @@ async def _build_index(cache: KlineCache) -> None:
         await indicators_changed()
         show_status(f"Indikátor {indicator_title(spec)} upraven.")
 
+    # ---------- alerty (jako v TradingView; vyhodnocuje je AlertEngine na serveru) ----------
+
+    # Stav dialogu alertu: upravovaný alert (id None = nový), jeho symbol a
+    # timeframe, zda je zpráva automatická (mění se s podmínkou) a potlačení
+    # událostí při hromadném vyplňování polí
+    alert_form: dict = {
+        "id": None,
+        "source": None,
+        "symbol": None,
+        "timeframe": None,
+        "auto_message": True,
+        "filling": False,
+        # Druhy čar nabízených jako cíl alertu: id kresby -> druh
+        "drawing_kinds": {},
+    }
+
+    def format_local_time(ms: int, with_date: bool = True) -> str:
+        # Čas v místním pásmu serveru (stejné jako prohlížeč u desktopové aplikace)
+        moment = datetime.fromtimestamp(ms / 1000)
+        return moment.strftime("%d.%m.%Y %H:%M") if with_date else moment.strftime("%d.%m. %H:%M:%S")
+
+    def alert_target_from_form() -> dict:
+        # Cíl alertu z dialogu: cena, nebo kresba vybraná v seznamu cílů
+        choice = alert_target.value or "value"
+        if choice.startswith("drawing:"):
+            drawing_id = int(choice.split(":", 1)[1])
+            return {"type": "drawing", "id": drawing_id, "kind": alert_form["drawing_kinds"].get(drawing_id)}
+        return {"type": "value", "price": alert_price.value}
+
+    def refresh_alert_message() -> None:
+        # Automatická zpráva sleduje podmínku a cíl, dokud ji uživatel nepřepíše
+        alert_price.set_visibility(not (alert_target.value or "").startswith("drawing:"))
+        if alert_form["filling"] or not alert_form["auto_message"]:
+            return
+        target = alert_target_from_form()
+        if target["type"] == "value" and alert_price.value is None:
+            return
+        alert_form["filling"] = True
+        try:
+            alert_message.value = default_message(
+                alert_form["symbol"], alert_form["timeframe"], alert_condition.value, target
+            )
+        finally:
+            alert_form["filling"] = False
+
+    def on_alert_message_change(_event) -> None:
+        # Ruční úprava zprávy vypne její automatické přepisování
+        if not alert_form["filling"]:
+            alert_form["auto_message"] = False
+
+    async def open_alert_dialog(alert: dict | None = None, price=None, drawing_id: int | None = None) -> None:
+        """Dialog vytvoření / úpravy alertu.
+
+        Parametry:
+            alert: upravovaný alert (None = nový alert pro aktuální graf).
+            price: počáteční cena nového alertu (None = poslední cena grafu).
+            drawing_id: kresba, na kterou se nový alert nastaví (pravý klik na čáru).
+        """
+        if alert is None:
+            if not state.get("provider_id") or not state.get("symbol"):
+                ui.notify("Nejdřív zvolte symbol.", type="warning")
+                return
+            source, symbol, timeframe = state["provider_id"], state["symbol"], state["timeframe"]
+        else:
+            source, symbol, timeframe = alert["source"], alert["symbol"], alert["timeframe"]
+        alert_form.update(
+            {"id": alert["id"] if alert else None, "source": source, "symbol": symbol, "timeframe": timeframe}
+        )
+        # Cíle: cena a čáry kreseb symbolu a timeframu alertu
+        drawings = [d for d in await cache.load_drawings(source, symbol, timeframe) if d["kind"] in LINE_KINDS]
+        alert_form["drawing_kinds"] = {d["id"]: d["kind"] for d in drawings}
+        options = {"value": "Cena (hodnota)"}
+        for drawing in drawings:
+            label = DRAWING_LABELS.get(drawing["kind"], drawing["kind"])
+            if drawing["kind"] in ("hline", "hray") and drawing["points"]:
+                label += f" · {format_price(float(drawing['points'][0]['price']))}"
+            options[f"drawing:{drawing['id']}"] = f"{label} (#{drawing['id']})"
+        alert_target.options = options
+        alert_target.update()
+        candles = state.get("candles") or []
+        has_telegram = telegram_configured()
+        if alert is None:
+            last_price = candles[-1].close if candles and source == state.get("provider_id") else None
+            spec = {
+                "condition": "crossing",
+                "target": {"type": "drawing", "id": drawing_id} if drawing_id else {"type": "value", "price": price if price is not None else last_price},
+                "trigger": "once",
+                "expires_at": utc_now_ms() + DEFAULT_EXPIRATION_MS,
+                "message": "",
+                "notify": dict(DEFAULT_NOTIFY, telegram=has_telegram),
+            }
+        else:
+            spec = alert
+        alert_dialog_title.text = f"{'Upravit' if alert else 'Create'} alert on {symbol}, {timeframe}"
+        alert_submit.text = "Save" if alert else "Create"
+        alert_form["filling"] = True
+        try:
+            alert_condition.value = spec["condition"]
+            target = spec["target"]
+            if target["type"] == "drawing" and f"drawing:{target['id']}" in options:
+                alert_target.value = f"drawing:{target['id']}"
+            else:
+                alert_target.value = "value"
+            alert_price.value = target.get("price") if target["type"] == "value" else (candles[-1].close if candles else None)
+            alert_trigger.value = spec["trigger"]
+            expires_at = spec.get("expires_at")
+            alert_open_ended.value = expires_at is None
+            alert_expiration.value = datetime.fromtimestamp(
+                (expires_at or utc_now_ms() + DEFAULT_EXPIRATION_MS) / 1000
+            ).strftime("%Y-%m-%dT%H:%M")
+            notify = spec.get("notify") or DEFAULT_NOTIFY
+            alert_notify_telegram.value = bool(notify.get("telegram"))
+            alert_notify_toast.value = bool(notify.get("toast"))
+            alert_notify_sound.value = bool(notify.get("sound"))
+            alert_notify_webhook.value = bool(notify.get("webhook"))
+            alert_webhook_url.value = notify.get("webhook") or ""
+            alert_message.value = spec.get("message") or ""
+        finally:
+            alert_form["filling"] = False
+        # Nový alert má automatickou zprávu, upravovaný si drží uloženou
+        alert_form["auto_message"] = alert is None
+        refresh_alert_message()
+        alert_telegram_note.set_visibility(not has_telegram)
+        alert_dialog.open()
+
+    async def submit_alert() -> None:
+        # Kontrola a uložení alertu; engine ho hned začne vyhodnocovat
+        expires_at = None
+        if not alert_open_ended.value:
+            try:
+                expires_at = int(datetime.fromisoformat(alert_expiration.value).timestamp() * 1000)
+            except (TypeError, ValueError):
+                ui.notify("Zadejte platné datum a čas expirace.", type="warning")
+                return
+            if expires_at <= utc_now_ms():
+                ui.notify("Expirace musí být v budoucnosti.", type="warning")
+                return
+        data = {
+            "source": alert_form["source"],
+            "symbol": alert_form["symbol"],
+            "timeframe": alert_form["timeframe"],
+            "condition": alert_condition.value,
+            "target": alert_target_from_form(),
+            "trigger": alert_trigger.value,
+            "expires_at": expires_at,
+            "message": alert_message.value,
+            "notify": {
+                "telegram": alert_notify_telegram.value,
+                "toast": alert_notify_toast.value,
+                "sound": alert_notify_sound.value,
+                "webhook": alert_webhook_url.value if alert_notify_webhook.value else "",
+            },
+        }
+        try:
+            spec = normalize_alert(data)
+        except ValueError as exc:
+            ui.notify(str(exc), type="warning")
+            return
+        if alert_notify_webhook.value and not spec["notify"]["webhook"]:
+            ui.notify("Zadejte Webhook URL, nebo webhook vypněte.", type="warning")
+            return
+        alert_dialog.close()
+        await cache.save_alert(spec, alert_form["id"])
+        await alert_engine.reload()
+        show_status(f"Alert {'upraven' if alert_form['id'] else 'vytvořen'}: {spec['message']}")
+
+    async def set_alert_active(alert: dict, active: bool) -> None:
+        # Pozastavení / obnovení alertu (obnovený začne vyhodnocovat od další ceny)
+        await cache.set_alert_state(alert["id"], active, "active" if active else "paused")
+        await alert_engine.reload()
+
+    async def delete_alert(alert: dict) -> None:
+        await cache.delete_alert(alert["id"])
+        await alert_engine.reload()
+        show_status(f"Alert {alert['symbol']} smazán.")
+
+    async def refresh_alerts_ui() -> None:
+        # Počet aktivních alertů v liště, čáry alertů v grafu a otevřený seznam
+        alerts = await cache.alerts()
+        active = sum(1 for alert in alerts if alert["active"])
+        alerts_badge.text = str(active)
+        alerts_badge.set_visibility(active > 0)
+        await push_alert_lines(alerts)
+        if alerts_dialog.value:
+            render_alerts_list(alerts)
+            await render_alert_log()
+
+    async def push_alert_lines(alerts: list[dict] | None = None) -> None:
+        # Čárkované čáry aktivních cenových alertů zobrazeného symbolu (všechny timeframy)
+        if alerts is None:
+            alerts = await cache.alerts(active_only=True)
+        lines = [
+            {"price": alert["target"]["price"], "title": "Alert"}
+            for alert in alerts
+            if alert["active"]
+            and alert["source"] == state.get("provider_id")
+            and alert["symbol"] == state.get("symbol")
+            and alert["target"]["type"] == "value"
+        ]
+        chart.set_alert_lines(lines)
+
+    def make_alert_action(action: str, alert: dict):
+        async def _handler(_event=None):
+            if action == "edit":
+                await open_alert_dialog(alert)
+            elif action == "pause":
+                await set_alert_active(alert, False)
+            elif action == "resume":
+                await set_alert_active(alert, True)
+            elif action == "delete":
+                await delete_alert(alert)
+            elif action == "show":
+                alerts_dialog.close()
+                await load_symbol(f"{alert['source']}:{alert['symbol']}")
+
+        return _handler
+
+    def render_alerts_list(alerts: list[dict]) -> None:
+        # Seznam alertů: symbol a timeframe, podmínka a trigger, zpráva, stav a akce
+        alerts_list.clear()
+        with alerts_list:
+            if not alerts:
+                ui.label("Žádné alerty – vytvořte je tlačítkem Alert nebo pravým klikem do grafu.").classes("alert-empty")
+            for alert in alerts:
+                status = alert["status"] if alert["status"] in STATUSES else "active"
+                with ui.row().classes("alert-row w-full").on("click", make_alert_action("show", alert)):
+                    with ui.column().classes("alert-text"):
+                        ui.label(f"{alert['symbol']}, {alert['timeframe']}").classes("alert-symbol")
+                        ui.label(describe_alert(alert)).classes("alert-desc")
+                        ui.label(alert["message"]).classes("alert-msg")
+                        details = []
+                        if alert.get("expires_at"):
+                            details.append(f"vyprší {format_local_time(alert['expires_at'])}")
+                        if alert.get("fire_count"):
+                            details.append(f"spuštěno {alert['fire_count']}×, naposledy {format_local_time(alert['last_fired_at'])}")
+                        if details:
+                            ui.label(" · ".join(details)).classes("alert-msg")
+                    ui.space()
+                    ui.label(STATUSES[status]).classes(f"alert-status alert-status-{status}")
+                    # Akce nesmí zároveň přepnout graf (.stop zastaví klik řádku)
+                    toggle = ("pause", "pause", "Pozastavit") if alert["active"] else ("resume", "play_arrow", "Spustit znovu")
+                    for action, icon, tooltip in (toggle, ("edit", "edit", "Upravit"), ("delete", "close", "Smazat")):
+                        ui.button(icon=icon, color=None).props("flat dense round size=sm").classes("alert-btn").tooltip(
+                            tooltip
+                        ).on("click.stop", make_alert_action(action, alert))
+
+    async def render_alert_log() -> None:
+        # Log spuštěných alertů s výsledkem odeslání notifikací
+        entries = await cache.alert_log()
+        alert_log_list.clear()
+        with alert_log_list:
+            if not entries:
+                ui.label("Zatím se žádný alert nespustil.").classes("alert-empty")
+            for entry in entries:
+                with ui.row().classes("alert-row w-full"):
+                    with ui.column().classes("alert-text"):
+                        ui.label(f"{entry['symbol']}, {entry['timeframe']} · {format_price(entry['price'])}").classes(
+                            "alert-symbol"
+                        )
+                        ui.label(entry["message"]).classes("alert-msg")
+                    ui.space()
+                    for result in entry["delivery"]:
+                        chip = ui.label(("✓ " if result["ok"] else "✗ ") + result["channel"]).classes(
+                            "alert-delivery " + ("ok" if result["ok"] else "failed")
+                        )
+                        if result.get("error"):
+                            chip.tooltip(result["error"])
+                    ui.label(format_local_time(entry["fired_at"], with_date=False)).classes("alert-time")
+
+    async def clear_alert_log() -> None:
+        await cache.clear_alert_log()
+        await render_alert_log()
+
+    async def open_alerts_dialog() -> None:
+        # Správa alertů: seznam a log spuštění
+        render_alerts_list(await cache.alerts())
+        await render_alert_log()
+        alerts_dialog.open()
+
+    async def open_alert_for_chart() -> None:
+        # Tlačítko Alert v liště: alert na poslední cenu zobrazeného symbolu
+        await open_alert_dialog()
+
+    def on_alert_event(event: dict) -> None:
+        # Událost enginu alertů (z úlohy na pozadí): toast a zvuk se vytvoří
+        # v kontextu stránky, seznam a čáry se obnoví asynchronně
+        event_type = event.get("type")
+        if event_type == "log_changed":
+            # Nový záznam logu mění jen otevřený log (seznam ani čáry ne)
+            if alerts_dialog.value:
+                background_tasks.create(render_alert_log())
+            return
+        if event_type == "fired":
+            with page_root:
+                if event.get("toast"):
+                    ui.notify(
+                        f"⏰ {event['message']}",
+                        type="warning",
+                        position="top-right",
+                        close_button="OK",
+                        timeout=20000,
+                        multi_line=True,
+                    )
+                if event.get("sound"):
+                    chart.play_sound()
+        background_tasks.create(refresh_alerts_ui())
+
     # ---------- UI ----------
 
-    with ui.column().classes("page-root w-full"):
+    with ui.column().classes("page-root w-full") as page_root:
         with ui.row().classes("topbar w-full"):
             ui.label("TickView").classes("brand")
-            with ui.element("div").classes("search-wrap"):
-                search_input = ui.input(placeholder="Hledat symbol (MSFT…)…").classes(
-                    "symbol-search"
-                ).props("debounce=300 outlined dense")
-                suggestions_container = ui.column().classes("autocomplete hidden")
+            # Pilulka s aktuálním symbolem (jako v TradingView): klik otevře hledání
+            with (
+                ui.button(color=None, on_click=lambda: open_symbol_search())
+                .props("flat dense no-caps")
+                .classes("symbol-pill")
+                .tooltip("Hledat symbol (nebo začněte psát nad grafem)")
+            ):
+                ui.icon("search").classes("symbol-pill-icon")
+                symbol_pill_label = ui.label("—").classes("symbol-pill-text")
             # Položky nabídek timeframů a typů grafu (zvýraznění aktuální přes mark_active)
             timeframe_items: dict = {}
             chart_type_items: dict = {}
@@ -1751,6 +2308,15 @@ async def _build_index(cache: KlineCache) -> None:
                     "Typ grafu"
                 ):
                     chart_type_menu = ui.menu().classes("chart-type-menu")
+            # Alerty: vytvoření alertu pro graf a správa alertů s počtem aktivních
+            ui.button("Alert", icon="alarm_add", color=None, on_click=open_alert_for_chart).props(
+                "flat dense no-caps"
+            ).classes("topbar-btn").tooltip("Vytvořit alert pro aktuální symbol")
+            with ui.button(icon="notifications", color=None, on_click=open_alerts_dialog).props(
+                "flat dense round"
+            ).classes("topbar-btn").tooltip("Alerty a jejich log"):
+                alerts_badge = ui.badge("0").props("floating").classes("alerts-badge")
+                alerts_badge.set_visibility(False)
             source_badge = ui.badge("—").classes("source-badge")
             theme_switch = ui.switch("Tmavý motiv", value=dark)
             ui.button("Indikátory", icon="add_chart", on_click=open_indicator_dialog).props(
@@ -1820,6 +2386,7 @@ async def _build_index(cache: KlineCache) -> None:
                     # Definice skupin pro flyout nabídky lišty a SVG ikony (můžou
                     # přijít i před init grafu)
                     chart.set_icons(ICONS)
+                    chart.set_alert_kinds(list(LINE_KINDS))
                     chart.set_tool_groups(DRAWING_GROUPS)
                 # Stavová lišta: zprávy vlevo, vpravo seance (RTH/ETH) a hodiny
                 # s volbou časového pásma (jako v TradingView)
@@ -1936,6 +2503,18 @@ async def _build_index(cache: KlineCache) -> None:
             drawing_color = ColorButton(DEFAULT_DRAWING_COLOR, title="Barva kresby")
         drawing_width = ui.select(DRAWING_LINE_WIDTHS, value=DEFAULT_LINE_WIDTH, label="Šířka čáry").props("outlined dense").classes("w-full")
         drawing_style = ui.select(DRAWING_LINE_STYLES, value="solid", label="Styl čáry").props("outlined dense").classes("w-full")
+        # Pozice (Long / Short): parametry výpočtu množství a ceny úrovní
+        with ui.column().classes("position-fields w-full") as position_fields:
+            ui.label("Inputs").classes("tv-settings-section")
+            position_account = ui.number("Velikost účtu", value=POSITION_DEFAULTS["accountSize"], min=0).props("outlined dense")
+            with ui.row().classes("position-row w-full"):
+                position_risk = ui.number("Riziko", value=POSITION_DEFAULTS["risk"], min=0).props("outlined dense")
+                position_risk_unit = ui.select(POSITION_RISK_UNITS, value=POSITION_DEFAULTS["riskUnit"]).props("outlined dense")
+            position_lot = ui.number("Velikost lotu", value=POSITION_DEFAULTS["lotSize"], min=0).props("outlined dense")
+            ui.label("Úrovně").classes("tv-settings-section")
+            position_entry = ui.number("Vstup (cena)").props("outlined dense")
+            position_target = ui.number("Cíl – Profit level (cena)").props("outlined dense")
+            position_stop = ui.number("Stop level (cena)").props("outlined dense")
         with ui.row().classes("tv-settings-actions w-full"):
             drawing_templates = TemplateMenu(
                 cache,
@@ -1963,6 +2542,9 @@ async def _build_index(cache: KlineCache) -> None:
                 chart_fields[f"{prefix}_down"] = ColorButton(CHART_DEFAULTS[f"{prefix}_down"], title=f"{label} – pokles")
         ui.label("Objem").classes("tv-settings-section")
         volume_checkbox = ui.checkbox("Objem (Volume)")
+        volume_note = ui.label(
+            "Zdroj u tohoto instrumentu objem neposílá (forex IBKR MIDPOINT, indexy) – objem se nezobrazí."
+        ).classes("settings-note volume-note")
         with ui.row().classes("tv-settings-actions w-full"):
             chart_templates = TemplateMenu(
                 cache,
@@ -1977,9 +2559,21 @@ async def _build_index(cache: KlineCache) -> None:
         chart_field.on_value_change(lambda _event: preview_chart_style())
     chart_settings_dialog.on_value_change(on_chart_dialog_change)
 
-    # Dialog nastavení API klíčů (volitelný zdroj Alpaca)
+    # Dialog nastavení: Telegram pro alerty a API klíče Alpaca (config.yaml)
     with ui.dialog() as settings_dialog, ui.card().classes("settings-dialog"):
         with ui.column().classes("indicator-dialog-body"):
+            ui.label("Telegram (alerty)").classes("tv-settings-section")
+            ui.label(
+                "Bota založíte u @BotFather (příkaz /newbot), token vložte sem. Pak botovi napište "
+                "(např. /start) a tlačítkem Zjistit chat ID se chat doplní sám. Ukládá se do "
+                "config.yaml (necommituje se) a platí hned."
+            ).classes("settings-note")
+            settings_telegram_token = ui.input("Bot token").props("outlined dense type=password")
+            settings_telegram_chat = ui.input("Chat ID").props("outlined dense")
+            with ui.row().classes("dialog-actions"):
+                ui.button("Zjistit chat ID", on_click=detect_telegram_chat).props("flat no-caps")
+                ui.button("Odeslat test", on_click=test_telegram).props("flat no-caps")
+            ui.label("Alpaca").classes("tv-settings-section")
             ui.label(
                 "API klíče Alpaca – uloží se lokálně do config.yaml v kořenu projektu "
                 "(nikdy se necommitují). Po uložení restartujte aplikaci."
@@ -1990,13 +2584,91 @@ async def _build_index(cache: KlineCache) -> None:
                 ui.button("Uložit", on_click=save_settings).props("unelevated")
                 ui.button("Zrušit", on_click=settings_dialog.close).props("flat")
 
+    # Hledání symbolu ve stylu TradingView: pole, kategorie, zdroj a výsledky
+    with ui.dialog().props("position=top") as symbol_search_dialog, ui.card().classes("sym-dialog"):
+        with ui.row().classes("sym-search-row w-full"):
+            symbol_search_input = (
+                ui.input(placeholder="Symbol, název nebo ISIN…", on_change=on_search_input)
+                .props("borderless dense autofocus clearable debounce=250")
+                .classes("sym-search-input")
+            )
+            with symbol_search_input.add_slot("prepend"):
+                ui.icon("search")
+            ui.button(icon="close", color=None, on_click=symbol_search_dialog.close).props("flat dense round")
+        with ui.row().classes("sym-chips w-full"):
+            search_chips = {
+                key: ui.button(label, color=None, on_click=make_search_category(key)).props("flat dense no-caps rounded").classes("sym-chip")
+                for key, label in SEARCH_CATEGORIES.items()
+            }
+            ui.space()
+            ui.select(
+                {"all": "Všechny zdroje", **{provider.id: provider.name for provider in PROVIDERS}},
+                value="all",
+                on_change=set_search_source,
+            ).props("dense borderless options-dense").classes("sym-source-select")
+        symbol_search_results = ui.column().classes("sym-results w-full")
+    symbol_search_input.on("keydown.enter", pick_highlighted)
+    symbol_search_input.on("keydown.arrow-down", lambda _e: move_search_highlight(1))
+    symbol_search_input.on("keydown.arrow-up", lambda _e: move_search_highlight(-1))
+
+    # Dialog vytvoření / úpravy alertu (jako „Create alert on …“ v TradingView)
+    with ui.dialog() as alert_dialog, ui.card().classes("tv-settings alert-dialog"):
+        alert_dialog_title = settings_header(alert_dialog, "Create alert")
+        with ui.grid(columns="110px 1fr").classes("alert-grid w-full"):
+            ui.label("Condition").classes("alert-label")
+            with ui.column().classes("alert-field"):
+                ui.label("Price").classes("alert-static")
+                alert_condition = ui.select(CONDITIONS, value="crossing").props("outlined dense").classes("w-full")
+                alert_target = ui.select({"value": "Cena (hodnota)"}, value="value").props("outlined dense").classes("w-full")
+                alert_price = ui.number("Cena").props("outlined dense").classes("w-full")
+            ui.label("Trigger").classes("alert-label")
+            alert_trigger = ui.select(TRIGGERS, value="once").props("outlined dense").classes("w-full")
+            ui.label("Expiration").classes("alert-label")
+            with ui.column().classes("alert-field"):
+                alert_expiration = ui.input().props("outlined dense type=datetime-local").classes("w-full")
+                alert_open_ended = ui.checkbox("Bez expirace (open-ended)")
+            ui.label("Message").classes("alert-label")
+            with ui.column().classes("alert-field"):
+                alert_message = ui.textarea().props("outlined dense autogrow").classes("w-full")
+                ui.label("Zástupné texty: {{ticker}} {{exchange}} {{interval}} {{close}} {{time}}").classes("settings-note")
+            ui.label("Notifications").classes("alert-label")
+            with ui.column().classes("alert-field"):
+                alert_notify_telegram = ui.checkbox("Telegram")
+                alert_telegram_note = ui.label("Telegram není nastavený – ozubené kolečko v horní liště → Telegram.").classes(
+                    "settings-note"
+                )
+                alert_notify_toast = ui.checkbox("Toast v aplikaci")
+                alert_notify_sound = ui.checkbox("Přehrát zvuk")
+                alert_notify_webhook = ui.checkbox("Webhook URL")
+                alert_webhook_url = ui.input(placeholder="https://…").props("outlined dense").classes("w-full")
+        with ui.row().classes("tv-settings-actions w-full"):
+            ui.space()
+            ui.button("Cancel", on_click=alert_dialog.close, color=None).props("outline no-caps").classes("tv-btn-cancel")
+            alert_submit = ui.button("Create", on_click=submit_alert, color=None).props("unelevated no-caps").classes("tv-btn-ok")
+    for alert_field in (alert_condition, alert_target, alert_price):
+        alert_field.on_value_change(lambda _event: refresh_alert_message())
+    alert_message.on_value_change(on_alert_message_change)
+    alert_webhook_url.bind_visibility_from(alert_notify_webhook, "value")
+    alert_expiration.bind_visibility_from(alert_open_ended, "value", backward=lambda value: not value)
+
+    # Správa alertů: seznam (pozastavit, upravit, smazat) a log spuštění
+    with ui.dialog() as alerts_dialog, ui.card().classes("tv-settings alerts-dialog"):
+        settings_header(alerts_dialog, "Alerty")
+        with ui.tabs().classes("alerts-tabs w-full") as alerts_tabs:
+            alerts_tab = ui.tab("Alerty")
+            log_tab = ui.tab("Log")
+        with ui.tab_panels(alerts_tabs, value=alerts_tab).classes("alerts-panels w-full"):
+            with ui.tab_panel(alerts_tab):
+                alerts_list = ui.column().classes("alerts-list w-full")
+            with ui.tab_panel(log_tab):
+                alert_log_list = ui.column().classes("alerts-list w-full")
+                with ui.row().classes("w-full"):
+                    ui.space()
+                    ui.button("Vymazat log", icon="delete_sweep", color=None, on_click=clear_alert_log).props(
+                        "flat dense no-caps"
+                    )
+
     # ---------- vazby ----------
-    # Hledání: psaní hned filtruje návrhy (debounce na QInput), Enter přidá do watchlistu
-    search_input.on_value_change(lambda event: search_symbols())
-    search_input.on("keydown.enter", add_search_to_watchlist)
-    search_input.on("keydown.arrow-down", lambda _e: move_highlight(1))
-    search_input.on("keydown.arrow-up", lambda _e: move_highlight(-1))
-    search_input.on("keydown.escape", lambda _e: hide_suggestions())
     timeframe_toggle.on_value_change(lambda event: set_timeframe(event.value))
     theme_switch.on_value_change(lambda event: toggle_theme(bool(event.value)))
 
@@ -2009,5 +2681,13 @@ async def _build_index(cache: KlineCache) -> None:
     # Naplnění watchlistu z databáze po načtení stránky
     ui.timer(0.2, rebuild_watchlist, once=True)
 
-    # Při odpojení klienta ukončíme jeho živý stream, aby nezůstal běžet
-    context.client.on_disconnect(cancel_stream)
+    # Alerty: stránka dostává události enginu (toast, zvuk, obnova seznamu)
+    alert_engine.add_listener(on_alert_event)
+    ui.timer(0.3, refresh_alerts_ui, once=True)
+
+    def on_disconnect() -> None:
+        # Při odpojení klienta ukončíme jeho živý stream a odhlásíme ho od alertů
+        cancel_stream()
+        alert_engine.remove_listener(on_alert_event)
+
+    context.client.on_disconnect(on_disconnect)

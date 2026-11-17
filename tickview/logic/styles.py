@@ -53,11 +53,51 @@ def clamp_font_size(value) -> int:
         return DEFAULT_FONT_SIZE
 
 
-def normalize_drawing_style(values) -> dict:
+# Kresby pozic (Long / Short position) a jejich výchozí parametry výpočtu:
+# velikost účtu, riziko (v % účtu nebo částkou) a velikost lotu
+POSITION_KINDS = ("long", "short")
+POSITION_DEFAULTS: dict = {"accountSize": 10000.0, "risk": 1.0, "riskUnit": "percent", "lotSize": 1.0}
+# Jednotky rizika pozice s popisky pro dialog Settings
+POSITION_RISK_UNITS = {"percent": "% účtu", "amount": "Částka"}
+
+
+def _positive_number(value, default: float) -> float:
+    """Kladné konečné číslo z dialogu / šablony; jinak výchozí hodnota."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    return number if 0 < number < 1e15 else default
+
+
+def normalize_position_options(options) -> dict:
+    """Parametry pozice (Long / Short) s doplněnými výchozími hodnotami.
+
+    Riziko v procentech je omezené na 100 % účtu.
+
+    Parametry:
+        options: {"accountSize", "risk", "riskUnit", "lotSize"} – může být neúplný.
+    """
+    source = options if isinstance(options, dict) else {}
+    unit = source.get("riskUnit") if source.get("riskUnit") in POSITION_RISK_UNITS else POSITION_DEFAULTS["riskUnit"]
+    risk = _positive_number(source.get("risk"), POSITION_DEFAULTS["risk"])
+    if unit == "percent":
+        risk = min(risk, 100.0)
+    return {
+        "accountSize": _positive_number(source.get("accountSize"), POSITION_DEFAULTS["accountSize"]),
+        "risk": risk,
+        "riskUnit": unit,
+        "lotSize": _positive_number(source.get("lotSize"), POSITION_DEFAULTS["lotSize"]),
+    }
+
+
+def normalize_drawing_style(values, kind: str | None = None) -> dict:
     """Styl kresby (šablona, dialog, výchozí styl nových kreseb) s doplněnými výchozími hodnotami.
 
     Parametry:
         values: {"color", "options": {"width", "lineStyle", "fontSize"}} – může být neúplný.
+        kind: druh kresby; pozice (POSITION_KINDS) mají v options navíc
+            parametry výpočtu (velikost účtu, riziko, lot).
 
     Vrací {"color", "options"} s platnou barvou, šířkou, stylem čáry a písmem.
     """
@@ -65,7 +105,7 @@ def normalize_drawing_style(values) -> dict:
     options = source.get("options") if isinstance(source.get("options"), dict) else {}
     width = options.get("width")
     line_style = options.get("lineStyle")
-    return {
+    style = {
         "color": normalize_color(source.get("color")) or DEFAULT_DRAWING_COLOR,
         "options": {
             "width": width if width in DRAWING_LINE_WIDTHS else DEFAULT_LINE_WIDTH,
@@ -73,6 +113,37 @@ def normalize_drawing_style(values) -> dict:
             "fontSize": clamp_font_size(options.get("fontSize")),
         },
     }
+    if kind in POSITION_KINDS:
+        style["options"].update(normalize_position_options(options))
+    return style
+
+
+def normalize_position_points(kind: str, entry, target, stop, points: list[dict]) -> list[dict]:
+    """Body pozice s cenami z dialogu Settings; špatné pořadí cen vyhodí ValueError.
+
+    Long musí mít stop < vstup < cíl, short cíl < vstup < stop. Časy bodů
+    (začátek a konec pozice) zůstanou z původní kresby.
+
+    Parametry:
+        kind: "long" nebo "short".
+        entry, target, stop: ceny vstupu, cíle a stopu.
+        points: původní body kresby [vstup, cíl, stop].
+    """
+    try:
+        entry, target, stop = float(entry), float(target), float(stop)
+    except (TypeError, ValueError):
+        raise ValueError("Zadejte ceny vstupu, cíle a stopu.") from None
+    if kind == "long" and not stop < entry < target:
+        raise ValueError("Long pozice musí mít stop pod vstupem a cíl nad ním.")
+    if kind == "short" and not target < entry < stop:
+        raise ValueError("Short pozice musí mít cíl pod vstupem a stop nad ním.")
+    if len(points) < 3:
+        raise ValueError("Neplatná pozice.")
+    return [
+        {"time": int(points[0]["time"]), "price": entry},
+        {"time": int(points[1]["time"]), "price": target},
+        {"time": int(points[2]["time"]), "price": stop},
+    ]
 
 
 # Typy grafu jako v TradingView, po sekcích nabídky: (id, popisek, ikona)

@@ -206,6 +206,18 @@ class LightweightChart(ui.element):
         """Zapne/vypne zobrazení objemu v grafu."""
         self._call("setVolumeVisible", visible)
 
+    def set_alert_lines(self, lines: list[dict]) -> None:
+        """Čárkované čáry aktivních cenových alertů symbolu: [{"price", "title"}]."""
+        self._call("setAlertLines", lines)
+
+    def set_alert_kinds(self, kinds: list[str]) -> None:
+        """Druhy kreseb, u kterých kontextové menu nabídne „Přidat alert…“ (logic.alerts.LINE_KINDS)."""
+        self._call("setAlertKinds", kinds)
+
+    def play_sound(self) -> None:
+        """Přehraje krátký tón spuštěného alertu (Web Audio v prohlížeči)."""
+        self._call("playSound")
+
     async def assign_drawing_id(self, local_id: int, drawing_id: int) -> None:
         """Přiřadí nově uložené kresbě její id z databáze (podle lokálního id z grafu)."""
         self._call("assignDrawingId", int(local_id), int(drawing_id))

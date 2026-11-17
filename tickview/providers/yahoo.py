@@ -21,8 +21,8 @@ from tickview.providers.base import (
     poll_seconds_for,
 )
 
-# Typy instrumentů z vyhledávání Yahoo, které umíme zobrazit
-SEARCH_QUOTE_TYPES = {"EQUITY", "ETF", "INDEX", "CURRENCY"}
+# Typy instrumentů z vyhledávání Yahoo, které umíme zobrazit (quoteType) → druh instrumentu pro kategorie vyhledávání
+QUOTE_TYPE_KINDS = {"EQUITY": "stock", "ETF": "fund", "INDEX": "index", "CURRENCY": "forex"}
 # Časová pásma burz podle přípony symbolu Yahoo (bez přípony = USA)
 SUFFIX_TIMEZONES = {
     "=X": "Europe/London",
@@ -141,10 +141,10 @@ class YahooProvider(DataProvider):
         if not q:
             # Prázdný dotaz: pár oblíbených tickers pro rychlý start
             popular = [
-                SymbolInfo(self.id, "AAPL", "AAPL – Apple Inc. (NMS)"),
-                SymbolInfo(self.id, "MSFT", "MSFT – Microsoft Corporation (NMS)"),
-                SymbolInfo(self.id, "^GSPC", "^GSPC – S&P 500 (SPX)"),
-                SymbolInfo(self.id, "EURUSD=X", "EURUSD=X – EUR/USD (CCY)"),
+                SymbolInfo(self.id, "AAPL", "AAPL – Apple Inc. (NMS)", "Apple Inc.", "stock", "NASDAQ"),
+                SymbolInfo(self.id, "MSFT", "MSFT – Microsoft Corporation (NMS)", "Microsoft Corporation", "stock", "NASDAQ"),
+                SymbolInfo(self.id, "^GSPC", "^GSPC – S&P 500 (SPX)", "S&P 500", "index", "SNP"),
+                SymbolInfo(self.id, "EURUSD=X", "EURUSD=X – EUR/USD (CCY)", "EUR/USD", "forex", "CCY"),
             ]
             return popular
 
@@ -158,9 +158,12 @@ class YahooProvider(DataProvider):
                 provider_id=self.id,
                 symbol=item["symbol"],
                 label=f"{item['symbol']} – {item.get('shortname') or item.get('longname') or '?'}",
+                description=item.get("longname") or item.get("shortname") or "",
+                kind=QUOTE_TYPE_KINDS.get(item.get("quoteType"), ""),
+                exchange=item.get("exchDisp") or item.get("exchange") or "",
             )
             for item in quotes
-            if item.get("quoteType") in SEARCH_QUOTE_TYPES and item.get("symbol")
+            if item.get("quoteType") in QUOTE_TYPE_KINDS and item.get("symbol")
         ]
 
     @staticmethod

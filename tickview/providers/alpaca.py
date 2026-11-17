@@ -144,6 +144,9 @@ class AlpacaProvider(DataProvider):
                     provider_id=self.id,
                     symbol=item["symbol"],
                     label=f"{item['symbol']} – {item.get('name') or '?'}",
+                    description=item.get("name") or "",
+                    kind="stock",
+                    exchange=item.get("exchange") or "",
                 )
                 for item in data
                 if item.get("tradable", True) and item.get("symbol")
