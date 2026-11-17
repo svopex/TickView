@@ -332,9 +332,16 @@ async def _build_index(
             source_badge.update()
 
     # Objekt stránky pro grafy rozložení (společné nastavení a hlášení stavu)
-    page = SimpleNamespace(cache=cache, state=state, show_status=pane_status, badge_changed=badge_changed)
+    page = SimpleNamespace(
+        cache=cache, state=state, show_status=pane_status, badge_changed=badge_changed,
+        pane_slot=panes.index,
+    )
 
     # ---------- replay (backtest ručních obchodů) ----------
+
+    def alerts_blocked() -> None:
+        """Hláška: graf v replayi ukazuje minulost, alerty v něm nejsou."""
+        show_status("Alerty v replayi nejsou k dispozici – graf ukazuje minulost.", True)
 
     def replay_rewind_mode() -> str:
         """Chování kroku zpět v replayi (Settings → Replay, config.yaml)."""
@@ -357,7 +364,7 @@ async def _build_index(
             show_time=lambda pane, time_ms: pane.chart.show_time(time_ms // 1000),
             replay_changed=lambda: (push_overview(), paint_badge()),
             delete_drawing=lambda pane, drawing_id: delete_pane_drawing(pane, drawing_id),
-            alerts_blocked=lambda: show_status("Alerty v replayi nejsou k dispozici – graf ukazuje minulost.", True),
+            alerts_blocked=lambda: alerts_blocked(),
             right_panel=lambda: state["right_panel"],
             show_sessions=lambda: show_right_panel("replay"),
         ),
@@ -604,6 +611,7 @@ async def _build_index(
         """Uloží rozložení, synchronizaci, aktivní graf a stav všech grafů (přetrvá restart).
 
         Scanner si z rozložení vezme úlohy (instance indikátorů se vstupy scanneru).
+        Indikátory grafů v replayi se uloží k otevřené session.
         """
         layout = {
             "layout": state["layout"],
@@ -611,8 +619,18 @@ async def _build_index(
             "active": state["active"],
             "panes": [pane.config() for pane in panes],
         }
-        await cache.set_setting(LAYOUT_SETTINGS_KEY, json.dumps(layout))
-        scanner.set_layout(layout)
+        # Nezměněné rozložení (aktivace grafu, úprava indikátorů session) se znovu nezapisuje
+        raw = json.dumps(layout)
+        if raw != state.get("saved_layout"):
+            state["saved_layout"] = raw
+            await cache.set_setting(LAYOUT_SETTINGS_KEY, raw)
+            scanner.set_layout(layout)
+        # Indikátory grafů v replayi patří k session (rozložení drží živé)
+        replay = replay_ui.controller
+        if replay.active:
+            await replay.save_pane_indicators(
+                {index: pane.indicators for index, pane in enumerate(panes) if pane.indicator_session == replay.session_id}
+            )
 
     def refresh_active_ui() -> None:
         """Horní lišta, watchlist a stavová lišta podle aktivního grafu."""
@@ -2236,6 +2254,10 @@ async def _build_index(
         if alert is None:
             if not pane.key:
                 ui.notify("Nejdřív zvolte symbol.", type="warning")
+                return
+            if pane.replay_covers():
+                # Všechny cesty k novému alertu (lišta, graf, legenda) – graf v replayi ukazuje minulost
+                alerts_blocked()
                 return
             source, symbol, timeframe = pane.provider_id, pane.symbol, pane.timeframe
         else:

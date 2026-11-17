@@ -105,7 +105,9 @@ CREATE TABLE IF NOT EXISTS alert_log (
 -- Session replaye (backtest ručních obchodů jako ve FX Replay): symbol,
 -- základní timeframe, začátek a kurzor (ms UTC), nastavení účtu (JSON),
 -- příkazy uživatele s časem zadání (JSON; stav účtu se z nich přepočítá),
--- poznámky a štítky obchodů (JSON) a souhrn pro seznam sessions (JSON)
+-- poznámky a štítky obchodů (JSON), souhrn pro seznam sessions (JSON) a
+-- indikátory grafů v session podle pořadí grafu v rozložení (JSON) – oddělené
+-- od živých grafů i od ostatních sessions
 CREATE TABLE IF NOT EXISTS replay_sessions (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     name        TEXT    NOT NULL,
@@ -118,6 +120,7 @@ CREATE TABLE IF NOT EXISTS replay_sessions (
     commands    TEXT    NOT NULL DEFAULT '[]',
     annotations TEXT    NOT NULL DEFAULT '{}',
     summary     TEXT    NOT NULL DEFAULT '{}',
+    indicators  TEXT    NOT NULL DEFAULT '{}',
     created_at  INTEGER NOT NULL,
     updated_at  INTEGER NOT NULL
 );
@@ -128,12 +131,13 @@ CREATE TABLE IF NOT EXISTS replay_sessions (
 DEFAULT_WATCHLIST_NAME = "Watchlist"
 
 # Migrace pro starší databáze: sloupce color, text a options (JSON se šířkou
-# a stylem čáry) v tabulce drawings – přidané dodatečně, CREATE TABLE IF NOT
-# EXISTS je do existující tabulky nepřidá
+# a stylem čáry) v tabulce drawings a indicators v replay_sessions – přidané
+# dodatečně, CREATE TABLE IF NOT EXISTS je do existující tabulky nepřidá
 _MIGRATIONS = """
 ALTER TABLE drawings ADD COLUMN color TEXT;
 ALTER TABLE drawings ADD COLUMN text TEXT;
 ALTER TABLE drawings ADD COLUMN options TEXT;
+ALTER TABLE replay_sessions ADD COLUMN indicators TEXT NOT NULL DEFAULT '{}';
 """
 
 
@@ -779,7 +783,7 @@ class KlineCache:
     # Sloupce tabulky replay_sessions v pořadí, v jakém je čte _replay_from_row
     _REPLAY_COLUMNS = (
         "id, name, source, symbol, base_tf, start_ms, cursor_ms, settings, commands, annotations, summary, "
-        "created_at, updated_at"
+        "created_at, updated_at, indicators"
     )
 
     @staticmethod
@@ -807,6 +811,7 @@ class KlineCache:
             "summary": parse(row[10], {}),
             "created_at": row[11],
             "updated_at": row[12],
+            "indicators": parse(row[13], {}),
         }
 
     async def replay_sessions(self) -> list[dict]:
@@ -845,17 +850,14 @@ class KlineCache:
         return await self._run(create_sync)
 
     async def update_replay_session(self, session_id: int, **fields) -> None:
-        """Uloží změněné části session (name, cursor_ms, settings, commands, annotations, summary).
+        """Uloží změněné části session (name, cursor_ms, settings, commands, annotations, summary, indicators).
 
         JSON sloupce se serializují; čas poslední změny se aktualizuje vždy.
         """
-        allowed = ("name", "cursor_ms", "settings", "commands", "annotations", "summary")
-        columns = [key for key in allowed if key in fields]
-        values = [
-            json.dumps(fields[key]) if key in ("settings", "commands", "annotations", "summary") else fields[key]
-            for key in columns
-        ]
-        # Názvy sloupců pocházejí z pevného seznamu allowed (žádný vstup uživatele v SQL)
+        json_columns = ("settings", "commands", "annotations", "summary", "indicators")
+        columns = [key for key in ("name", "cursor_ms", *json_columns) if key in fields]
+        values = [json.dumps(fields[key]) if key in json_columns else fields[key] for key in columns]
+        # Názvy sloupců pocházejí z pevného výčtu výše (žádný vstup uživatele v SQL)
         assignments = ", ".join(f"{key} = ?" for key in [*columns, "updated_at"])
         await self._run(
             self._execute_sync,

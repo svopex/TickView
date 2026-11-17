@@ -41,8 +41,9 @@ class ChartPane:
     Parametry:
         page: objekt stránky – atributy cache (KlineCache), state (společné
             nastavení: session, timezone, show_volume, chart_style, dark) a metody
-            show_status(pane, zpráva, error), badge_changed(pane) a replay
-            (ReplayController otevřené session replaye).
+            show_status(pane, zpráva, error), badge_changed(pane), replay
+            (ReplayController otevřené session replaye) a pane_slot(pane)
+            (pořadí grafu v rozložení – klíč indikátorů grafu v session).
         config: stav grafu {"symbol": "zdroj:symbol", "timeframe", "chart_type", "indicators"}.
         on_ready: async callback(pane) po inicializaci grafu v prohlížeči.
     """
@@ -57,7 +58,12 @@ class ChartPane:
         self.symbol: str | None = None
         self.timeframe: str = config["timeframe"]
         self.chart_type: str = config["chart_type"]
+        # Aktivní indikátory grafu: v živém režimu živá sada, v replayi sada session
         self.indicators: list[dict] = list(config.get("indicators") or [])
+        # Živá sada odložená, dokud graf ukazuje session (None = graf je v živém
+        # režimu); id session, jejíž sadu graf ukazuje (přepnutí ze session A do B)
+        self.live_indicators: list[dict] | None = None
+        self.indicator_session: int | None = None
         # Svíčky v grafu (podklad indikátorů); živý stream je průběžně doplňuje
         self.candles: list[Candle] | None = None
         # Název a burza zobrazeného instrumentu pro nadpis grafu
@@ -108,10 +114,16 @@ class ChartPane:
         return bool(replay and replay.active and self.key and self.key == replay.key)
 
     @property
+    def replay_session_id(self) -> int | None:
+        """Id session, ke které patří kresby a indikátory grafu (None = živý graf)."""
+        return self.page.replay.session_id if self.replay_covers() else None
+
+    @property
     def drawing_owner(self) -> tuple[str, str]:
         """(source, symbol) kreseb v databázi – kresby replaye patří k session, ne k živému symbolu."""
-        if self.replay_covers():
-            return replay_drawing_source(self.page.replay.session_id), self.symbol
+        session_id = self.replay_session_id
+        if session_id is not None:
+            return replay_drawing_source(session_id), self.symbol
         return self.provider_id, self.symbol
 
     def config(self) -> dict:
@@ -120,7 +132,8 @@ class ChartPane:
             "symbol": self.key or self.initial_key,
             "timeframe": self.timeframe,
             "chart_type": self.chart_type,
-            "indicators": self.indicators,
+            # Rozložení (a scanner) drží živé indikátory, sada session se ukládá k session
+            "indicators": self.live_indicators if self.live_indicators is not None else self.indicators,
         }
 
     def status(self, message: str, error: bool = False) -> None:
@@ -226,6 +239,23 @@ class ChartPane:
         if self.candles:
             merge_candle(self.candles, candle)
 
+    def _sync_indicator_set(self) -> None:
+        """Vymění aktivní indikátory podle režimu grafu: živá sada, nebo sada otevřené session.
+
+        Každá session má vlastní indikátory (jako kresby) a živý graf také;
+        při vstupu do session se živá sada odloží, při odchodu vrátí.
+        """
+        session_id = self.replay_session_id
+        if session_id == self.indicator_session:
+            return
+        if self.live_indicators is None:
+            self.live_indicators = self.indicators
+        if session_id is None:
+            self.indicators, self.live_indicators = self.live_indicators, None
+        else:
+            self.indicators = self.page.replay.pane_indicators(self.page.pane_slot(self), self.live_indicators)
+        self.indicator_session = session_id
+
     def required_bars(self) -> int:
         """Kolik svíček grafu potřebují aktivní indikátory (aspoň VISIBLE_BARS)."""
         needed = VISIBLE_BARS
@@ -280,6 +310,7 @@ class ChartPane:
         self.load_seq += 1
         seq = self.load_seq
         self.cancel_stream()
+        self._sync_indicator_set()
         if self.replay_covers():
             await self.reload_replay_chart(seq)
             return

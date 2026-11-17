@@ -1,7 +1,10 @@
 """Testy enginu replaye: plnění příkazů, stopy a cíle, náklady, převod měn, krok zpět, statistiky."""
 
+import tempfile
 import unittest
+from pathlib import Path
 
+from tickview.logic.cache import KlineCache, replay_drawing_source
 from tickview.logic.replay import (
     CurrencyConversion,
     ReplayEngine,
@@ -227,6 +230,30 @@ class BucketTests(unittest.TestCase):
         merged = merge_into(first, bar(91, 1.5, 3, 1, 2), 90 * MINUTE)
         self.assertEqual((merged.open, merged.high, merged.low, merged.close, merged.volume), (1, 3, 0.5, 2, 2))
 
+
+class SessionStorageTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.cache = KlineCache(Path(self.tmp.name) / "test.db")
+        await self.cache.init()
+
+    async def asyncTearDown(self):
+        await self.cache.close()
+        self.tmp.cleanup()
+
+    async def test_session_indicators_and_drawings_are_separate(self):
+        cache = self.cache
+        first = await cache.create_replay_session("A", "binance", "BTCUSDT", "1m", 0, settings())
+        second = await cache.create_replay_session("B", "binance", "BTCUSDT", "1m", 0, settings())
+        indicators = {"0": [{"id": "x", "kind": "sma", "params": {"length": 20}}]}
+        await cache.update_replay_session(first, indicators=indicators)
+        self.assertEqual((await cache.get_replay_session(first))["indicators"], indicators)
+        self.assertEqual((await cache.get_replay_session(second))["indicators"], {})
+        # Kresby session mají vlastní zdroj a smažou se se session
+        await cache.add_drawing(replay_drawing_source(first), "BTCUSDT", "1m", "hline", [{"time": 0, "price": 1}])
+        self.assertEqual(await cache.load_drawings("binance", "BTCUSDT"), [])
+        await cache.delete_replay_session(first)
+        self.assertEqual(await cache.load_drawings(replay_drawing_source(first), "BTCUSDT"), [])
 
 if __name__ == "__main__":
     unittest.main()

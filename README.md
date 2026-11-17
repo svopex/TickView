@@ -461,7 +461,12 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   štítku setupu) a export obchodů do CSV (středník, UTF-8 s BOM pro Excel).
   Výšku panelu obchodů i šířku pravého panelu lze měnit tažením jejich hrany
   (velikost si pamatuje prohlížeč).
-  Kresby v replayi patří k session (oddělené od živých kreseb symbolu).
+  Kresby i indikátory v replayi patří k session – každá session má vlastní
+  kresby a vlastní indikátory každého grafu rozložení (s nastavením
+  a stylem), oddělené od živého grafu i od ostatních sessions. Graf, který
+  do session vstoupí poprvé, převezme kopii svých živých indikátorů; dál
+  jsou sady nezávislé a po ukončení replaye se vrátí živé indikátory
+  (scanner počítá vždy jen s živými).
   Krok zpět (Settings → Replay): povolený a smaže příkazy a obchody po bodu
   návratu (výchozí), povolený po potvrzení, nebo zakázaný. Session se
   ukládá do SQLite (`replay_sessions`): příkazy s časem zadání, ze kterých

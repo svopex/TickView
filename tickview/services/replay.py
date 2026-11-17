@@ -8,10 +8,12 @@ s aktuálním stavem účtu. Grafy stránky si změny vyzvedávají přes callba
 
 import asyncio
 import bisect
+import copy
 import logging
 import time
 from typing import Awaitable, Callable, Optional
 
+from tickview.indicators.compute import normalize_indicators
 from tickview.logic.cache import KlineCache, fetch_history
 from tickview.logic.replay import (
     BASE_TIMEFRAME_CANDIDATES,
@@ -665,6 +667,37 @@ class ReplayController:
             self.on_state()
 
     # ----- data pro UI -----
+
+    def pane_indicators(self, slot: int, default: list[dict]) -> list[dict]:
+        """Indikátory grafu v otevřené session (podle pořadí grafu v rozložení).
+
+        Graf, který do session vstupuje poprvé, převezme kopii své živé sady
+        (hned se uloží k session); dál jsou obě sady nezávislé (změny ukládá
+        save_pane_indicators).
+
+        Parametry:
+            slot: pořadí grafu v rozložení.
+            default: živé indikátory grafu (výchozí sada pro novou session).
+        """
+        stored = self.session["indicators"]
+        if str(slot) not in stored:
+            stored[str(slot)] = copy.deepcopy(default)
+            asyncio.create_task(self.cache.update_replay_session(self.session_id, indicators=stored))
+        return normalize_indicators(stored[str(slot)])
+
+    async def save_pane_indicators(self, by_slot: dict[int, list[dict]]) -> None:
+        """Uloží indikátory grafů otevřené session ({pořadí grafu: indikátory}); beze změny se nezapisuje.
+
+        Kopie – seznam indikátorů grafu se mění na místě (přidání indikátoru).
+        """
+        stored = self.session["indicators"]
+        dirty = False
+        for slot, items in by_slot.items():
+            if stored.get(str(slot)) != items:
+                stored[str(slot)] = copy.deepcopy(items)
+                dirty = True
+        if dirty:
+            await self.cache.update_replay_session(self.session_id, indicators=stored)
 
     @property
     def revision(self) -> tuple:
