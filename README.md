@@ -1,6 +1,6 @@
 # TickView
 
-## PrvotniZadani
+## Prvotní zadaní
 
 Naprogramuj desktopovou/webovou aplikaci pro zobrazení burzovních a krypto grafů
 ve stylu TradingView. Musí běžet na Windows, macOS i Linuxu.
