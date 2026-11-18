@@ -1,0 +1,2 @@
+# Dávkové soubory Windows potřebují konce řádků CRLF (s LF cmd chybuje u skoků na návěští)
+*.bat text eol=crlf

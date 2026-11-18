@@ -13,23 +13,8 @@ if [ ! -x .venv/bin/python ]; then
     python3 -m venv .venv
 fi
 
-# Otisk requirements.txt – závislosti instalujeme jen při jejich změně
-requirements_hash() {
-    .venv/bin/python - <<'PY'
-import hashlib
-from pathlib import Path
-
-print(hashlib.sha256(Path("requirements.txt").read_bytes()).hexdigest())
-PY
-}
-
-stamp=".venv/.requirements.sha256"
-current_hash="$(requirements_hash)"
-if [ ! -f "$stamp" ] || [ "$(cat "$stamp")" != "$current_hash" ]; then
-    echo "Instaluji závislosti…"
-    .venv/bin/python -m pip install -r requirements.txt
-    printf '%s\n' "$current_hash" > "$stamp"
-fi
+# Závislosti se doinstalují jen při změně requirements.txt (společné s run-windows.bat)
+.venv/bin/python tools/ensure_requirements.py
 
 # Spuštění aplikace; všechny argumenty skriptu jdou přímo do main.py
 exec .venv/bin/python main.py "$@"

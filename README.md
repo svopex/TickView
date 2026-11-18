@@ -74,6 +74,15 @@ závislosti a spustí aplikaci):
 
 Parametry se předávají do `main.py`, např. `./run.sh --port 8090 --open`.
 
+Nejrychlejší spuštění na Windows: dvojklik na `run-windows.bat` v Průzkumníku
+(nebo `run-windows.bat` v příkazové řádce / PowerShellu). Skript najde Python
+3.11+ (launcher `py`, jinak `python` z PATH; když chybí, poradí instalaci
+z python.org), vytvoří `.venv`, doinstaluje závislosti při změně
+`requirements.txt` a spustí aplikaci. Bez parametrů rovnou otevře prohlížeč,
+jinak parametry předá do `main.py`, např. `run-windows.bat --port 8090 --open`.
+Při chybě okno nezavře, aby šla přečíst. Bez gitu stačí stáhnout ZIP
+z GitHubu (Code → Download ZIP) a rozbalit.
+
 Ruční spuštění na všech systémech (Windows, macOS, Linux):
 
     python3 -m venv .venv
@@ -82,7 +91,7 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
     pip install -r requirements.txt
     python main.py
 
-- Aplikace běží v prohlížeči na http://localhost:8080 (adresa se vypíše do konzole).
+- Aplikace běží v prohlížeči na http://localhost:8095 (adresa se vypíše do konzole).
 - Jiný port: `python main.py --port 8090`.
 - Automatické otevření prohlížeče: `python main.py --open`.
 - Nativní okno (ui.run(native=True)): `pip install pywebview` a `python main.py --native`.
@@ -676,6 +685,11 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   registrace statických souborů, spuštění UI
 - `run.sh` – zkrácené spuštění na macOS/Linux: příprava `.venv`, instalace
   závislostí při změně `requirements.txt` a předání parametrů do `main.py`
+- `run-windows.bat` – totéž pro Windows (dvojklik); navíc hledá Python 3.11+
+  a bez parametrů otevře prohlížeč. `.gitattributes` mu drží konce řádků CRLF
+- `tools/ensure_requirements.py` – společná část obou spouštěcích skriptů:
+  `pip install -r requirements.txt` jen při změně souboru (otisk SHA-256
+  v `.venv/.requirements.sha256`)
 - `tickview/config.py` – cesty k runtime datům, cache DB, načítání
   konfigurace `config.yaml` a zápis sekce se zachováním komentářů
 - `tickview/providers/base.py` – rozhraní DataProvider (search/history/stream/
@@ -822,6 +836,13 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
 - `tickview/ui/static/style.css` – styly UI
 - `tickview/ui/static/lightweight-charts.standalone.production.js` – vendored
   knihovna TradingView Lightweight Charts 4.2.3 (licence Apache-2.0)
+- `index.html` – prezentační web projektu pro GitHub Pages (zapnutí viz Web
+  projektu níže); styly, skript s ilustračním
+  grafem, přepínač motivu (podle prohlížeče / světlý / tmavý, volba se
+  pamatuje v prohlížeči) a ikona jsou v `site/` (`style.css`, `script.js`,
+  `theme.js`, `favicon.svg`),
+  `.nojekyll` vypíná zpracování Jekyllem. S aplikací nesouvisí – ta ho
+  nepoužívá ani neservíruje.
 - `tests/` – unit testy logiky (cache, indikátory, polling, omezovač dotazů,
   konfigurace, skládání timeframů, seance, časová pásma, forex, barvy,
   šablony a oblíbené nástroje; alerty, engine alertů, Telegram/webhook přes
@@ -831,6 +852,14 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   a časové připomínky; engine replaye – plnění, náklady, převod měn, krok
   zpět, statistiky); spuštění `python -m unittest` (spustí i testy
   vlastních indikátorů v `custom/<název>/tests/`)
+
+## Web projektu (GitHub Pages)
+
+Prezentační stránka je `index.html` v kořenu repozitáře (statická, bez build
+kroku). Zapnutí: na GitHubu Settings → Pages → Source „Deploy from a branch“,
+větev `main`, složka `/ (root)` → Save; web pak běží na
+https://svopex.github.io/TickView/. Lokální náhled:
+`python3 -m http.server` a otevřít http://localhost:8000/.
 
 ## Licence
 

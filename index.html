@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="cs">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TickView – grafy burz a kryptoměn</title>
+  <meta name="description" content="TickView je open-source aplikace pro burzovní a krypto grafy v Pythonu. Běží lokálně na Windows, macOS i Linuxu, používá bezplatné zdroje dat a nabízí indikátory, kreslení, alerty, scanner a replay.">
+  <meta name="theme-color" content="#0b0e14">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="TickView – grafy burz a kryptoměn">
+  <meta property="og:description" content="Open-source aplikace pro grafy akcií, forexu, futures a kryptoměn. Lokálně, zdarma, pouze pro čtení.">
+  <link rel="icon" href="site/favicon.svg" type="image/svg+xml">
+  <script src="site/theme.js"></script>
+  <link rel="stylesheet" href="site/style.css">
+  <script src="site/script.js" defer></script>
+</head>
+<body>
+
+  <!-- Horní navigace -->
+  <header class="site-header">
+    <div class="container header-inner">
+      <a class="brand" href="#top" aria-label="TickView – na začátek stránky">
+        <img src="site/favicon.svg" alt="" width="28" height="28">
+        <span>TickView</span>
+      </a>
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Otevřít menu">
+        <span></span><span></span><span></span>
+      </button>
+      <nav id="site-nav" class="site-nav">
+        <a href="#funkce">Funkce</a>
+        <a href="#zdroje">Zdroje dat</a>
+        <a href="#indikatory">Vlastní indikátory</a>
+        <a href="#instalace">Instalace</a>
+        <a class="nav-github" href="https://github.com/svopex/TickView">GitHub</a>
+      </nav>
+      <!-- Přepínač motivu: podle prohlížeče / světlý / tmavý (site/theme.js) -->
+      <button class="theme-toggle" type="button" data-mode="auto" aria-label="Motiv: podle prohlížeče (klik přepne)" title="Motiv: podle prohlížeče (klik přepne)">
+        <svg class="theme-icon theme-icon-auto" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
+        <svg class="theme-icon theme-icon-light" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <svg class="theme-icon theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main id="top">
+
+    <!-- Úvodní sekce s ukázkovým grafem -->
+    <section class="hero">
+      <div class="container hero-inner">
+        <div class="hero-copy">
+          <p class="eyebrow">Open source · Apache 2.0 · Python</p>
+          <h1>Grafy burz a kryptoměn, které běží <span class="accent">u&nbsp;vás</span></h1>
+          <p class="lead">
+            TickView je desktopová a webová aplikace pro svíčkové grafy akcií, ETF,
+            forexu, futures a kryptoměn. Data bere z bezplatných zdrojů, všechno ukládá
+            lokálně a nikdy nic neobchoduje – je pouze pro čtení.
+          </p>
+          <div class="hero-actions">
+            <a class="btn btn-primary" href="https://github.com/svopex/TickView">Zdrojový kód na GitHubu</a>
+            <a class="btn btn-ghost" href="#instalace">Jak spustit</a>
+          </div>
+          <ul class="pill-list" aria-label="Podporované platformy">
+            <li>Windows</li>
+            <li>macOS</li>
+            <li>Linux</li>
+            <li>Python 3.11+</li>
+          </ul>
+        </div>
+
+        <figure class="hero-window">
+          <div class="window-bar">
+            <span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span>
+            <span class="window-title">TickView</span>
+          </div>
+          <div class="window-toolbar">
+            <span class="symbol-pill">BTCUSDT</span>
+            <span class="tf-list"><span class="tf">1m</span><span class="tf">5m</span><span class="tf tf-active">15m</span><span class="tf">1h</span><span class="tf">4h</span><span class="tf">1D</span></span>
+            <span class="live-tag">živě</span>
+          </div>
+          <div class="chart-legend">
+            <strong>BTCUSDT · 15m · Binance</strong>
+            <span class="legend-values" id="legend-values">O <span data-field="open"></span> H <span data-field="high"></span> L <span data-field="low"></span> C <span data-field="close"></span> <span data-field="change"></span></span>
+            <span><span class="ma-fast">EMA 20</span> <span class="ma-slow">SMA 50</span></span>
+          </div>
+          <div class="hero-chart" id="hero-chart"></div>
+          <figcaption>Ilustrační graf s generovanými daty – najeďte myší pro crosshair.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <!-- Pás s klíčovými čísly -->
+    <section class="stats" aria-label="TickView v číslech">
+      <div class="container stats-grid">
+        <div class="stat"><strong>28</strong><span>vestavěných indikátorů + vlastní v Pythonu</span></div>
+        <div class="stat"><strong>11</strong><span>typů grafu od svíček po Heikin Ashi</span></div>
+        <div class="stat"><strong>1–16</strong><span>grafů najednou se synchronizací</span></div>
+        <div class="stat"><strong>4 + COT</strong><span>zdroje dat, většina bez API klíče</span></div>
+      </div>
+    </section>
+
+    <!-- Přehled funkcí -->
+    <section id="funkce" class="section">
+      <div class="container">
+        <header class="section-head">
+          <h2>Všechno, co od grafu čekáte</h2>
+          <p>Ovládání vychází z toho, na co jsou obchodníci zvyklí z webových platforem. Jen to běží na vašem počítači.</p>
+        </header>
+
+        <div class="feature-grid">
+          <article class="feature">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3v18M12 2v20M18 5v14"/><rect x="4" y="7" width="4" height="8" rx="1"/><rect x="10" y="5" width="4" height="11" rx="1"/><rect x="16" y="8" width="4" height="6" rx="1"/></svg>
+            <h3>Grafy a timeframy</h3>
+            <p>Svíčky, bary, Heikin Ashi, čára, plocha, baseline a další. Timeframy 1m až 1W, živé doplňování a automatické donačítání starší historie při posunu doleva.</p>
+          </article>
+          <article class="feature">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19 20 5"/><circle cx="4" cy="19" r="2"/><circle cx="20" cy="5" r="2"/><path d="M4 9h7M14 19h6"/></svg>
+            <h3>Kreslení</h3>
+            <p>Trendové čáry, kanály, Fibonacci, pitchfork, obdélníky, text, Long/Short position s výpočtem rizika a měřič. Kresby se ukládají k symbolu a jsou vidět na všech timeframech.</p>
+          </article>
+          <article class="feature">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 15c3 0 3-8 6-8s3 10 6 10 3-7 8-7"/></svg>
+            <h3>Indikátory</h3>
+            <p>SMA, EMA, VWAP, Bollinger, Ichimoku, Supertrend, RSI, MACD, Stochastic, ATR, OBV a další. Nastavitelné parametry, šablony, oblíbené a panely, které jde tažením zvětšovat i přeskládat.</p>
+          </article>
+          <article class="feature">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/></svg>
+            <h3>Více grafů najednou</h3>
+            <p>Rozložení až 16 grafů, každý s vlastním symbolem, timeframem a indikátory. Synchronizace symbolu, intervalu, crosshairu i časového rozsahu.</p>
+          </article>
+          <article class="feature">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h12M9 12h12M9 18h12"/><circle cx="4.5" cy="6" r="1.5"/><circle cx="4.5" cy="12" r="1.5"/><circle cx="4.5" cy="18" r="1.5"/></svg>
+            <h3>Watchlisty</h3>
+            <p>Libovolný počet seznamů symbolů s poslední cenou a denní změnou. Klik přepne graf, symboly lze řadit a stejný symbol může být ve více seznamech.</p>
+          </article>
+          <article class="feature">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 21h4"/></svg>
+            <h3>Alerty a notifikace</h3>
+            <p>Alert na cenu, na kreslenou čáru nebo na signál indikátoru. Vyhodnocuje je server na pozadí i bez otevřené stránky a posílá Telegram, webhook, toast nebo zvuk.</p>
+          </article>
+          <article class="feature">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/><path d="M8 11h6M11 8v6"/></svg>
+            <h3>Scanner</h3>
+            <p>Indikátor se signály projde až 40 symbolů napříč zdroji na zvoleném timeframu a výsledek ukáže v tabulce v grafu. Volitelně upozorní ještě před zavřením svíčky.</p>
+          </article>
+          <article class="feature">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="m10 9 5 3-5 3z"/></svg>
+            <h3>Replay a backtest</h3>
+            <p>Přehrajte historii svíčku po svíčce a obchodujte ručně na simulovaném účtu se spreadem, skluzem a komisí. Libovolný počet sessions, každá s vlastními obchody a kresbami.</p>
+          </article>
+          <article class="feature">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20V10M11 20V4M17 20v-7M2 20h20"/></svg>
+            <h3>COT report CFTC</h3>
+            <p>Pozice hedgerů, velkých spekulantů a drobných obchodníků a COT Index s daty zdarma z API CFTC. Trh se odvodí ze symbolu – futures, forex, kovy, indexy i krypto.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- Zdroje dat -->
+    <section id="zdroje" class="section section-alt">
+      <div class="container">
+        <header class="section-head">
+          <h2>Bezplatné zdroje dat</h2>
+          <p>Každý zdroj je samostatný modul se společným rozhraním. U každého symbolu vidíte, odkud data jsou a jestli jsou živá, nebo zpožděná.</p>
+        </header>
+
+        <div class="source-grid">
+          <article class="source">
+            <header><h3>Binance</h3><span class="tag tag-live">živě</span></header>
+            <p>Kryptoměny. Historie přes veřejné REST API, živé svíčky přes websocket s automatickým znovupřipojením.</p>
+            <p class="source-meta">Bez API klíče</p>
+          </article>
+          <article class="source">
+            <header><h3>Yahoo Finance</h3><span class="tag tag-delay">zpožděno</span></header>
+            <p>Akcie, ETF, fondy, indexy, forex a futures. Historie i průběžná aktualizace dotazováním, hlášení zavřeného trhu.</p>
+            <p class="source-meta">Bez API klíče</p>
+          </article>
+          <article class="source">
+            <header><h3>Alpaca</h3><span class="tag tag-live">živě</span></header>
+            <p>Americké akcie. Minutové bary přes websocket IEX, delší timeframy dotazováním. Zapne se po zadání klíčů.</p>
+            <p class="source-meta">Klíč zdarma (plán Basic)</p>
+          </article>
+          <article class="source">
+            <header><h3>Interactive Brokers</h3><span class="tag tag-mixed">podle předplatného</span></header>
+            <p>Přes TWS nebo IB Gateway: akcie, forex, spotové kovy, indexová CFD a kontinuální futures s automatickým rollem.</p>
+            <p class="source-meta">Účet IB (stačí demo)</p>
+          </article>
+          <article class="source">
+            <header><h3>CFTC</h3><span class="tag tag-delay">týdně</span></header>
+            <p>Commitments of Traders z veřejného API. Platnost od pátečního zveřejnění podle harmonogramu CFTC.</p>
+            <p class="source-meta">Bez API klíče</p>
+          </article>
+        </div>
+
+        <p class="note">
+          Historie se ukládá do lokální cache v SQLite a ze sítě se stahuje jen chybějící úsek.
+          Každý zdroj má vlastní omezovač dotazů a při chybě 429 čeká s exponenciálním odstupem.
+        </p>
+      </div>
+    </section>
+
+    <!-- Vlastní indikátory s ukázkou kódu -->
+    <section id="indikatory" class="section">
+      <div class="container split">
+        <div class="split-copy">
+          <h2>Vlastní indikátory v Pythonu</h2>
+          <p>
+            Indikátor je jedna třída v samostatném adresáři. Dostane svíčky jako pandas
+            DataFrame, parametry a kontext instrumentu a vrátí čáry, úrovně, úsečky,
+            značky, tabulky, barvu pozadí nebo signály.
+          </p>
+          <ul class="check-list">
+            <li>Formulář parametrů s kontrolou hodnot se vytvoří sám ze schématu.</li>
+            <li>Signály z indikátoru fungují v alertech i ve scanneru.</li>
+            <li>Indikátor si může vyžádat externí data, například COT report.</li>
+            <li>Testy indikátoru leží vedle něj a <code>python -m unittest</code> je najde.</li>
+          </ul>
+        </div>
+        <div class="code-card">
+          <div class="code-head">
+            <span>tickview/indicators/custom/ema_cross/indicator.py</span>
+          </div>
+<pre><code><span class="tok-k">from</span> tickview.indicators.api <span class="tok-k">import</span> Indicator, Line, Param, Result
+
+
+<span class="tok-k">class</span> <span class="tok-f">EmaCross</span>(Indicator):
+    id = <span class="tok-s">"ema_cross"</span>
+    title = <span class="tok-s">"EMA×"</span>
+    name = <span class="tok-s">"Křížení dvou EMA"</span>
+    params = [
+        Param.int(<span class="tok-s">"fast"</span>, <span class="tok-n">9</span>, <span class="tok-s">"Rychlá"</span>),
+        Param.int(<span class="tok-s">"slow"</span>, <span class="tok-n">21</span>, <span class="tok-s">"Pomalá"</span>),
+    ]
+
+    <span class="tok-k">def</span> <span class="tok-f">compute</span>(self, df, params, ctx):
+        close = df[<span class="tok-s">"close"</span>]
+        fast = close.ewm(span=params[<span class="tok-s">"fast"</span>]).mean()
+        slow = close.ewm(span=params[<span class="tok-s">"slow"</span>]).mean()
+        <span class="tok-k">return</span> Result(lines=[
+            Line(<span class="tok-s">"Rychlá"</span>, fast),
+            Line(<span class="tok-s">"Pomalá"</span>, slow),
+        ])
+
+
+INDICATOR = EmaCross()</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- Instalace a spuštění -->
+    <section id="instalace" class="section section-alt">
+      <div class="container">
+        <header class="section-head">
+          <h2>Instalace a spuštění</h2>
+          <p>Stačí Python 3.11 nebo novější. Aplikace se otevře v prohlížeči na <code>http://localhost:8095</code>, volitelně i v nativním okně.</p>
+        </header>
+
+        <div class="tabs">
+          <div class="tab-list" role="tablist" aria-label="Operační systém">
+            <button class="tab" type="button" role="tab" id="tab-unix" aria-controls="panel-unix" aria-selected="true">macOS / Linux</button>
+            <button class="tab" type="button" role="tab" id="tab-windows" aria-controls="panel-windows" aria-selected="false" tabindex="-1">Windows</button>
+          </div>
+
+          <div class="tab-panel" role="tabpanel" id="panel-unix" aria-labelledby="tab-unix">
+            <div class="terminal">
+              <button class="copy-btn" type="button" data-copy-target="cmd-unix">Kopírovat</button>
+<pre id="cmd-unix"><code>git clone https://github.com/svopex/TickView.git
+cd TickView
+./run.sh --open</code></pre>
+            </div>
+            <p class="hint">Skript <code>run.sh</code> vytvoří <code>.venv</code>, doinstaluje závislosti a spustí aplikaci.</p>
+          </div>
+
+          <div class="tab-panel" role="tabpanel" id="panel-windows" aria-labelledby="tab-windows" hidden>
+            <div class="terminal">
+              <button class="copy-btn" type="button" data-copy-target="cmd-windows">Kopírovat</button>
+<pre id="cmd-windows"><code>git clone https://github.com/svopex/TickView.git
+cd TickView
+run-windows.bat</code></pre>
+            </div>
+            <p class="hint">
+              Bez gitu: stáhněte <a href="https://github.com/svopex/TickView/archive/refs/heads/main.zip">ZIP z GitHubu</a>,
+              rozbalte ho a dvakrát klikněte na <code>run-windows.bat</code>. Skript připraví <code>.venv</code>,
+              doinstaluje závislosti a otevře prohlížeč.
+            </p>
+          </div>
+        </div>
+
+        <div class="option-grid">
+          <div class="option"><code>--port 8090</code><span>jiný port</span></div>
+          <div class="option"><code>--open</code><span>otevře prohlížeč</span></div>
+          <div class="option"><code>--native</code><span>nativní okno (s <code>pywebview</code>)</span></div>
+          <div class="option"><code>TICKVIEW_DATA_DIR</code><span>jiná složka pro cache a nastavení</span></div>
+        </div>
+
+        <p class="note">
+          API klíče (Alpaca, Telegram, IB) se zadávají v nastavení aplikace a ukládají jen do lokálního
+          <code>config.yaml</code>, nikdy do kódu. Šablonou je <code>config.example.yaml</code>.
+        </p>
+      </div>
+    </section>
+
+    <!-- Technologie pod kapotou -->
+    <section class="section">
+      <div class="container">
+        <header class="section-head">
+          <h2>Pod kapotou</h2>
+          <p>Vše asynchronně na jedné smyčce asyncio, oddělené vrstvy dat, logiky a uživatelského rozhraní.</p>
+        </header>
+        <ul class="stack-list">
+          <li><strong>Python 3.11+</strong><span>asyncio, httpx, websockets</span></li>
+          <li><strong>NiceGUI</strong><span>UI v prohlížeči nebo nativním okně</span></li>
+          <li><strong>Lightweight Charts™</strong><span>vykreslování grafů</span></li>
+          <li><strong>pandas</strong><span>výpočet indikátorů</span></li>
+          <li><strong>SQLite</strong><span>cache svíček a nastavení</span></li>
+        </ul>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Patička s licencí a upozorněním -->
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <div>
+        <a class="brand" href="#top">
+          <img src="site/favicon.svg" alt="" width="24" height="24">
+          <span>TickView</span>
+        </a>
+        <p>© 2026 Petr Svoboda · <a href="https://github.com/svopex/TickView/blob/main/LICENSE">Apache License 2.0</a></p>
+      </div>
+      <p class="disclaimer">
+        TickView je pouze pro čtení – nezadává žádné obchody a nejde o investiční doporučení.
+        Projekt není spojen se společností TradingView, Inc.; grafy vykresluje open-source knihovna
+        <a href="https://www.tradingview.com/lightweight-charts/">Lightweight Charts™</a> od TradingView (Apache 2.0).
+      </p>
+    </div>
+  </footer>
+
+</body>
+</html>
