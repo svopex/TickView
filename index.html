@@ -72,7 +72,7 @@
             <li>Windows</li>
             <li>macOS</li>
             <li>Linux</li>
-            <li>Python 3.11+</li>
+            <li>Python 3.12+</li>
           </ul>
         </div>
 
@@ -261,7 +261,7 @@ INDICATOR = EmaCross()</code></pre>
       <div class="container">
         <header class="section-head">
           <h2>Instalace a spuštění</h2>
-          <p>Stačí Python 3.11 nebo novější. Aplikace se otevře v prohlížeči na <code>http://localhost:8095</code>, volitelně i v nativním okně.</p>
+          <p>Stačí Python 3.12 nebo novější – na Windows ho skript v případě potřeby nainstaluje sám. Aplikace se otevře v prohlížeči na <code>http://localhost:8095</code>, volitelně i v nativním okně.</p>
         </header>
 
         <div class="tabs">
@@ -297,8 +297,8 @@ cd TickView-main
             </div>
             <p class="hint">
               Funguje v příkazové řádce i v PowerShellu na Windows 10 a 11, <code>curl</code> a <code>tar</code> jsou
-              součástí systému. Skript najde Python, připraví <code>.venv</code>, doinstaluje závislosti a otevře
-              prohlížeč; když Python chybí, poradí, jak ho nainstalovat.
+              součástí systému. Skript najde Python (když chybí, sám ho nainstaluje jen pro vás, bez administrátorských
+              práv), připraví <code>.venv</code>, doinstaluje závislosti a otevře prohlížeč.
             </p>
           </div>
         </div>
@@ -331,7 +331,7 @@ cd TickView-main
           <p>Vše asynchronně na jedné smyčce asyncio, oddělené vrstvy dat, logiky a uživatelského rozhraní.</p>
         </header>
         <ul class="stack-list">
-          <li><strong>Python 3.11+</strong><span>asyncio, httpx, websockets</span></li>
+          <li><strong>Python 3.12+</strong><span>asyncio, httpx, websockets</span></li>
           <li><strong>NiceGUI</strong><span>UI v prohlížeči nebo nativním okně</span></li>
           <li><strong>Lightweight Charts™</strong><span>vykreslování grafů</span></li>
           <li><strong>pandas</strong><span>výpočet indikátorů</span></li>

@@ -65,7 +65,8 @@ VÝSTUP
 
 ## Instalace a spuštění
 
-Vyžadován Python 3.11+.
+Vyžadován Python 3.12+ (kvůli `pandas-ta`; na Windows ho `run-windows.bat`
+v případě potřeby nainstaluje sám).
 
 Stažení bez gitu – na macOS/Linuxu stačí `curl` a `tar` (archiv rozbalí do
 `TickView-main`, `run.sh` zůstane spustitelný):
@@ -92,8 +93,10 @@ Parametry se předávají do `main.py`, např. `./run.sh --port 8090 --open`.
 
 Nejrychlejší spuštění na Windows: dvojklik na `run-windows.bat` v Průzkumníku
 (nebo `run-windows.bat` v příkazové řádce, `.\run-windows.bat` v PowerShellu). Skript najde Python
-3.11+ (launcher `py`, jinak `python` z PATH; když chybí, poradí instalaci
-z python.org), vytvoří `.venv`, doinstaluje závislosti při změně
+3.12+ (launcher `py`, `python` z PATH, obvyklé složky instalace z python.org;
+když chybí, nainstaluje Python 3.13 jen pro aktuálního uživatele bez
+administrátorských práv – přes `winget`, jinak tichým instalátorem z python.org
+staženým přes `curl.exe`), vytvoří `.venv`, doinstaluje závislosti při změně
 `requirements.txt` a spustí aplikaci. Bez parametrů rovnou otevře prohlížeč,
 jinak parametry předá do `main.py`, např. `run-windows.bat --port 8090 --open`.
 Při chybě okno nezavře, aby šla přečíst.
@@ -700,11 +703,11 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   registrace statických souborů, spuštění UI
 - `run.sh` – zkrácené spuštění na macOS/Linux: příprava `.venv`, instalace
   závislostí při změně `requirements.txt` a předání parametrů do `main.py`
-- `run-windows.bat` – totéž pro Windows (dvojklik); navíc hledá Python 3.11+
+- `run-windows.bat` – totéž pro Windows (dvojklik); navíc hledá Python 3.12+ (případně ho nainstaluje)
   a bez parametrů otevře prohlížeč. `.gitattributes` mu drží konce řádků CRLF
 - `tools/ensure_requirements.py` – společná část obou spouštěcích skriptů:
-  `pip install -r requirements.txt` jen při změně souboru (otisk SHA-256
-  v `.venv/.requirements.sha256`)
+  kontrola, že `.venv` má Python 3.12+, a `pip install -r requirements.txt`
+  jen při změně souboru (otisk SHA-256 v `.venv/.requirements.sha256`)
 - `tickview/config.py` – cesty k runtime datům, cache DB, načítání
   konfigurace `config.yaml` a zápis sekce se zachováním komentářů
 - `tickview/providers/base.py` – rozhraní DataProvider (search/history/stream/
