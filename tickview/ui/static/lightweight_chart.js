@@ -2112,10 +2112,92 @@ window.TickViewChart = (function () {
     return !group || group.visible !== false;
   }
 
+  // Nejmenší výška panelu indikátoru a hlavního grafu při tažení hrany panelu (px)
+  const MIN_PANE_HEIGHT = 40;
+  const MIN_MAIN_HEIGHT = 80;
+  // Klíč uložené výšky panelu v localStorage (za prefixem je id instance indikátoru)
+  const PANE_HEIGHT_PREFIX = 'tickview.indicatorPane.';
+
+  // Výška panelu indikátoru přes CSS proměnnou (null = výchozí výška z CSS podle typu)
+  function setPaneHeight(wrap, height) {
+    if (height === null) {
+      wrap.classList.remove('lwchart-pane-sized');
+      wrap.style.removeProperty('--lwchart-pane-height');
+      return;
+    }
+    wrap.style.setProperty('--lwchart-pane-height', height + 'px');
+    wrap.classList.add('lwchart-pane-sized');
+  }
+
+  // Uložená výška panelu instance indikátoru (null = výchozí); bez úložiště null
+  function storedPaneHeight(group) {
+    try {
+      const height = Number(window.localStorage.getItem(PANE_HEIGHT_PREFIX + group));
+      return height > 0 ? height : null;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  // Zapamatuje výšku panelu (null = smaže, panel bude mít výchozí výšku)
+  function storePaneHeight(group, height) {
+    try {
+      if (height === null) window.localStorage.removeItem(PANE_HEIGHT_PREFIX + group);
+      else window.localStorage.setItem(PANE_HEIGHT_PREFIX + group, String(height));
+    } catch (err) {
+      // Soukromý režim / zakázané úložiště – výška platí jen do obnovení stránky
+    }
+  }
+
+  // Táhlo na horní hraně panelu indikátoru (jako v TradingView): tažení nahoru
+  // panel zvětší na úkor prvku nad ním – hlavního grafu (do MIN_MAIN_HEIGHT),
+  // nebo panelu nad ním (do MIN_PANE_HEIGHT, součet výšek zůstane); dvojklik
+  // vrátí výchozí výšku. Grafy se přizpůsobí samy (autoSize); jádro tažení
+  // je společné s ostatními hranami panelů (resizers.js)
+  function attachPaneResizer(wrap, group) {
+    const resizer = el('div', 'pane-resizer pane-resizer-top');
+    wrap.appendChild(resizer);
+    resizer.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) return;
+      event.stopPropagation();
+      const above = wrap.previousElementSibling;
+      const abovePane = above && above.classList.contains('lwchart-pane') ? above : null;
+      const startHeight = wrap.getBoundingClientRect().height;
+      const aboveHeight = above ? above.getBoundingClientRect().height : 0;
+      const total = startHeight + aboveHeight;
+      const maxHeight = total - (abovePane ? MIN_PANE_HEIGHT : MIN_MAIN_HEIGHT);
+      let height = startHeight;
+      window.TickViewResize.drag(
+        resizer,
+        event,
+        true,
+        (delta) => {
+          // Hrana je nahoře: posun nahoru panel zvětšuje; hlavní graf se přizpůsobí flexem
+          height = Math.round(Math.max(MIN_PANE_HEIGHT, Math.min(startHeight - delta, Math.max(startHeight, maxHeight))));
+          setPaneHeight(wrap, height);
+          if (abovePane) setPaneHeight(abovePane, total - height);
+        },
+        () => {
+          storePaneHeight(group, height);
+          if (abovePane) storePaneHeight(abovePane.dataset.group, total - height);
+        }
+      );
+    });
+    // Dvojklik na hranu = výchozí výška (dvojklik v panelu jinak otevře Settings)
+    resizer.addEventListener('dblclick', (event) => {
+      event.stopPropagation();
+      setPaneHeight(wrap, null);
+      storePaneHeight(group, null);
+    });
+  }
+
   // Vytvoří panel indikátoru (oscilátory, objem…) pod hlavním grafem se
   // synchronizovaným časem; titulek panelu nese řádek legendy indikátoru
   function addIndicatorPane(s, pane, theme, visible) {
     const wrap = el('div', 'lwchart-pane lwchart-pane-' + pane.kind);
+    wrap.dataset.group = pane.group;
+    setPaneHeight(wrap, storedPaneHeight(pane.group));
+    attachPaneResizer(wrap, pane.group);
     const title = el('div', 'lwchart-pane-title', pane.title);
     const host = el('div', 'lwchart-pane-host');
     // Canvas koleček zvýrazněného / označeného indikátoru nad panelem

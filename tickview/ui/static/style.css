@@ -312,8 +312,9 @@
   scrollbar-width: none;
 }
 
-/* Panely indikátorů (RSI/MACD) pod hlavním grafem */
+/* Panely indikátorů (RSI/MACD) pod hlavním grafem; relative = táhlo horní hrany */
 .lwchart-pane {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -332,6 +333,13 @@
 .lwchart-pane-macd {
   height: 140px;
 }
+
+/* Výška nastavená tažením horní hrany panelu (lightweight_chart.js) */
+.lwchart-pane.lwchart-pane-sized {
+  height: var(--lwchart-pane-height);
+  flex: 0 0 auto;
+}
+
 
 .lwchart-pane-title {
   font-size: 11px;

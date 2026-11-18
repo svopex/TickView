@@ -298,7 +298,10 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   MACD, Stochastic, Stoch RSI, CCI, Williams %R, Momentum, ROC, Awesome
   Oscillator, TRIX, TSI, ATR, OBV, MFI, CMF a vlastní indikátory. Řádek indikátoru v legendě (i
   v titulku panelu) má při najetí myší oko (skrýt/zobrazit), ozubené kolečko
-  (Settings) a křížek (odebrat). Najetí myší na čáru indikátoru (v grafu
+  (Settings) a křížek (odebrat). Výška panelu indikátoru se mění tažením
+  jeho horní hrany (nahoru zvětšuje na úkor hlavního grafu, u dvou panelů
+  pod sebou na úkor panelu nad ním), dvojklik na hranu vrátí výchozí výšku;
+  výška se pamatuje v prohlížeči pro každou instanci indikátoru. Najetí myší na čáru indikátoru (v grafu
   i v panelu) nebo na jeho řádek v legendě ho zvýrazní jako v TradingView:
   kolečka na jeho čarách v pravidelném rozestupu a podbarvený řádek legendy;
   klik (i pravý) ho označí – kolečka zůstanou a řádek legendy má modrý
