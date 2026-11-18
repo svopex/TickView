@@ -65,8 +65,11 @@ VÝSTUP
 
 ## Instalace a spuštění
 
-Vyžadován Python 3.12+ (kvůli `pandas-ta`; na Windows ho `run-windows.bat`
-v případě potřeby nainstaluje sám).
+Vyžadován Python 3.12 nebo 3.13: `pandas-ta` potřebuje 3.12+ a jeho závislost
+`numba` zatím nepodporuje 3.14. Rozsah verzí ověřuje
+`tools/python_supported.py`; spouštěcí skripty podle něj vyberou Python
+a `.venv` s nepodporovanou verzí vytvoří znovu. Na Windows `run-windows.bat`
+chybějící Python v případě potřeby nainstaluje sám.
 
 Stažení bez gitu – na macOS/Linuxu stačí `curl` a `tar` (archiv rozbalí do
 `TickView-main`, `run.sh` zůstane spustitelný):
@@ -84,8 +87,9 @@ Aktualizace: stejné příkazy spustit znovu ve stejné složce; `data/` ani
 `config.yaml` v archivu nejsou, takže zůstanou. S gitem: `git clone
 https://github.com/svopex/TickView.git`, aktualizace `git pull`.
 
-Nejrychlejší spuštění na macOS/Linux (skript vytvoří `.venv`, doinstaluje
-závislosti a spustí aplikaci):
+Nejrychlejší spuštění na macOS/Linux (skript najde Python 3.13 / 3.12 – před
+výchozím `python3`, který může být už 3.14 –, vytvoří `.venv`, doinstaluje
+závislosti a spustí aplikaci; když vhodný Python chybí, poradí instalaci):
 
     ./run.sh
 
@@ -93,7 +97,7 @@ Parametry se předávají do `main.py`, např. `./run.sh --port 8090 --open`.
 
 Nejrychlejší spuštění na Windows: dvojklik na `run-windows.bat` v Průzkumníku
 (nebo `run-windows.bat` v příkazové řádce, `.\run-windows.bat` v PowerShellu). Skript najde Python
-3.12+ (launcher `py`, `python` z PATH, obvyklé složky instalace z python.org;
+3.12–3.13 (launcher `py -3.13` / `py -3.12`, `python` z PATH, složka instalace z python.org;
 když chybí, nainstaluje Python 3.13 jen pro aktuálního uživatele bez
 administrátorských práv – přes `winget`, jinak tichým instalátorem z python.org
 staženým přes `curl.exe`), vytvoří `.venv`, doinstaluje závislosti při změně
@@ -701,13 +705,16 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
 - `LICENSE` – text licence Apache License 2.0
 - `main.py` – vstupní bod: CLI parametry (`--port`, `--native`, `--open`),
   registrace statických souborů, spuštění UI
-- `run.sh` – zkrácené spuštění na macOS/Linux: příprava `.venv`, instalace
-  závislostí při změně `requirements.txt` a předání parametrů do `main.py`
-- `run-windows.bat` – totéž pro Windows (dvojklik); navíc hledá Python 3.12+ (případně ho nainstaluje)
+- `run.sh` – zkrácené spuštění na macOS/Linux: výběr podporovaného Pythonu,
+  příprava `.venv`, instalace závislostí při změně `requirements.txt`
+  a předání parametrů do `main.py`
+- `run-windows.bat` – totéž pro Windows (dvojklik); navíc chybějící Python nainstaluje
   a bez parametrů otevře prohlížeč. `.gitattributes` mu drží konce řádků CRLF
 - `tools/ensure_requirements.py` – společná část obou spouštěcích skriptů:
-  kontrola, že `.venv` má Python 3.12+, a `pip install -r requirements.txt`
-  jen při změně souboru (otisk SHA-256 v `.venv/.requirements.sha256`)
+  `pip install -r requirements.txt` jen při změně souboru (otisk SHA-256
+  v `.venv/.requirements.sha256`)
+- `tools/python_supported.py` – podporovaný rozsah verzí Pythonu (3.12–3.13);
+  spouštěcí skripty jím ověřují kandidáty i Python ve `.venv`
 - `tickview/config.py` – cesty k runtime datům, cache DB, načítání
   konfigurace `config.yaml` a zápis sekce se zachováním komentářů
 - `tickview/providers/base.py` – rozhraní DataProvider (search/history/stream/

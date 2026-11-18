@@ -1,4 +1,4 @@
-# TickView – závislosti (Python 3.12+, pandas-ta vyžaduje 3.12)
+# TickView – závislosti (Python 3.12 nebo 3.13; pandas-ta vyžaduje 3.12+, jeho numba zatím nepodporuje 3.14)
 
 nicegui>=4,<5
 httpx>=0.27

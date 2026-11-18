@@ -1,6 +1,6 @@
 @echo off
 rem Spuštění TickView na Windows (dvojklik v Průzkumníku nebo z příkazové řádky):
-rem najde Python 3.12+ a když chybí, sám ho nainstaluje jen pro aktuálního
+rem najde Python 3.12–3.13 a když chybí, sám ho nainstaluje jen pro aktuálního
 rem uživatele (winget, jinak instalátor z python.org), připraví .venv,
 rem doinstaluje závislosti při změně requirements.txt a spustí aplikaci.
 rem Bez parametrů rovnou otevře prohlížeč (--open), jinak parametry předá do
@@ -14,18 +14,23 @@ rem Pracujeme vždy v kořenu projektu, i když skript spustíme odjinud
 cd /d "%~dp0"
 
 set "VENV_PYTHON=.venv\Scripts\python.exe"
-rem Verze, která se nainstaluje, když žádný vhodný Python není (pandas-ta vyžaduje 3.12+);
+rem Verze, která se nainstaluje, když žádný vhodný Python není (podporované 3.12–3.13);
 rem balíček winget se odvodí z major.minor (3.13.12 → Python.Python.3.13)
 set "PY_VERSION=3.13.12"
 set "PY_WINGET_ID=Python.Python.%PY_VERSION:~0,4%"
 
-rem Virtuální prostředí vytvoříme jen při prvním spuštění
-if exist "%VENV_PYTHON%" goto :venv_ready
+rem Hotovou .venv s podporovaným Pythonem rovnou použijeme; s nepodporovaným
+rem (např. 3.14) ji smažeme a vytvoříme znovu jako při prvním spuštění
+if exist "%VENV_PYTHON%" (
+    "%VENV_PYTHON%" tools\python_supported.py && goto :venv_ready
+    echo Virtuální prostředí .venv má nepodporovanou verzi Pythonu, vytvářím ho znovu…
+    rmdir /s /q .venv
+)
 
 rem Hledání Pythonu, případně automatická instalace (ta na konci hledá znovu)
 call :find_python
 if not defined PYTHON (
-    echo Nenašel jsem Python 3.12 nebo novější, instaluji Python %PY_VERSION% jen pro tohoto uživatele…
+    echo Nenašel jsem Python 3.12 nebo 3.13, instaluji Python %PY_VERSION% jen pro tohoto uživatele…
     call :install_python
 )
 if not defined PYTHON (
@@ -61,15 +66,15 @@ exit /b 1
 rem ---------- Podprogramy ----------
 
 :find_python
-rem Najde Python 3.12+ a příkaz uloží do PYTHON (nenalezen = prázdná proměnná).
-rem Pořadí: launcher py, python z PATH, nakonec složka instalace pro uživatele
-rem z python.org – hned po instalaci v tomto okně ještě není v PATH.
-rem Alias python z Microsoft Store bez nainstalovaného Pythonu kontrolou neprojde.
-rem Minimum 3.12 (výraz i poslední složka seznamu) odpovídá MIN_PYTHON
-rem v tools\ensure_requirements.py.
+rem Najde podporovaný Python a příkaz uloží do PYTHON (nenalezen = prázdná proměnná);
+rem rozsah verzí ověřuje tools\python_supported.py. Pořadí: launcher py s konkrétní
+rem verzí (py -3 by vybral nejnovější, i nepodporovanou 3.14), python z PATH,
+rem nakonec složka instalace pro uživatele z python.org – hned po instalaci
+rem v tomto okně ještě není v PATH. Alias python z Microsoft Store bez
+rem nainstalovaného Pythonu kontrolou neprojde.
 set "PYTHON="
-for %%C in ("py -3" "python") do if not defined PYTHON %%~C -c "import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)" >nul 2>nul && set "PYTHON=%%~C"
-for %%V in (315 314 313 312) do if not defined PYTHON if exist "%LOCALAPPDATA%\Programs\Python\Python%%V\python.exe" set "PYTHON="%LOCALAPPDATA%\Programs\Python\Python%%V\python.exe""
+for %%C in ("py -3.13" "py -3.12" "python") do if not defined PYTHON %%~C tools\python_supported.py >nul 2>nul && set "PYTHON=%%~C"
+for %%V in (313 312) do if not defined PYTHON if exist "%LOCALAPPDATA%\Programs\Python\Python%%V\python.exe" set "PYTHON="%LOCALAPPDATA%\Programs\Python\Python%%V\python.exe""
 exit /b 0
 
 :install_python
