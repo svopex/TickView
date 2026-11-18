@@ -49,6 +49,7 @@ from tickview.indicators.compute import (
     indicator_title,
     instance_options,
     load_saved_indicators,
+    move_indicator,
     new_indicator,
     normalize_params,
     plot_defaults,
@@ -1900,6 +1901,15 @@ async def _build_index(
         spec["visible"] = not spec.get("visible", True)
         await indicators_changed()
 
+    async def move_indicator_pane(indicator_id, before_id) -> None:
+        # Přetažení panelu indikátoru za titulek: nové pořadí instancí = nové
+        # pořadí panelů (uloží se s rozložením, graf panely přestaví)
+        reordered = move_indicator(active().indicators, indicator_id, before_id)
+        if reordered is active().indicators:
+            return
+        active().indicators = reordered
+        await indicators_changed()
+
     async def on_indicator_event(payload: dict) -> None:
         # Tlačítka řádku indikátoru v legendě grafu (oko, nastavení, odebrání)
         action = payload.get("action")
@@ -1912,6 +1922,8 @@ async def _build_index(
             await open_indicator_settings(indicator_id)
         elif action == "alert":
             await open_alert_dialog(indicator_id=indicator_id)
+        elif action == "move":
+            await move_indicator_pane(indicator_id, payload.get("before"))
 
     # Stav nabídky indikátorů: zvolená kategorie a hledaný text
     menu_state = {"category": "all", "query": ""}

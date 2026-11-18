@@ -876,14 +876,11 @@ window.TickViewChart = (function () {
     createMainSeries(s);
 
     // Legenda: svíčka pod kurzorem, mimo graf poslední svíčka; crosshair
-    // se případně promítne do ostatních grafů rozložení
-    chart.subscribeCrosshairMove((param) => {
-      let bar = null;
-      if (param.time !== undefined) bar = s.byTime.get(param.time) || null;
-      s.hovering = bar !== null;
-      renderLegend(s, bar || s.lastCandle);
-      syncCrosshair(s, param);
-    });
+    // se promítne do panelů a případně do ostatních grafů rozložení
+    chart.subscribeCrosshairMove((param) => onStackCrosshairMove(s, chart, param));
+    // Šířka časové osy = šířka grafu bez cenové osy: změna šířky cenové osy
+    // (i resize) srovná osy hlavního grafu a panelů
+    chart.timeScale().subscribeSizeChange(() => scheduleScaleAlign(s));
 
     // Panely indikátorů + překreslení kresby následují rozsah hlavního grafu;
     // posun grafu uživatelem se případně promítne do ostatních grafů
@@ -1282,7 +1279,7 @@ window.TickViewChart = (function () {
         return;
       }
       const candle = other.candles[index];
-      other.chart.setCrosshairPosition(candle.close, candle.time, other.candleSeries);
+      moveCrosshair(other, { price: candle.close, time: candle.time });
     });
   }
 
@@ -2004,13 +2001,97 @@ window.TickViewChart = (function () {
   // Posune crosshair grafu na bod (jen u existující svíčky – LWC jinak neumí)
   function moveCrosshair(s, point) {
     if (typeof s.chart.setCrosshairPosition !== 'function') return;
-    if (s.byTime.has(point.time)) s.chart.setCrosshairPosition(point.price, point.time, s.candleSeries);
-    else clearCrosshair(s);
+    if (s.byTime.has(point.time)) {
+      s.chart.setCrosshairPosition(point.price, point.time, s.candleSeries);
+      syncPaneCrosshairs(s, s.chart, point.time);
+    } else clearCrosshair(s);
   }
 
-  // Skryje ručně nastavený crosshair grafu
+  // Skryje ručně nastavený crosshair grafu (i svislou čáru v panelech)
   function clearCrosshair(s) {
-    if (typeof s.chart.clearCrosshairPosition === 'function') s.chart.clearCrosshairPosition();
+    if (typeof s.chart.clearCrosshairPosition !== 'function') return;
+    s.chart.clearCrosshairPosition();
+    for (const pane of s.panesMap.values()) pane.chart.clearCrosshairPosition();
+  }
+
+  // Událost crosshairMove od uživatele (pohyb myši, odchod z grafu)? LWC
+  // po změně dat / voleb znovu vyšle událost i za programově nastavený
+  // crosshair (bez sourceEvent) – takový graf nesmí převzít roli zdroje
+  function isUserCrosshairMove(param) {
+    return param.time === undefined || !!param.sourceEvent;
+  }
+
+  // Pohyb crosshairu v hlavním grafu nebo panelu (source) grafu s: legenda
+  // ukazuje svíčku pod kurzorem (mimo graf poslední svíčku), svislá čára se
+  // promítne do ostatních grafů s a případně do ostatních grafů rozložení
+  function onStackCrosshairMove(s, source, param) {
+    if (!isUserCrosshairMove(param)) {
+      // Znovu vyslaný programový crosshair: hlavní graf jen obnoví legendu
+      // (živá svíčka pod kurzorem), roli zdroje nepřebírá
+      if (source === s.chart) renderHoverLegend(s, param.time);
+      return;
+    }
+    // Pohyb uvnitř stejné svíčky (i svislý) nic nového neukáže
+    const last = s.lastCrosshair;
+    if (last && last.source === source && last.time === param.time) return;
+    s.lastCrosshair = { source: source, time: param.time };
+    renderHoverLegend(s, param.time);
+    syncPaneCrosshairs(s, source, param.time);
+    syncCrosshair(s, param);
+  }
+
+  // Legenda se svíčkou v čase time (undefined / bez svíčky = poslední svíčka)
+  function renderHoverLegend(s, time) {
+    const bar = time === undefined ? null : s.byTime.get(time) || null;
+    s.hovering = bar !== null;
+    renderLegend(s, bar || s.lastCandle);
+  }
+
+  // Grafy (hlavní / panely) s dočasně skrytou vodorovnou čarou crosshairu
+  const hiddenHorzLines = new WeakSet();
+
+  // Vodorovná čára crosshairu: jen v grafu pod kurzorem, převzatý crosshair
+  // v hlavním grafu a panelech ukazuje jen svislou čáru času (applyOptions
+  // se volá jen při změně, ne při každém pohybu myši)
+  function setHorzLineVisible(chart, visible) {
+    if (hiddenHorzLines.has(chart) !== visible) return;
+    chart.applyOptions({ crosshair: { horzLine: { visible: visible, labelVisible: visible } } });
+    if (visible) hiddenHorzLines.delete(chart);
+    else hiddenHorzLines.add(chart);
+  }
+
+  // Svislá čára crosshairu přes hlavní graf a panely indikátorů: čas pod
+  // kurzorem ve zdrojovém grafu (source) se ukáže v ostatních grafech
+  // grafu s. Programové nastavení crosshairu v LWC událost crosshairMove
+  // nevyvolá, takže zpětná vazba nevzniká; time undefined = schovat
+  function syncPaneCrosshairs(s, source, time) {
+    if (typeof s.chart.setCrosshairPosition !== 'function') return;
+    setHorzLineVisible(source, true);
+    // Hlavní graf (zdrojem je panel): jen na existující svíčce
+    if (source !== s.chart) {
+      const bar = time === undefined ? null : s.byTime.get(time);
+      if (bar) {
+        setHorzLineVisible(s.chart, false);
+        s.chart.setCrosshairPosition(bar.close, time, s.candleSeries);
+      } else {
+        s.chart.clearCrosshairPosition();
+      }
+    }
+    for (const pane of s.panesMap.values()) {
+      if (pane.chart === source) continue;
+      const series = pane.series[0] || pane.background;
+      if (time === undefined || !series) {
+        pane.chart.clearCrosshairPosition();
+        continue;
+      }
+      setHorzLineVisible(pane.chart, false);
+      // Cena je lhostejná (vodorovná čára je skrytá); série bez dat LWC odmítne výjimkou
+      try {
+        pane.chart.setCrosshairPosition(0, time, series);
+      } catch (err) {
+        pane.chart.clearCrosshairPosition();
+      }
+    }
   }
 
   // Ukončí aktivní nástroj (Esc, pravý klik, vypnutí tužky, opakovaný klik
@@ -2043,6 +2124,47 @@ window.TickViewChart = (function () {
     withoutSync(s, () => {
       for (const pane of s.panesMap.values()) pane.chart.timeScale().setVisibleLogicalRange(range);
     });
+  }
+
+  // Hlavní graf a grafy panelů indikátorů grafu s
+  function stackCharts(s) {
+    return [s.chart].concat(Array.from(s.panesMap.values(), (pane) => pane.chart));
+  }
+
+  // Stejná šířka pravé cenové osy hlavního grafu a panelů: každý graf má
+  // jinak široké popisky (120.00 vs −80 000.00), takže by časová plocha
+  // začínala jinde a svíčky i svislá čára crosshairu by pod sebou neseděly.
+  // Osy se srovnají na nejširší (minimumWidth), nejvýš jednou za snímek
+  function scheduleScaleAlign(s) {
+    if (s.scaleAlignPending) return;
+    s.scaleAlignPending = true;
+    requestAnimationFrame(() => {
+      s.scaleAlignPending = false;
+      alignScaleWidths(s);
+    });
+  }
+
+  // Srovná šířky pravých cenových os na nejširší (minimumWidth jen roste –
+  // zúžit osy dovolí až resetScaleWidths)
+  function alignScaleWidths(s) {
+    // Graf mezitím zmizel (odstraněný graf by na volání LWC spadl)
+    if (state.get(s.elementId) !== s || !s.panesMap.size) return;
+    const charts = stackCharts(s);
+    const widths = charts.map((chart) => chart.priceScale('right').width());
+    const widest = Math.max(...widths);
+    if (!widest || widths.every((width) => width === widest)) return;
+    for (const chart of charts) chart.applyOptions({ rightPriceScale: { minimumWidth: widest } });
+    s.alignedScaleWidth = widest;
+  }
+
+  // Zapomene srovnanou šířku os (nový symbol / nová sada panelů – osy se
+  // smí zúžit) a srovná je znovu
+  function resetScaleWidths(s) {
+    if (s.alignedScaleWidth) {
+      for (const chart of stackCharts(s)) chart.applyOptions({ rightPriceScale: { minimumWidth: 0 } });
+      s.alignedScaleWidth = 0;
+    }
+    scheduleScaleAlign(s);
   }
 
   // Synchronizuje viditelný rozsah mezi hlavním grafem a panely indikátorů
@@ -2193,6 +2315,90 @@ window.TickViewChart = (function () {
     });
   }
 
+  // Posun myši (px), od kterého je stisk na titulku panelu tažením, ne klikem
+  const PANE_DRAG_THRESHOLD = 5;
+
+  // Přeřazení panelu indikátoru tažením za titulek: po posunu o pár px se
+  // panel zprůhlední a čára ukáže nové místo; po puštění pošle Pythonu
+  // {action: 'move', id, before} (before = skupina panelu, před který se
+  // panel vloží, null = na konec). Stisk bez tažení zůstane klikem (označení,
+  // dvojklik na Settings), tlačítka řádku legendy se netáhnou. Sdílené
+  // TickViewResize.drag se nehodí – pointer capture hned při stisku by
+  // klik a dvojklik na řádku legendy zrušil
+  function attachPaneReorder(s, wrap, title, group) {
+    title.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0 || event.target.closest('.legend-ind-btn')) return;
+      const startY = event.clientY;
+      // Panely a jejich středy (během tažení se nehýbou) se změří při začátku tažení
+      let wraps = null;
+      let middles = null;
+      // Panel, před který se vloží (null = na konec); undefined = pořadí beze změny
+      let before;
+      const move = (moveEvent) => {
+        // Tažení začne až po prahu (jinak by se z kliku stalo přeřazení)
+        if (!wraps) {
+          if (Math.abs(moveEvent.clientY - startY) < PANE_DRAG_THRESHOLD) return;
+          wraps = paneWraps(s);
+          middles = wraps.map((node) => {
+            const rect = node.getBoundingClientRect();
+            return rect.top + rect.height / 2;
+          });
+          wrap.classList.add('pane-dragging');
+          document.body.classList.add('pane-reordering');
+          const selection = window.getSelection();
+          if (selection) selection.removeAllRanges();
+        }
+        const target = paneDropTarget(wraps, middles, wrap, moveEvent.clientY);
+        if (target !== before) {
+          before = target;
+          showPaneDrop(wraps, before);
+        }
+      };
+      const up = () => {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+        window.removeEventListener('pointercancel', up);
+        if (!wraps) return;
+        wrap.classList.remove('pane-dragging');
+        document.body.classList.remove('pane-reordering');
+        showPaneDrop(wraps, undefined);
+        // Klik, který po puštění tlačítka následuje, už nic neoznačuje
+        // (po pointercancel klik nepřijde – zachytávání se po chvilce zruší)
+        const swallowClick = (clickEvent) => clickEvent.stopPropagation();
+        window.addEventListener('click', swallowClick, { capture: true, once: true });
+        setTimeout(() => window.removeEventListener('click', swallowClick, true), 0);
+        if (before === undefined) return;
+        s.finishedQueue.push({ type: 'indicator', action: 'move', id: group, before: before ? before.dataset.group : null });
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+      window.addEventListener('pointercancel', up);
+    });
+  }
+
+  // Panely indikátorů grafu s v pořadí zobrazení (DOM)
+  function paneWraps(s) {
+    return Array.from(s.panes.children).filter((node) => node.classList.contains('lwchart-pane'));
+  }
+
+  // Panel, před který se tažený panel wrap vloží: první, jehož střed je pod
+  // kurzorem (null = za poslední panel); undefined, když se pořadí nezmění
+  // (vložení před sebe nebo před následující panel)
+  function paneDropTarget(wraps, middles, wrap, clientY) {
+    const index = middles.findIndex((middle) => clientY < middle);
+    const before = index < 0 ? null : wraps[index];
+    const next = wraps[wraps.indexOf(wrap) + 1] || null;
+    return before === wrap || before === next ? undefined : before;
+  }
+
+  // Čára nového místa taženého panelu: horní hrana panelu before, null =
+  // spodní hrana posledního panelu, undefined = skrýt
+  function showPaneDrop(wraps, before) {
+    for (const node of wraps) node.classList.remove('pane-drop-before', 'pane-drop-after');
+    if (before) before.classList.add('pane-drop-before');
+    else if (before === null && wraps.length) wraps[wraps.length - 1].classList.add('pane-drop-after');
+  }
+
   // Vytvoří panel indikátoru (oscilátory, objem…) pod hlavním grafem se
   // synchronizovaným časem; titulek panelu nese řádek legendy indikátoru
   function addIndicatorPane(s, pane, theme, visible) {
@@ -2201,6 +2407,7 @@ window.TickViewChart = (function () {
     setPaneHeight(wrap, storedPaneHeight(pane.group));
     attachPaneResizer(wrap, pane.group);
     const title = el('div', 'lwchart-pane-title', pane.title);
+    attachPaneReorder(s, wrap, title, pane.group);
     const host = el('div', 'lwchart-pane-host');
     // Canvas koleček zvýrazněného / označeného indikátoru nad panelem
     const markers = el('canvas', 'lwchart-pane-markers');
@@ -2293,14 +2500,24 @@ window.TickViewChart = (function () {
     wrap.addEventListener('mouseleave', () => {
       if (s.paneUnderPointer === chart) s.paneUnderPointer = null;
     });
-    // Legenda indikátoru ukazuje hodnoty pod kurzorem i při pohybu v panelu
-    chart.subscribeCrosshairMove((param) => {
-      renderIndicatorValues(s, param.time === undefined ? null : param.time);
-    });
+    // Pohyb kurzoru v panelu: svislá čára času v hlavním grafu i ostatních
+    // panelech a legenda se svíčkou pod kurzorem (jako v hlavním grafu);
+    // změna šířky cenové osy panelu srovná osy všech grafů
+    chart.subscribeCrosshairMove((param) => onStackCrosshairMove(s, chart, param));
+    chart.timeScale().subscribeSizeChange(() => scheduleScaleAlign(s));
     // Nový panel se rovná na rozsah hlavního grafu
     const mainRange = s.chart.timeScale().getVisibleLogicalRange();
     if (mainRange) chart.timeScale().setVisibleLogicalRange(mainRange);
-    s.panesMap.set(pane.paneId, { chart, wrap, host, title, series: created, background, markers, markersDrawn: false });
+    s.panesMap.set(pane.paneId, {
+      chart,
+      wrap,
+      host,
+      title,
+      series: created,
+      background,
+      markers,
+      markersDrawn: false,
+    });
   }
 
   // Pozice značky indikátoru → pozice značky Lightweight Charts
@@ -2573,6 +2790,7 @@ window.TickViewChart = (function () {
     for (const pane of payload.panes || []) {
       addIndicatorPane(s, pane, theme, groupVisible(payload, pane.group));
     }
+    resetScaleWidths(s);
   }
 
   // Nahradí celý dataset svíček (načtení historie)
@@ -2616,6 +2834,7 @@ window.TickViewChart = (function () {
     // v TradingView) – ruční měřítko z předchozího symbolu by graf nechalo
     // v rozsahu cen, kde nová data nejsou vidět
     resetPriceScales(s);
+    resetScaleWidths(s);
     // Instrument bez objemu (forex MIDPOINT, indexy) objem neukazuje
     s.hasVolume = clean.some((candle) => candle.volume > 0);
     applyVolumeVisibility(s);
@@ -2643,8 +2862,7 @@ window.TickViewChart = (function () {
 
   // Zapne automatické měřítko cenové osy hlavního grafu i panelů indikátorů
   function resetPriceScales(s) {
-    s.chart.priceScale('right').applyOptions({ autoScale: true });
-    for (const pane of s.panesMap.values()) pane.chart.priceScale('right').applyOptions({ autoScale: true });
+    for (const chart of stackCharts(s)) chart.priceScale('right').applyOptions({ autoScale: true });
   }
 
   // Objem je vidět, když ho uživatel nevypnul (Settings grafu) a instrument

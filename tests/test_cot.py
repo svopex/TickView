@@ -215,7 +215,10 @@ class IndicatorTests(unittest.TestCase):
         rows.append(api_row((date(2025, 1, 7) + timedelta(weeks=60)).isoformat(), comm=(500, 100)))
         self.reports = parse_rows(rows)
         self.candles = daily_candles(date(2025, 1, 1), 450)
-        spec, payload = self.compute("cot_index", {"lookback": 26})
+        # Bez zapnutého pozadí (výchozí stav) panel pozadí nemá
+        _, payload = self.compute("cot_index", {"lookback": 26})
+        self.assertNotIn("background", payload["panes"][0])
+        spec, payload = self.compute("cot_index", {"lookback": 26, "background": True})
         pane = payload["panes"][0]
         self.assertEqual(len(pane["background"]), len(self.candles))
         self.assertTrue(any("color" in point for point in pane["background"]))

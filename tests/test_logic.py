@@ -20,7 +20,9 @@ from tickview.logic.cache import KlineCache, fetch_history, uncovered_ranges
 from tickview.indicators.builtin import BUILTIN_INDICATORS
 from tickview.indicators.compute import (
     compute_indicators,
+    indicator_color,
     load_saved_indicators,
+    move_indicator,
     new_indicator,
     normalize_params,
 )
@@ -172,6 +174,36 @@ class FetchHistoryTest(unittest.IsolatedAsyncioTestCase):
         # Levý proužek kratší než bar se vynechá, celý interval pokrytý
         self.assertEqual(uncovered_ranges(15, 100, [(20, 100)], 10), [])
         self.assertEqual(uncovered_ranges(0, 100, [(-5, 200)], 10), [])
+
+
+class MoveIndicatorTest(unittest.TestCase):
+    """Přeřazení instancí indikátorů tažením panelu."""
+
+    def setUp(self):
+        self.specs = [{"id": "a", "kind": "rsi"}, {"id": "b", "kind": "macd", "color": "#123456"}, {"id": "c", "kind": "rsi"}]
+
+    def ids(self, specs):
+        return [spec["id"] for spec in specs]
+
+    def test_move_before_and_to_end(self):
+        self.assertEqual(self.ids(move_indicator(self.specs, "c", "a")), ["c", "a", "b"])
+        self.assertEqual(self.ids(move_indicator(self.specs, "a", None)), ["b", "c", "a"])
+        # Neznámý cíl = na konec
+        self.assertEqual(self.ids(move_indicator(self.specs, "a", "x")), ["b", "c", "a"])
+
+    def test_keeps_palette_colors(self):
+        # Barva z palety podle původního pořadí se zafixuje, vlastní zůstane
+        moved = {spec["id"]: spec for spec in move_indicator(self.specs, "c", "a")}
+        self.assertEqual(moved["a"]["color"], indicator_color(self.specs[0], 0))
+        self.assertEqual(moved["c"]["color"], indicator_color(self.specs[2], 2))
+        self.assertEqual(moved["b"]["color"], "#123456")
+        self.assertNotIn("color", self.specs[0])
+
+    def test_noop_returns_same_list(self):
+        self.assertIs(move_indicator(self.specs, "a", "b"), self.specs)
+        self.assertIs(move_indicator(self.specs, "c", None), self.specs)
+        self.assertIs(move_indicator(self.specs, "a", "a"), self.specs)
+        self.assertIs(move_indicator(self.specs, "x", None), self.specs)
 
 
 class IndicatorsTest(unittest.TestCase):

@@ -73,6 +73,33 @@ def indicator_color(spec: dict, index: int) -> str:
     return spec.get("color") or PALETTE[index % len(PALETTE)]
 
 
+def move_indicator(indicators: list[dict], indicator_id, before_id) -> list[dict]:
+    """Pořadí instancí po přesunu indikátoru (přetažení panelu myší).
+
+    Pořadí panelů v grafu odpovídá pořadí instancí, takže stačí instanci
+    vložit těsně před instanci before_id. Barvy z palety podle pořadí se
+    zafixují do "color", aby se po přesunu instancím nezměnily.
+
+    Parametry:
+        indicators: instance v dosavadním pořadí.
+        indicator_id: id přesouvané instance.
+        before_id: id instance, před kterou se vloží (None = na konec).
+
+    Vrací nový seznam; neznámé id nebo přesun na stejné místo = původní seznam.
+    """
+    ids = [spec["id"] for spec in indicators]
+    if indicator_id not in ids or indicator_id == before_id:
+        return indicators
+    specs = [{**spec, "color": indicator_color(spec, index)} for index, spec in enumerate(indicators)]
+    moving = specs.pop(ids.index(indicator_id))
+    # Neznámá cílová instance (už odebraná) = na konec
+    position = next((index for index, spec in enumerate(specs) if spec["id"] == before_id), len(specs))
+    specs.insert(position, moving)
+    if [spec["id"] for spec in specs] == ids:
+        return indicators
+    return specs
+
+
 def indicator_title(spec: dict, style: Optional[dict] = None) -> str:
     """Krátký název instance pro legendu (např. "SMA 20"); nenačtený indikátor = jeho id.
 

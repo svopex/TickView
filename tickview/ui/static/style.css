@@ -361,6 +361,42 @@
 }
 
 
+/* Přeřazení panelu tažením za titulek: tažený panel průhledný, čára
+   ukazuje nové místo (nad panelem, nebo pod posledním panelem) */
+.lwchart-pane-title {
+  cursor: grab;
+}
+
+.lwchart-pane.pane-dragging {
+  opacity: 0.5;
+}
+
+.lwchart-pane.pane-drop-before::after,
+.lwchart-pane.pane-drop-after::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 3px;
+  z-index: 25;
+  background: #2962ff;
+  pointer-events: none;
+}
+
+.lwchart-pane.pane-drop-before::after {
+  top: -2px;
+}
+
+.lwchart-pane.pane-drop-after::after {
+  bottom: 0;
+}
+
+.pane-reordering,
+.pane-reordering * {
+  cursor: grabbing !important;
+  user-select: none !important;
+}
+
 .body--dark .lwchart-pane-title {
   color: #d1d4dc;
 }

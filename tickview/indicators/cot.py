@@ -305,7 +305,7 @@ class CotIndex(CotIndicator):
         Param.select("group2", "nonreportables", "Skupina 2", options=(*GROUP_OPTIONS, ("none", "–"))),
         Param.int("upper", 80, "Horní extrém", min=1, max=99),
         Param.int("lower", 20, "Dolní extrém", min=1, max=99),
-        Param.bool("background", True, "Zvýraznit extrémy pozadím"),
+        Param.bool("background", False, "Zvýraznit extrémy pozadím"),
         *_data_params(),
         *_table_params(),
     ]

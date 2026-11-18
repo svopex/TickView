@@ -301,7 +301,13 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   (Settings) a křížek (odebrat). Výška panelu indikátoru se mění tažením
   jeho horní hrany (nahoru zvětšuje na úkor hlavního grafu, u dvou panelů
   pod sebou na úkor panelu nad ním), dvojklik na hranu vrátí výchozí výšku;
-  výška se pamatuje v prohlížeči pro každou instanci indikátoru. Najetí myší na čáru indikátoru (v grafu
+  výška se pamatuje v prohlížeči pro každou instanci indikátoru. Pořadí panelů
+  se mění tažením za titulek panelu (tažený panel zprůhlední, modrá čára ukáže
+  nové místo); nové pořadí se uloží s rozložením. Crosshair prochází hlavním
+  grafem i všemi panely indikátorů: graf pod kurzorem má celý kříž, ostatní
+  svislou čáru stejného času (pravé cenové osy grafu a panelů mají stejnou
+  šířku, takže svíčky i čára pod sebou přesně sedí); legenda OHLC i hodnoty indikátorů ukazují
+  svíčku pod kurzorem i při pohybu v panelu. Najetí myší na čáru indikátoru (v grafu
   i v panelu) nebo na jeho řádek v legendě ho zvýrazní jako v TradingView:
   kolečka na jeho čarách v pravidelném rozestupu a podbarvený řádek legendy;
   klik (i pravý) ho označí – kolečka zůstanou a řádek legendy má modrý
@@ -370,7 +376,8 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   a týdenní změnu jako histogram na svíčce, kde nový report začne platit.
   „COT Index“ (Larry Williams) je poloha čisté pozice v rozsahu posledních
   N týdnů (výchozí 52) pro dvě skupiny (výchozí Commercials a
-  Non-reportables) s úrovněmi 20/80, pozadím panelu v extrému a signály pro
+  Non-reportables) s úrovněmi 20/80, volitelným pozadím panelu v extrému
+  (Zvýraznit extrémy pozadím, výchozí vypnuto) a signály pro
   alert a scanner při vstupu skupiny 1 do extrému (Commercials nad horní
   úrovní LONG, pod dolní SHORT; spekulanti a drobní obchodníci obráceně).
   Index se počítá nad celou historií reportů, takže nezávisí na délce
