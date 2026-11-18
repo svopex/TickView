@@ -844,21 +844,24 @@ h3 {
   outline-offset: 2px;
 }
 
+/* Blok příkazu: text se posouvá vodorovně ve vlastním sloupci, tlačítko
+   „Kopírovat“ má sloupec vpravo, takže dlouhý řádek pod něj nezajede */
 .terminal {
-  position: relative;
+  display: flex;
+  align-items: flex-start;
   background: var(--code-bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
 }
 
 .terminal pre {
-  padding-right: 110px;
+  flex: 1;
+  min-width: 0;
 }
 
 .copy-btn {
-  position: absolute;
-  top: 10px;
-  right: 10px;
+  flex-shrink: 0;
+  margin: 10px 10px 0 0;
   padding: 5px 12px;
   border: 1px solid #30363d;
   border-radius: 6px;
@@ -882,29 +885,6 @@ h3 {
   margin: 12px 0 0;
   color: var(--muted);
   font-size: 0.92rem;
-}
-
-/* Nadpis varianty instalace (Bez gitu / S gitem) – písmo z .eyebrow, tlumená barva;
-   větší mezera jen u druhé varianty pod nápovědou první */
-.variant-title {
-  margin: 8px 0 10px;
-  color: var(--muted);
-}
-
-.hint + .variant-title {
-  margin-top: 28px;
-}
-
-/* Tlačítko ke stažení ZIPu s krátkým postupem vedle */
-.download-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 12px 16px;
-}
-
-.download-row p {
-  margin: 0;
 }
 
 .option-grid {

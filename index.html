@@ -11,9 +11,9 @@
   <meta property="og:description" content="Open-source aplikace pro grafy akcií, forexu, futures a kryptoměn. Lokálně, zdarma, pouze pro čtení.">
   <link rel="icon" href="site/favicon.svg" type="image/svg+xml">
   <!-- ?v= obchází cache prohlížeče (GitHub Pages: max-age 10 min) – při změně souborů v site/ zvýšit -->
-  <script src="site/theme.js?v=3"></script>
-  <link rel="stylesheet" href="site/style.css?v=3">
-  <script src="site/script.js?v=3" defer></script>
+  <script src="site/theme.js?v=4"></script>
+  <link rel="stylesheet" href="site/style.css?v=4">
+  <script src="site/script.js?v=4" defer></script>
 </head>
 <body>
 
@@ -270,51 +270,36 @@ INDICATOR = EmaCross()</code></pre>
             <button class="tab" type="button" role="tab" id="tab-windows" aria-controls="panel-windows" aria-selected="false" tabindex="-1">Windows</button>
           </div>
 
-          <!-- macOS / Linux: bez gitu přes curl + tar (oba jsou v systému), nebo git clone -->
+          <!-- macOS / Linux: stažení přes curl + tar (oba jsou v systému, tar zachová spustitelný run.sh) -->
           <div class="tab-panel" role="tabpanel" id="panel-unix" aria-labelledby="tab-unix">
-            <h3 class="eyebrow variant-title">Bez gitu</h3>
             <div class="terminal">
-              <button class="copy-btn" type="button" data-copy-target="cmd-unix-archive">Kopírovat</button>
-<pre id="cmd-unix-archive"><code>curl -L https://github.com/svopex/TickView/archive/refs/heads/main.tar.gz | tar xz
+<pre id="cmd-unix"><code>curl -L https://github.com/svopex/TickView/archive/refs/heads/main.tar.gz | tar xz
 cd TickView-main
 ./run.sh --open</code></pre>
+              <button class="copy-btn" type="button" data-copy-target="cmd-unix">Kopírovat</button>
             </div>
             <p class="hint">
               Stáhne aktuální verzi do složky <code>TickView-main</code> – stačí <code>curl</code> a <code>tar</code>,
-              které macOS i Linux mají. Jde to i ručně: stáhněte
-              <a href="https://github.com/svopex/TickView/archive/refs/heads/main.zip">ZIP</a>, rozbalte ho a ve složce spusťte <code>./run.sh --open</code>.
+              které macOS i Linux mají. Skript <code>run.sh</code> vytvoří <code>.venv</code>, doinstaluje závislosti
+              a spustí aplikaci.
             </p>
-
-            <h3 class="eyebrow variant-title">S gitem</h3>
-            <div class="terminal">
-              <button class="copy-btn" type="button" data-copy-target="cmd-unix-git">Kopírovat</button>
-<pre id="cmd-unix-git"><code>git clone https://github.com/svopex/TickView.git
-cd TickView
-./run.sh --open</code></pre>
-            </div>
-            <p class="hint">Skript <code>run.sh</code> vytvoří <code>.venv</code>, doinstaluje závislosti a spustí aplikaci. Aktualizace: <code>git pull</code>.</p>
           </div>
 
-          <!-- Windows: bez gitu stažení ZIPu a dvojklik, nebo git clone -->
+          <!-- Windows: curl.exe a tar.exe jsou součástí Windows 10 (1803+) a 11; curl.exe kvůli aliasu curl
+               v PowerShellu 5.1, .\ kvůli spuštění skriptu z aktuální složky v PowerShellu -->
           <div class="tab-panel" role="tabpanel" id="panel-windows" aria-labelledby="tab-windows" hidden>
-            <h3 class="eyebrow variant-title">Bez gitu</h3>
-            <div class="download-row">
-              <a class="btn btn-primary" href="https://github.com/svopex/TickView/archive/refs/heads/main.zip">Stáhnout ZIP</a>
-              <p>Rozbalte ho a ve složce <code>TickView-main</code> dvakrát klikněte na <code>run-windows.bat</code>.</p>
+            <div class="terminal">
+<pre id="cmd-windows"><code>curl.exe -L -o TickView.zip https://github.com/svopex/TickView/archive/refs/heads/main.zip
+tar -xf TickView.zip
+cd TickView-main
+.\run-windows.bat</code></pre>
+              <button class="copy-btn" type="button" data-copy-target="cmd-windows">Kopírovat</button>
             </div>
             <p class="hint">
-              Skript najde Python, připraví <code>.venv</code>, doinstaluje závislosti a otevře prohlížeč.
-              Když Python chybí, poradí, jak ho nainstalovat.
+              Funguje v příkazové řádce i v PowerShellu na Windows 10 a 11, <code>curl</code> a <code>tar</code> jsou
+              součástí systému. Skript najde Python, připraví <code>.venv</code>, doinstaluje závislosti a otevře
+              prohlížeč; když Python chybí, poradí, jak ho nainstalovat.
             </p>
-
-            <h3 class="eyebrow variant-title">S gitem</h3>
-            <div class="terminal">
-              <button class="copy-btn" type="button" data-copy-target="cmd-windows-git">Kopírovat</button>
-<pre id="cmd-windows-git"><code>git clone https://github.com/svopex/TickView.git
-cd TickView
-run-windows.bat</code></pre>
-            </div>
-            <p class="hint">Aktualizace: <code>git pull</code>.</p>
           </div>
         </div>
 
@@ -326,9 +311,9 @@ run-windows.bat</code></pre>
         </div>
 
         <p class="note">
-          Aktualizace bez gitu: spusťte stejný příkaz znovu ve stejné složce, případně ZIP rozbalte
-          přes starou verzi a soubory nahraďte. Složka <code>data/</code> (cache, nastavení, kresby)
-          ani <code>config.yaml</code> (API klíče) v archivu nejsou, takže zůstanou.
+          Aktualizace: spusťte stejné příkazy znovu ve stejné složce, nová verze přepíše starou.
+          Složka <code>data/</code> (cache, nastavení, kresby) ani <code>config.yaml</code> (API klíče)
+          v archivu nejsou, takže zůstanou.
         </p>
 
         <p class="note">
