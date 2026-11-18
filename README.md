@@ -860,6 +860,8 @@ kroku). Zapnutí: na GitHubu Settings → Pages → Source „Deploy from a bran
 větev `main`, složka `/ (root)` → Save; web pak běží na
 https://svopex.github.io/TickView/. Lokální náhled:
 `python3 -m http.server` a otevřít http://localhost:8000/.
+Při změně souborů v `site/` zvýšit v `index.html` číslo `?v=` u odkazů
+na CSS a JS, jinak prohlížeče až 10 minut drží starou verzi z cache.
 
 ## Licence
 
