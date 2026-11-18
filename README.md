@@ -116,7 +116,9 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
 - Aplikace běží v prohlížeči na http://localhost:8095 (adresa se vypíše do konzole).
 - Jiný port: `python main.py --port 8090`.
 - Automatické otevření prohlížeče: `python main.py --open`.
-- Nativní okno (ui.run(native=True)): `pip install pywebview` a `python main.py --native`.
+- Nativní okno (ui.run(native=True)): `./run.sh --native` (Windows `run-windows.bat --native`);
+  potřebný `pywebview` se instaluje se závislostmi (`nicegui[native]`). Na Linuxu
+  pywebview potřebuje navíc GTK nebo Qt ze systému.
 - Testy (bez dalších závislostí): `python -m unittest`.
 - Jiná datová složka (cache, nastavení, kresby): proměnná prostředí
   `TICKVIEW_DATA_DIR`, např. `TICKVIEW_DATA_DIR=/tmp/tv python main.py`.
