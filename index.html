@@ -31,7 +31,7 @@
         <a href="#zdroje">Zdroje dat</a>
         <a href="#indikatory">Vlastní indikátory</a>
         <a href="#instalace">Instalace</a>
-        <a class="nav-github" href="https://github.com/svopex/TickView">GitHub</a>
+        <a class="nav-github" href="https://github.com/svopex/TickView" target="_blank" rel="noopener">GitHub</a>
       </nav>
       <!-- Přepínač motivu: podle prohlížeče / světlý / tmavý (site/theme.js) -->
       <button class="theme-toggle" type="button" data-mode="auto" aria-label="Motiv: podle prohlížeče (klik přepne)" title="Motiv: podle prohlížeče (klik přepne)">
@@ -48,15 +48,23 @@
     <section class="hero">
       <div class="container hero-inner">
         <div class="hero-copy">
-          <p class="eyebrow">Open source · Apache 2.0 · Python</p>
+          <p class="eyebrow">Zdarma · Open source · Apache 2.0 · Python</p>
           <h1>Grafy burz a kryptoměn, které běží <span class="accent">u&nbsp;vás</span></h1>
           <p class="lead">
-            TickView je desktopová a webová aplikace pro svíčkové grafy akcií, ETF,
-            forexu, futures a kryptoměn. Data bere z bezplatných zdrojů, všechno ukládá
-            lokálně a nikdy nic neobchoduje – je pouze pro čtení.
+            TickView je <strong class="accent">zcela zdarma</strong> – open-source desktopová
+            a webová aplikace pro svíčkové grafy akcií, ETF, forexu, futures a kryptoměn.
+            Data bere z bezplatných zdrojů, všechno ukládá lokálně a nikdy nic
+            neobchoduje – je pouze pro čtení.
           </p>
+          <!-- Zdůraznění, že aplikace nic nestojí -->
+          <ul class="check-list free-list" aria-label="Co TickView nevyžaduje">
+            <li>Bez předplatného</li>
+            <li>Bez registrace</li>
+            <li>Bez reklam</li>
+            <li>Data zdarma</li>
+          </ul>
           <div class="hero-actions">
-            <a class="btn btn-primary" href="https://github.com/svopex/TickView">Zdrojový kód na GitHubu</a>
+            <a class="btn btn-primary" href="https://github.com/svopex/TickView" target="_blank" rel="noopener">Zdrojový kód na GitHubu</a>
             <a class="btn btn-ghost" href="#instalace">Jak spustit</a>
           </div>
           <ul class="pill-list" aria-label="Podporované platformy">
@@ -91,8 +99,8 @@
     <!-- Pás s klíčovými čísly -->
     <section class="stats" aria-label="TickView v číslech">
       <div class="container stats-grid">
+        <div class="stat"><strong class="accent">0 Kč</strong><span>aplikace i data z Binance, Yahoo a CFTC</span></div>
         <div class="stat"><strong>28</strong><span>vestavěných indikátorů + vlastní v Pythonu</span></div>
-        <div class="stat"><strong>11</strong><span>typů grafu od svíček po Heikin Ashi</span></div>
         <div class="stat"><strong>1–16</strong><span>grafů najednou se synchronizací</span></div>
         <div class="stat"><strong>4 + COT</strong><span>zdroje dat, většina bez API klíče</span></div>
       </div>
@@ -327,12 +335,12 @@ run-windows.bat</code></pre>
           <img src="site/favicon.svg" alt="" width="24" height="24">
           <span>TickView</span>
         </a>
-        <p>© 2026 Petr Svoboda · <a href="https://github.com/svopex/TickView/blob/main/LICENSE">Apache License 2.0</a></p>
+        <p>© 2026 Petr Svoboda · <a href="https://github.com/svopex/TickView/blob/main/LICENSE" target="_blank" rel="noopener">Apache License 2.0</a></p>
       </div>
       <p class="disclaimer">
         TickView je pouze pro čtení – nezadává žádné obchody a nejde o investiční doporučení.
         Projekt není spojen se společností TradingView, Inc.; grafy vykresluje open-source knihovna
-        <a href="https://www.tradingview.com/lightweight-charts/">Lightweight Charts™</a> od TradingView (Apache 2.0).
+        <a href="https://www.tradingview.com/lightweight-charts/" target="_blank" rel="noopener">Lightweight Charts™</a> od TradingView (Apache 2.0).
       </p>
     </div>
   </footer>
