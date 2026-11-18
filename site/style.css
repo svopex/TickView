@@ -884,6 +884,29 @@ h3 {
   font-size: 0.92rem;
 }
 
+/* Nadpis varianty instalace (Bez gitu / S gitem) – písmo z .eyebrow, tlumená barva;
+   větší mezera jen u druhé varianty pod nápovědou první */
+.variant-title {
+  margin: 8px 0 10px;
+  color: var(--muted);
+}
+
+.hint + .variant-title {
+  margin-top: 28px;
+}
+
+/* Tlačítko ke stažení ZIPu s krátkým postupem vedle */
+.download-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 16px;
+}
+
+.download-row p {
+  margin: 0;
+}
+
 .option-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));

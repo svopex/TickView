@@ -67,6 +67,17 @@ VÝSTUP
 
 Vyžadován Python 3.11+.
 
+Stažení s gitem (`git clone https://github.com/svopex/TickView.git`), nebo
+bez gitu: na macOS/Linuxu stačí `curl` a `tar` (archiv rozbalí do
+`TickView-main`, `run.sh` zůstane spustitelný):
+
+    curl -L https://github.com/svopex/TickView/archive/refs/heads/main.tar.gz | tar xz
+    cd TickView-main
+
+Na Windows stáhnout ZIP z GitHubu (Code → Download ZIP) a rozbalit.
+Aktualizace bez gitu: stejný příkaz spustit znovu ve stejné složce (ZIP rozbalit
+přes starou verzi); `data/` ani `config.yaml` v archivu nejsou, takže zůstanou.
+
 Nejrychlejší spuštění na macOS/Linux (skript vytvoří `.venv`, doinstaluje
 závislosti a spustí aplikaci):
 
@@ -80,8 +91,7 @@ Nejrychlejší spuštění na Windows: dvojklik na `run-windows.bat` v Průzkumn
 z python.org), vytvoří `.venv`, doinstaluje závislosti při změně
 `requirements.txt` a spustí aplikaci. Bez parametrů rovnou otevře prohlížeč,
 jinak parametry předá do `main.py`, např. `run-windows.bat --port 8090 --open`.
-Při chybě okno nezavře, aby šla přečíst. Bez gitu stačí stáhnout ZIP
-z GitHubu (Code → Download ZIP) a rozbalit.
+Při chybě okno nezavře, aby šla přečíst.
 
 Ruční spuštění na všech systémech (Windows, macOS, Linux):
 
