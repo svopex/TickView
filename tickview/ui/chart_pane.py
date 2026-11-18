@@ -18,6 +18,7 @@ from tickview.logic.sessions import SESSION_RTH, filter_session, in_session
 from tickview.logic.styles import drawing_visible
 from tickview.providers import get_provider
 from tickview.providers.base import TIMEFRAME_MS, Candle, StreamStatus, is_closed, merge_candle, utc_now_ms
+from tickview.services import datafeeds
 from tickview.ui.lightweight_chart import LightweightChart
 
 # Kolik svíček historie se načte pro jedno zobrazení (a uloží do cache)
@@ -277,10 +278,22 @@ class ChartPane:
         """
         self.indicators_refreshed_at = time.monotonic()
         candles = list(self.candles or [])
+        indicators = list(self.indicators)
         ctx = context_for(self.provider, self.symbol or "", self.timeframe, candles, live=tail)
-        payload = await asyncio.to_thread(compute_indicators, list(self.indicators), candles, ctx)
+        # Externí data (COT report) z paměti; chybějící nebo zastaralá se načtou
+        # na pozadí a indikátory se pak přepočítají (graf na ně nečeká)
+        pairs = [(get_indicator(spec["kind"]), spec["params"]) for spec in indicators]
+        ctx, pending = datafeeds.attach_cached(ctx, pairs)
+        if pending:
+            datafeeds.load_in_background(pending, self._indicator_data_loaded)
+        payload = await asyncio.to_thread(compute_indicators, indicators, candles, ctx)
         if not self.closed:
             await self.chart.set_indicators(tail_payload(payload) if tail else payload)
+
+    async def _indicator_data_loaded(self) -> None:
+        # Externí data indikátorů se načetla na pozadí – přepočet s nimi
+        if not self.closed:
+            await self.push_indicators()
 
     # ---------- historie a živá data ----------
 

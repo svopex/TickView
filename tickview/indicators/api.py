@@ -34,6 +34,7 @@ CATEGORIES = {
     "osc": "Oscilátory",
     "volatility": "Volatilita",
     "volume": "Objem",
+    "cot": "COT report",
     "custom": "Vlastní",
 }
 
@@ -249,6 +250,8 @@ class Context:
         live: True = živý přepočet z rozpracované svíčky (indikátor smí výpočet zkrátit).
         signal_bars: scanner potřebuje jen signály posledních N svíček (None = vše
             pro graf); indikátor pak smí vynechat kreslení a starší svíčky.
+        data: externí data podle Indicator.data_requirements ({klíč: DataFrame});
+            klíč chybí, dokud se data nenačetla (nebo nejsou dostupná).
     """
 
     symbol: str = ""
@@ -260,6 +263,7 @@ class Context:
     exchange_timezone: str = "UTC"
     live: bool = False
     signal_bars: Optional[int] = None
+    data: dict = field(default_factory=dict, compare=False)
 
 
 @dataclass
@@ -335,6 +339,34 @@ class Signal:
 
 
 @dataclass
+class Table:
+    """Tabulka v grafu indikátoru (jako table v Pine): řádky popisek – hodnota
+    a volitelný blok poznámek (např. průvodce interpretací) vedle nich.
+
+    Atributy:
+        title: nadpis tabulky (první řádek).
+        rows: řádky [(popisek, hodnota)].
+        position: pozice v panelu indikátoru (u overlay indikátoru v hlavním
+            grafu) – hodnota z TABLE_POSITIONS.
+        size: velikost textu – hodnota z TABLE_SIZES.
+        color: barva nadpisu (None = výchozí).
+        notes: řádky poznámek.
+        notes_title: nadpis bloku poznámek.
+        notes_mode: "always" (poznámky vždy), "hover" (jen po najetí myší na
+            tabulku), "off" (bez poznámek).
+    """
+
+    title: str
+    rows: list[tuple[str, str]] = field(default_factory=list)
+    position: str = "top_right"
+    size: str = "normal"
+    color: Optional[str] = None
+    notes: list[str] = field(default_factory=list)
+    notes_title: str = ""
+    notes_mode: str = "always"
+
+
+@dataclass
 class Result:
     """Výstup výpočtu indikátoru.
 
@@ -344,6 +376,10 @@ class Result:
         segments: úsečky (trendové linky…).
         markers: značky u svíček.
         signals: signály pro scanner a alerty.
+        tables: tabulky v grafu indikátoru (Indicator.has_tables).
+        background: barva pozadí panelu u každé svíčky (jako bgcolor v Pine;
+            stejná délka jako svíčky, None = bez barvy); jen u indikátoru
+            ve vlastním panelu.
     """
 
     lines: list[Line] = field(default_factory=list)
@@ -351,6 +387,8 @@ class Result:
     segments: list[Segment] = field(default_factory=list)
     markers: list[Marker] = field(default_factory=list)
     signals: list[Signal] = field(default_factory=list)
+    tables: list[Table] = field(default_factory=list)
+    background: Optional[Sequence[Optional[str]]] = None
 
 
 class Indicator:
@@ -369,6 +407,8 @@ class Indicator:
         has_signals: indikátor vrací signály (alert na signál, scanner).
         has_lines: indikátor vrací úsečky (Result.segments) – záložka Style
             nabídne přepínač Lines.
+        has_tables: indikátor vrací tabulky (Result.tables) – záložka Style
+            nabídne přepínač Tables (u indikátoru se scannerem automaticky).
         api_version: verze rozhraní, pro kterou je indikátor napsaný.
     """
 
@@ -382,6 +422,7 @@ class Indicator:
     title_params: Optional[tuple] = None
     has_signals: bool = False
     has_lines: bool = False
+    has_tables: bool = False
     api_version: int = API_VERSION
 
     def validate(self, params: dict) -> None:
@@ -393,6 +434,14 @@ class Indicator:
         Graf načte aspoň tolik svíček, scanner stáhne dost historie.
         """
         return 0
+
+    def data_requirements(self, params: dict, ctx: Context) -> list[str]:
+        """Externí data, která výpočet potřebuje (klíče Context.data), např. ["cot:209742"].
+
+        TickView je načte (na pozadí) a předá v ctx.data; dokud nejsou
+        k dispozici, compute dostane ctx.data bez daného klíče.
+        """
+        return []
 
     def compute(self, df: pd.DataFrame, params: dict, ctx: Context) -> Result:
         """Spočítá indikátor.

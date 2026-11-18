@@ -2068,7 +2068,7 @@ async def _build_index(
         )
         settings_visibility.fill(options.get("visibility"))
         has_lines = bool(indicator and indicator.has_lines)
-        has_tables = bool(indicator and indicator.has_scanner)
+        has_tables = bool(indicator and (indicator.has_scanner or indicator.has_tables))
         settings_style_checks["lines"].set_visibility(has_lines)
         settings_style_checks["tables"].set_visibility(has_tables)
         settings_objects.set_visibility(has_lines or has_tables)

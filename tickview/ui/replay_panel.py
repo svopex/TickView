@@ -16,7 +16,7 @@ from datetime import datetime
 
 from nicegui import background_tasks, ui
 
-from tickview.indicators.compute import context_for, detect_tick, run_indicator
+from tickview.indicators.compute import detect_tick, run_indicator
 from tickview.indicators.registry import get_indicator
 from tickview.logic.alerts import format_price
 from tickview.logic.styles import MAX_NAME_LENGTH, clean_name
@@ -37,6 +37,7 @@ from tickview.logic.replay import (
     trades_csv,
 )
 from tickview.providers.base import TIMEFRAME_MS, utc_now_ms
+from tickview.services import datafeeds
 from tickview.services.replay import ReplayController, settings_for
 from tickview.ui.templates import settings_buttons, settings_header
 
@@ -247,11 +248,16 @@ class ReplayUI:
         candles = list(pane.candles or [])
         if len(candles) < 3:
             return
-        ctx = context_for(pane.provider, pane.symbol, pane.timeframe, candles, live=True, signal_bars=2)
-        for spec in pane.indicators:
-            indicator = get_indicator(spec["kind"])
-            if indicator is None or not indicator.has_signals or spec.get("visible") is False:
-                continue
+        # Indikátory se signály a jeden kontext s jejich externími daty (COT report)
+        targets = [(spec, indicator) for spec in pane.indicators
+                   if (indicator := get_indicator(spec["kind"])) is not None and indicator.has_signals
+                   and spec.get("visible") is not False]
+        if not targets:
+            return
+        ctx = await datafeeds.context_with_data(pane.provider, pane.symbol, pane.timeframe, candles,
+                                                [(indicator, spec["params"]) for spec, indicator in targets],
+                                                live=True, signal_bars=2)
+        for spec, indicator in targets:
             try:
                 result = await asyncio.to_thread(run_indicator, indicator, spec["params"], candles, ctx)
             except Exception:

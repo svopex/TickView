@@ -126,6 +126,12 @@ CREATE TABLE IF NOT EXISTS replay_sessions (
     created_at  INTEGER NOT NULL,
     updated_at  INTEGER NOT NULL
 );
+-- COT report CFTC: řádky API jednoho trhu (JSON) a čas posledního stažení (ms UTC)
+CREATE TABLE IF NOT EXISTS cot_reports (
+    market     TEXT    PRIMARY KEY,
+    fetched_at INTEGER NOT NULL,
+    rows       TEXT    NOT NULL
+);
 """
 
 # Název seznamu, který vznikne při prvním spuštění (a do kterého se převede
@@ -541,6 +547,36 @@ class KlineCache:
             "kind": row[4],
             "points": json.loads(row[5]),
         }
+
+    # ---------- COT report ----------
+
+    async def load_cot(self, market: str) -> Optional[tuple[int, list[dict]]]:
+        """Uložené řádky COT reportu trhu: (čas stažení v ms, řádky API), nebo None."""
+
+        def load() -> Optional[tuple[int, list[dict]]]:
+            # Čtení i rozbor JSON ve vlákně (řádky celé historie trhu mají stovky kB)
+            row = self._conn.execute("SELECT fetched_at, rows FROM cot_reports WHERE market = ?", (market,)).fetchone()
+            if row is None:
+                return None
+            try:
+                return int(row[0]), json.loads(row[1])
+            except ValueError:
+                # Poškozený záznam = jako by nebyl (stáhne se znovu)
+                return None
+
+        return await self._run(load)
+
+    async def save_cot(self, market: str, fetched_at: int, rows: list[dict]) -> None:
+        """Uloží řádky COT reportu trhu (nahradí předchozí) a čas stažení."""
+
+        def save() -> None:
+            with self._conn:
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO cot_reports (market, fetched_at, rows) VALUES (?, ?, ?)",
+                    (market, fetched_at, json.dumps(rows, separators=(",", ":"))),
+                )
+
+        await self._run(save)
 
     # ---------- watchlisty (pojmenované seznamy symbolů) ----------
 

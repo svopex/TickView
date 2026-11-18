@@ -24,3 +24,8 @@ telegram:
 # smažou), confirm (povolit po potvrzení), off (zakázat)
 replay:
   rewind: "delete"
+
+# COT report CFTC – data jsou zdarma bez klíče; volitelný app token
+# (publicreporting.cftc.gov → Sign up → Developer Settings) zvedá limit dotazů
+cot:
+  app_token: ""

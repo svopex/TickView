@@ -835,6 +835,8 @@ window.TickViewChart = (function () {
       locked: false,
       overlaySeries: [],
       panesMap: new Map(),
+      // Tabulky indikátorů v grafu (klíč skupina:pořadí → {el, json, host})
+      indicatorTables: new Map(),
       syncing: false,
       // Graf panelu, nad kterým je kurzor (posouvání rozsahu z panelu)
       paneUnderPointer: null,
@@ -2217,6 +2219,19 @@ window.TickViewChart = (function () {
     });
 
     const priceFormat = panePriceFormat(s, pane);
+    // Pozadí panelu (bgcolor indikátoru): sloupce na vlastní skryté ose přes
+    // celou výšku, vytvořené před ostatními sériemi, aby byly pod nimi
+    let background = null;
+    if (pane.background) {
+      background = chart.addHistogramSeries({
+        priceScaleId: 'background',
+        lastValueVisible: false,
+        priceLineVisible: false,
+        visible: visible,
+      });
+      chart.priceScale('background').applyOptions({ scaleMargins: { top: 0, bottom: 0 }, visible: false });
+      background.setData(pane.background);
+    }
     const created = [];
     let baseSeries = null;
     for (const spec of pane.series) {
@@ -2285,7 +2300,7 @@ window.TickViewChart = (function () {
     // Nový panel se rovná na rozsah hlavního grafu
     const mainRange = s.chart.timeScale().getVisibleLogicalRange();
     if (mainRange) chart.timeScale().setVisibleLogicalRange(mainRange);
-    s.panesMap.set(pane.paneId, { chart, wrap, title, series: created, markers, markersDrawn: false });
+    s.panesMap.set(pane.paneId, { chart, wrap, host, title, series: created, background, markers, markersDrawn: false });
   }
 
   // Pozice značky indikátoru → pozice značky Lightweight Charts
@@ -2371,6 +2386,69 @@ window.TickViewChart = (function () {
     box.appendChild(table);
   }
 
+  // Tabulka indikátoru (jako table v Pine): nadpis, řádky popisek – hodnota
+  // a vedle nich blok poznámek (průvodce interpretací) – vždy, nebo jen po
+  // najetí myší na tabulku (notesMode "hover", značka ⓘ v nadpisu). Tabulka
+  // v panelu má vlastní pozice (bez legendy a časové osy hlavního grafu)
+  function buildIndicatorTable(table) {
+    const place = (table.pane ? 'ind-pane-' : 'overview-') + table.position;
+    const box = el('div', 'lwchart-ind-table ' + place + ' overview-' + table.size + ' notes-' + table.notesMode);
+    if (table.color) box.style.setProperty('--ind-table-accent', table.color);
+    const main = el('table', 'ind-table-main');
+    const head = el('tr', 'ind-table-head');
+    const title = el('th', '', table.title);
+    title.colSpan = 2;
+    if (table.notes.length && table.notesMode === 'hover') title.appendChild(el('span', 'ind-table-hint', ' ⓘ'));
+    head.appendChild(title);
+    main.appendChild(head);
+    for (const [label, value] of table.rows) {
+      const tr = el('tr');
+      tr.appendChild(el('td', 'ind-table-label', label));
+      tr.appendChild(el('td', 'ind-table-value', value));
+      main.appendChild(tr);
+    }
+    box.appendChild(main);
+    if (table.notes.length) {
+      const notes = el('div', 'ind-table-notes');
+      notes.appendChild(el('div', 'ind-table-notes-title', table.notesTitle));
+      for (const note of table.notes) notes.appendChild(el('div', 'ind-table-note', note));
+      box.appendChild(notes);
+    }
+    return box;
+  }
+
+  // Tabulky indikátorů v panelech a hlavním grafu; nezměněná tabulka zůstane
+  // (živý přepočet nepřekresluje DOM a nezavře průvodce pod myší), panel
+  // přestavěný po změně indikátorů dostane tabulku znovu
+  function renderIndicatorTables(s, payload) {
+    const groupsPayload = payload.tail ? s.lastIndicatorPayload || payload : payload;
+    const seen = new Set();
+    const perGroup = new Map();
+    for (const table of payload.tables || []) {
+      const index = perGroup.get(table.group) || 0;
+      perGroup.set(table.group, index + 1);
+      const key = table.group + ':' + index;
+      const paneEntry = table.pane ? s.panesMap.get(table.pane) : null;
+      const host = table.pane ? paneEntry && paneEntry.host : s.mainHost;
+      if (!host) continue;
+      seen.add(key);
+      const json = JSON.stringify(table);
+      let entry = s.indicatorTables.get(key);
+      if (!entry || entry.json !== json || entry.host !== host || !entry.el.isConnected) {
+        if (entry) entry.el.remove();
+        entry = { el: buildIndicatorTable(table), json: json, host: host };
+        host.appendChild(entry.el);
+        s.indicatorTables.set(key, entry);
+      }
+      entry.el.classList.toggle('hidden', !groupVisible(groupsPayload, table.group));
+    }
+    for (const [key, entry] of s.indicatorTables) {
+      if (seen.has(key)) continue;
+      entry.el.remove();
+      s.indicatorTables.delete(key);
+    }
+  }
+
   // Nahradí všechny indikátory: overlay čáry + panely pod hlavním grafem
   function setIndicators(id, payload) {
     const s = state.get(id);
@@ -2393,6 +2471,7 @@ window.TickViewChart = (function () {
     s.indicatorSegments = payload.segments || [];
     s.indicatorMarkers = payload.markers || [];
     applyIndicatorMarkers(s);
+    renderIndicatorTables(s, payload);
     redrawOverlay(s);
     // Panely po nových datech srovnáme na rozsah hlavního grafu
     alignPanesToMain(s);
@@ -2431,6 +2510,14 @@ window.TickViewChart = (function () {
         pane.series.forEach((spec, index) =>
           apply(existing.series[index], spec, groupVisible(payload, pane.group), priceFormat)
         );
+        if (existing.background && pane.background) {
+          if (payload.tail) {
+            pane.background.filter((point) => point.time >= lastTime).forEach((point) => existing.background.update(point));
+          } else {
+            existing.background.setData(pane.background);
+            existing.background.applyOptions({ visible: groupVisible(payload, pane.group) });
+          }
+        }
       }
     } else if (payload.tail) {
       // Zkrácený payload k jiné sadě indikátorů (mezitím změněné) nelze použít
@@ -2452,7 +2539,9 @@ window.TickViewChart = (function () {
   function indicatorStructure(payload) {
     const overlays = (payload.overlays || []).map((overlay) => overlay.group + ':' + overlay.name + ':' + overlay.type);
     const panes = (payload.panes || []).map(
-      (pane) => pane.paneId + ':' + pane.series.map((spec) => spec.name + ':' + spec.type).join(',') + ':' + (pane.levels || []).join(',')
+      (pane) =>
+        pane.paneId + ':' + pane.series.map((spec) => spec.name + ':' + spec.type).join(',') + ':' + (pane.levels || []).join(',') +
+        (pane.background ? ':bg' : '')
     );
     return JSON.stringify([overlays, panes]);
   }
@@ -2538,7 +2627,10 @@ window.TickViewChart = (function () {
       // sjednocením všech sérií, takže by po přepočtu indikátorů posunuly
       // logické indexy (graf mimo data) – vyprázdníme je do příchodu nových
       for (const series of s.overlaySeries) series.setData([]);
-      for (const pane of s.panesMap.values()) pane.series.forEach((series) => series.setData([]));
+      for (const pane of s.panesMap.values()) {
+        pane.series.forEach((series) => series.setData([]));
+        if (pane.background) pane.background.setData([]);
+      }
       s.indicatorLastTime = -Infinity;
       applySeriesData(s);
       s.chart.timeScale().setVisibleLogicalRange({

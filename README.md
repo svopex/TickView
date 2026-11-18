@@ -296,7 +296,7 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   se ukládají. K dispozici SMA, EMA, WMA, HMA, VWMA, VWAP, Bollinger
   Bands, Keltner, Donchian, Ichimoku, Parabolic SAR, Supertrend, ADX, RSI,
   MACD, Stochastic, Stoch RSI, CCI, Williams %R, Momentum, ROC, Awesome
-  Oscillator, TRIX, TSI, ATR, OBV, MFI, CMF a vlastní indikátory. Řádek indikátoru v legendě (i
+  Oscillator, TRIX, TSI, ATR, OBV, MFI, CMF, indikátory COT reportu (viz níže) a vlastní indikátory. Řádek indikátoru v legendě (i
   v titulku panelu) má při najetí myší oko (skrýt/zobrazit), ozubené kolečko
   (Settings) a křížek (odebrat). Výška panelu indikátoru se mění tažením
   jeho horní hrany (nahoru zvětšuje na úkor hlavního grafu, u dvou panelů
@@ -345,9 +345,15 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   test) a `python -m unittest` je najde sám; testy aplikace na žádném
   vlastním indikátoru nezávisí. Indikátor importuje jen `tickview.indicators.api`
   a pandas/numpy, dostane svíčky, parametry a `Context` (druh instrumentu,
-  tick, pásmo burzy, timeframe) a vrátí `Result`: čáry, úrovně panelu,
-  úsečky, značky u svíček a signály pro scanner (indikátor s úsečkami
-  nastaví `has_lines = True`, aby Style nabídl přepínač Lines). Výchozí druh
+  tick, pásmo burzy, timeframe, externí data `ctx.data`) a vrátí `Result`: čáry, úrovně panelu,
+  úsečky, značky u svíček, signály pro scanner, tabulky (`Result.tables` –
+  řádky popisek–hodnota a blok poznámek zobrazený vždy nebo po najetí myší,
+  `has_tables = True` přidá do Style přepínač Tables) a barvu pozadí panelu
+  u svíček (`Result.background`, jako `bgcolor` v Pine); indikátor s úsečkami
+  nastaví `has_lines = True`, aby Style nabídl přepínač Lines. Externí data
+  si indikátor vyžádá v `data_requirements` (klíč `cot:<kód trhu>`); graf
+  se po jejich načtení na pozadí přepočítá, scanner, alerty a replay na ně
+  počkají. Výchozí druh
   vykreslení čáry určuje `Line.type` (`"line"`, `"histogram"` nebo jiný druh
   záložky Style, např. `"linebr"`, `"circles"`), výchozí tloušťku a styl volby
   `lineWidth` a `lineStyle`; uživatel je v záložce Style změní. Nový indikátor = nový
@@ -355,6 +361,35 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   rozhraní (`API_VERSION`) se zapíše do logu a ukáže v kategorii Vlastní,
   ostatní indikátory fungují dál. Popis konkrétního indikátoru (výpočet,
   výchozí nastavení, zvláštnosti) je v `README.md` v jeho adresáři.
+- Indikátory COT reportu CFTC (kategorie COT report): data jsou zdarma
+  z veřejného API CFTC (publicreporting.cftc.gov, Legacy report jen futures,
+  bez klíče; volitelný app token v `config.yaml` → `cot.app_token` zvedá
+  limit dotazů). „COT – pozice skupiny“ ukazuje čistou pozici (long − short)
+  zvolené skupiny – Commercials (hedgeři), Non-Commercials (velcí spekulanti
+  a fondy) nebo Non-reportables (drobní obchodníci) – jako schodovitou čáru
+  a týdenní změnu jako histogram na svíčce, kde nový report začne platit.
+  „COT Index“ (Larry Williams) je poloha čisté pozice v rozsahu posledních
+  N týdnů (výchozí 52) pro dvě skupiny (výchozí Commercials a
+  Non-reportables) s úrovněmi 20/80, pozadím panelu v extrému a signály pro
+  alert a scanner při vstupu skupiny 1 do extrému (Commercials nad horní
+  úrovní LONG, pod dolní SHORT; spekulanti a drobní obchodníci obráceně).
+  Index se počítá nad celou historií reportů, takže nezávisí na délce
+  historie grafu. Oba indikátory mají tabulku (vlevo nahoře: trh, symbol,
+  hodnoty posledního platného reportu, datum reportu a zveřejnění) s průvodcem
+  interpretací (vždy, po najetí myší na tabulku, nebo vypnutý). Trh se odvodí ze
+  symbolu grafu: futures (`NQ1!`, `GC=F`, `VIX1!@CFE`), forex a spotové kovy
+  proti USD (`EUR.USD`, `EURUSD=X`, `XAUUSD`; páry USD/xxx jako `USDJPY`
+  automaticky s obráceným směrem pozic), indexová CFD a indexy Yahoo
+  (`IBUS500`, `^GSPC`) a krypto (`BTCUSDT` → Bitcoin CME); jinak se zadá
+  šestimístný kód trhu CFTC ručně. Eurex (DAX, Euro Stoxx, Bund), křížové
+  páry a akcie COT nemají. Report popisuje stav k úterku a vychází v pátek
+  v 15:30 New York (svátek v USA od úterý do pátku ho posune na další
+  pracovní den, podle harmonogramu CFTC); hodnota platí v grafu od svíčky,
+  během které report vyšel, takže replay ani signály nevidí report dřív
+  (volitelně od data reportu jako v TradingView). Mimořádná zpoždění
+  (shutdown vlády) se nezohlední. Data trhu se ukládají do SQLite
+  (`cot_reports`) a znovu se stahují, až má vyjít další report; panely COT
+  mají výchozí výšku 180 px.
 - Scanner je součástí vstupů indikátoru, který k parametrům připojí vstupy
   scanneru (skupiny Scanner – `scanner_params` z rozhraní indikátorů,
   jako `request.security` a `table` v Pine) a vrací signály
@@ -654,20 +689,25 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   timeframy), aktivace po zadání klíčů
 - `tickview/providers/__init__.py` – registr zdrojů (nový zdroj = jeden řádek)
 - `tickview/logic/cache.py` – SQLite cache svíček, nastavení, kreseb,
-  alertů a jejich logu, seznamů symbolů (watchlistů), session replaye a evidence stažených intervalů; skládání historie z cache a sítě (se zastřižením chybných knotů z kotací)
+  alertů a jejich logu, seznamů symbolů (watchlistů), session replaye, COT reportu a evidence stažených intervalů; skládání historie z cache a sítě (se zastřižením chybných knotů z kotací)
   (ze sítě stahuje jen chybějící úseky) a „aspoň N posledních svíček“ se
   zvětšováním okna (graf i scanner)
 - `tickview/indicators/api.py` – rozhraní indikátorů (jediný modul, který
   indikátor importuje): Param (schéma parametrů), Indicator, Context,
-  Result, Line, Segment, Marker, Signal, vstupy scanneru (`scanner_params`),
+  Result, Line, Segment, Marker, Signal, Table, vstupy scanneru (`scanner_params`),
   kategorie a `API_VERSION`
 - `tickview/indicators/builtin.py` – 28 vestavěných indikátorů (pandas-ta)
   jako deklarace přes rozhraní indikátorů
+- `tickview/indicators/cot.py` – indikátory COT reportu (pozice skupiny,
+  COT Index): zarovnání reportů na svíčky, tabulka a průvodce interpretací
+- `tickview/logic/cot.py` – COT report: kódy trhů CFTC, mapování symbolů
+  (futures, forex, CFD, krypto), čas zveřejnění se svátky v USA, zpracování
+  řádků API a COT Index
 - `tickview/indicators/registry.py` – registr indikátorů: vestavěné + loader
   vlastních z `custom/<název>/indicator.py` s izolací chyb
 - `tickview/indicators/compute.py` – instance indikátorů (kontrola, načtení
   uložených, zachování nenačtených), kontext výpočtu (tick, druh
-  instrumentu), payload pro graf (čáry, panely, úsečky, značky, legenda)
+  instrumentu), payload pro graf (čáry, panely s pozadím, úsečky, značky, tabulky, legenda)
   se vzhledem výstupů podle záložky Style a výstupy indikátoru pro záložku
   Style (výpočet nad umělými svíčkami)
 - `tickview/indicators/custom/<název>/` – vlastní indikátory: `indicator.py`,
@@ -687,6 +727,10 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
 - `tickview/services/alerts.py` – AlertEngine: vyhodnocování aktivních
   alertů na pozadí nad živými streamy zdrojů, vypršení, log a ohlášení
   otevřeným stránkám
+- `tickview/services/cot.py` – stahování COT reportu z API CFTC s uložením
+  do SQLite a odkladem po chybě
+- `tickview/services/datafeeds.py` – externí data indikátorů (`Context.data`):
+  požadavky indikátorů, data z paměti pro graf, čekání pro scanner a alerty
 - `tickview/services/notify.py` – Telegram bot (sendMessage, zjištění chat
   id) a webhook
 - `tickview/services/listeners.py` – posluchači otevřených stránek pro

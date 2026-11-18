@@ -15,7 +15,7 @@ from typing import Callable, Optional
 
 import httpx
 
-from tickview.indicators.compute import context_for, history_bars, run_indicator
+from tickview.indicators.compute import history_bars, run_indicator
 from tickview.indicators.registry import get_indicator
 from tickview.logic.alerts import (
     AlertTracker,
@@ -29,6 +29,7 @@ from tickview.logic.alerts import (
 from tickview.logic.cache import KlineCache, fetch_recent
 from tickview.providers import get_provider
 from tickview.providers.base import TIMEFRAME_MS, Candle, StreamStatus, merge_candle, utc_now_ms
+from tickview.services import datafeeds
 from tickview.services.listeners import Listeners
 from tickview.services.notify import send_telegram, send_webhook, telegram_settings
 
@@ -258,7 +259,9 @@ class AlertEngine(Listeners):
                     self._candles[key] = history
                     self._candle_limits[key] = max(len(history), needed)
                 candles = list(self._candles[key])
-                ctx = context_for(provider, symbol, timeframe, candles, live=True, signal_bars=2)
+                # Kontext s externími daty indikátoru (COT report)
+                ctx = await datafeeds.context_with_data(provider, symbol, timeframe, candles,
+                                                        [(indicator, target["params"])], live=True, signal_bars=2)
                 result = await asyncio.to_thread(run_indicator, indicator, target["params"], candles, ctx)
             except Exception:
                 logger.exception("Alert %s: výpočet indikátoru selhal", alert["id"])

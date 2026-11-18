@@ -334,6 +334,12 @@
   height: 140px;
 }
 
+/* Panely COT reportu jsou vyšší kvůli tabulce s hodnotami reportu */
+.lwchart-pane-cot_positions,
+.lwchart-pane-cot_index {
+  height: 180px;
+}
+
 /* Výška nastavená tažením horní hrany panelu (lightweight_chart.js) */
 .lwchart-pane.lwchart-pane-sized {
   height: var(--lwchart-pane-height);
@@ -2482,6 +2488,84 @@
 .overview-small { font-size: 11px; }
 .overview-normal { font-size: 13px; }
 .overview-large { font-size: 16px; }
+
+/* Tabulka indikátoru v grafu (Result.tables, např. COT): řádky popisek – hodnota
+   a vedle nich průvodce interpretací; přijímá myš kvůli zobrazení průvodce */
+.lwchart-ind-table {
+  --ind-table-accent: rgba(33, 150, 243, 0.7);
+  position: absolute;
+  z-index: 9;
+  display: flex;
+  align-items: flex-start;
+  gap: 1px;
+  max-height: calc(100% - 8px);
+  overflow: hidden;
+  color: #ffffff;
+}
+
+/* Pozice tabulky v panelu indikátoru (vpravo místo pro cenovou osu) */
+.ind-pane-top_right { top: 4px; right: 70px; }
+.ind-pane-top_left { top: 4px; left: 10px; }
+.ind-pane-middle_right { top: 50%; right: 70px; transform: translateY(-50%); }
+.ind-pane-bottom_right { bottom: 4px; right: 70px; }
+.ind-pane-bottom_left { bottom: 4px; left: 10px; }
+
+.lwchart-ind-table table {
+  border-collapse: separate;
+  border-spacing: 0;
+  background: rgba(19, 23, 34, 0.82);
+}
+
+.lwchart-ind-table th,
+.lwchart-ind-table td {
+  padding: 1px 8px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.ind-table-head th {
+  background: var(--ind-table-accent);
+  font-weight: 500;
+}
+
+.ind-table-hint {
+  opacity: 0.75;
+}
+
+.ind-table-label {
+  color: #b2b5be;
+}
+
+/* Blok průvodce interpretací vedle tabulky */
+.ind-table-notes {
+  background: rgba(19, 23, 34, 0.82);
+  max-width: 420px;
+}
+
+.ind-table-notes-title {
+  background: var(--ind-table-accent);
+  padding: 1px 8px;
+  font-weight: 500;
+}
+
+.ind-table-note {
+  padding: 0 8px;
+  line-height: 1.35;
+}
+
+/* Tabulka skrytého indikátoru (oko v legendě) */
+.lwchart-ind-table.hidden {
+  display: none;
+}
+
+/* Průvodce jen po najetí myší na tabulku */
+.lwchart-ind-table.notes-hover .ind-table-notes {
+  display: none;
+}
+
+.lwchart-ind-table.notes-hover:hover .ind-table-notes {
+  display: block;
+}
 
 /* Settings aplikace (Telegram, Interactive Brokers, Alpaca v záložkách) */
 .app-settings {

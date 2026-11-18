@@ -7,6 +7,7 @@ from nicegui import app, ui
 from tickview.config import DB_PATH, PROJECT_ROOT, ensure_dirs
 from tickview.logic.cache import KlineCache
 from tickview.providers import PROVIDERS
+from tickview.services import datafeeds
 from tickview.services.alerts import AlertEngine
 from tickview.services.reminders import ReminderService
 from tickview.services.scanner import ScannerService
@@ -29,6 +30,8 @@ def main() -> None:
     args = parse_args()
     ensure_dirs()
     cache = KlineCache(DB_PATH)
+    # Externí data indikátorů (COT report CFTC) se ukládají do stejné databáze
+    datafeeds.configure(cache)
     # Alerty, scanner a časové připomínky běží na serveru i bez otevřené stránky
     alert_engine = AlertEngine(cache)
     scanner = ScannerService(cache, alert_engine)

@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
-from tickview.indicators.compute import context_for, history_bars, run_indicator
+from tickview.indicators.compute import history_bars, run_indicator
 from tickview.indicators.registry import get_indicator
 from tickview.logic.cache import KlineCache, fetch_recent
 from tickview.logic.layouts import LAYOUT_SETTINGS_KEY, load_layout, normalize_layout
@@ -34,6 +34,7 @@ from tickview.logic.scanner import (
 )
 from tickview.providers import get_provider
 from tickview.providers.base import TIMEFRAME_MS, utc_now_ms
+from tickview.services import datafeeds
 from tickview.services.listeners import Listeners
 
 logger = logging.getLogger(__name__)
@@ -223,7 +224,9 @@ class ScannerService(Listeners):
                                          min_count=needed, window_bars=needed)
             if not candles:
                 return error_row(source, symbol, "Žádná data.")
-            ctx = context_for(provider, symbol, timeframe, candles, signal_bars=config["bars"])
+            # Kontext s externími daty indikátoru (COT report)
+            ctx = await datafeeds.context_with_data(provider, symbol, timeframe, candles, [(indicator, params)],
+                                                    signal_bars=config["bars"])
             result = await asyncio.to_thread(run_indicator, indicator, params, candles, ctx)
         except Exception as exc:
             logger.warning("Scanner %s:%s selhal: %s", source, symbol, exc)

@@ -27,6 +27,7 @@ from tickview.indicators.api import (
     Indicator,
     Line,
     Result,
+    Table,
 )
 from tickview.indicators.registry import get_indicator
 from tickview.logic.styles import (
@@ -430,6 +431,25 @@ def sample_lines(indicator: Indicator, params: dict) -> list[Line]:
         return []
 
 
+def _table_payload(table: Table, group: str, pane_id: Optional[str]) -> dict:
+    """Tabulka indikátoru pro JS graf (pane None = hlavní graf)."""
+    return {
+        "group": group, "pane": pane_id, "title": table.title,
+        "rows": [[str(label), str(value)] for label, value in table.rows],
+        "position": table.position, "size": table.size, "color": normalize_color(table.color),
+        "notes": [str(note) for note in table.notes] if table.notes_mode != "off" else [],
+        "notesTitle": table.notes_title, "notesMode": table.notes_mode,
+    }
+
+
+def _background_payload(times, colors) -> list[dict]:
+    """Pozadí panelu jako body sloupcové série přes celou výšku (bez barvy = prázdný bod)."""
+    return [
+        {"time": int(time), "value": 1, "color": color} if color else {"time": int(time)}
+        for time, color in zip(times, colors)
+    ]
+
+
 def _finite(*values: float) -> bool:
     return all(isinstance(value, (int, float)) and math.isfinite(value) for value in values)
 
@@ -437,12 +457,13 @@ def _finite(*values: float) -> bool:
 def compute_indicators(indicators: list[dict], candles: list[Candle], ctx: Optional[Context] = None) -> dict:
     """Spočítá aktivní instance indikátorů; vrací payload pro JS graf.
 
-    overlays = čáry přes hlavní graf, panes = samostatné panely s úrovněmi,
-    segments / markers = úsečky a značky indikátorů v hlavním grafu,
+    overlays = čáry přes hlavní graf, panes = samostatné panely s úrovněmi
+    (a pozadím background), segments / markers = úsečky a značky indikátorů
+    v hlavním grafu, tables = tabulky indikátorů (v panelu nebo v hlavním grafu),
     groups = jedna položka na instanci pro legendu (název, viditelnost,
     panel, signals = lze nastavit alert na signál). Instance bez dat, nenačteného indikátoru, s chybou výpočtu
     nebo skrytá na timeframu grafu (záložka Visibility, ctx.timeframe) v legendě zůstane, jen bez čar;
-    úsečky se vynechají při vypnutých Lines (záložka Style).
+    úsečky se vynechají při vypnutých Lines, tabulky při vypnutých Tables (záložka Style).
 
     Parametry:
         indicators: instance [{"id", "kind", "params", "visible"?, "color"?}].
@@ -454,6 +475,7 @@ def compute_indicators(indicators: list[dict], candles: list[Candle], ctx: Optio
     groups: list[dict] = []
     segments: list[dict] = []
     markers: list[dict] = []
+    tables: list[dict] = []
     ctx = ctx or Context()
     df = candles_frame(candles)
 
@@ -483,13 +505,21 @@ def compute_indicators(indicators: list[dict], candles: list[Candle], ctx: Optio
                             style["labels_on_scale"])
             for line in result.lines
         ]
+        pane_id = None
         if payloads and not indicator.overlay:
             pane_id = f"pane-{spec['id']}"
             group["pane"] = pane_id
-            panes.append({"paneId": pane_id, "group": spec["id"], "kind": spec["kind"], "title": title,
-                          "series": payloads, "levels": list(result.levels), "precision": style["precision"]})
+            pane = {"paneId": pane_id, "group": spec["id"], "kind": spec["kind"], "title": title,
+                    "series": payloads, "levels": list(result.levels), "precision": style["precision"]}
+            # Pozadí panelu (bgcolor) jen se stejným počtem hodnot jako svíčky
+            if result.background is not None and len(result.background) == len(df):
+                pane["background"] = _background_payload(df["time"], result.background)
+            panes.append(pane)
         else:
             overlays.extend({**payload, "group": spec["id"]} for payload in payloads)
+        # Tabulky jen se zapnutými Tables (záložka Style)
+        if style["tables"]:
+            tables.extend(_table_payload(table, spec["id"], pane_id) for table in result.tables)
         # Úsečky jen se zapnutými Lines (záložka Style) a s platnými souřadnicemi
         if style["lines"]:
             segments.extend(
@@ -505,22 +535,25 @@ def compute_indicators(indicators: list[dict], candles: list[Candle], ctx: Optio
             for marker in result.markers
         )
 
-    return {"overlays": overlays, "panes": panes, "groups": groups, "segments": segments, "markers": markers}
+    return {"overlays": overlays, "panes": panes, "groups": groups, "segments": segments, "markers": markers,
+            "tables": tables}
 
 
 def tail_payload(payload: dict, points: int = TAIL_POINTS) -> dict:
     """Zkrátí payload na poslední body sérií (příznak "tail" pro JS graf).
 
-    Úsečky a značky se posílají celé – po každém přepočtu se mohou změnit
-    i starší (nový signál, posun indexů) a je jich málo.
+    Úsečky, značky a tabulky se posílají celé – po každém přepočtu se mohou
+    změnit i starší (nový signál, posun indexů) a je jich málo.
     """
     return {
         "tail": True,
         "overlays": [{**overlay, "data": overlay["data"][-points:]} for overlay in payload["overlays"]],
         "panes": [
-            {**pane, "series": [{**series, "data": series["data"][-points:]} for series in pane["series"]]}
+            {**pane, "series": [{**series, "data": series["data"][-points:]} for series in pane["series"]],
+             **({"background": pane["background"][-points:]} if "background" in pane else {})}
             for pane in payload["panes"]
         ],
         "segments": payload["segments"],
         "markers": payload["markers"],
+        "tables": payload["tables"],
     }
