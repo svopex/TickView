@@ -273,7 +273,9 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   /newbot), po zprávě botovi tlačítko „Zjistit chat ID“ doplní chat,
   „Odeslat test“ pošle zkušební zprávu; platí hned. Interactive Brokers –
   host, port a client ID, „Otestovat připojení“ (s hodnotami z dialogu);
-  po uložení se zdroj hned přepojí bez restartu. Alpaca – endpoint, API key
+  po uložení se zdroj hned přepojí bez restartu. Tlačítko „Jak na předplatné dat“
+  otevře průvodce předplatnými IB pro živá data (postup, levná varianta bez
+  futures, varianta s futures CME Group a srovnání). Alpaca – endpoint, API key
   a secret; projeví se po restartu. Replay – chování kroku zpět (viz
   Replay); platí hned. Ukládají se jen změněné sekce, komentáře v souboru
   zůstanou.
@@ -638,7 +640,9 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   se v okamžiku rollu sama přepne na nový kontrakt. Data TRADES s objemem,
   čas burzy podle trhu (CME Group Chicago, EUREX Frankfurt), bez filtru RTH;
   nadpis grafu ukazuje aktuální kontrakt (např. „E-mini S&P 500 · ESZ6“).
-  Bez předplatného futures dat posílá TWS zpožděná data (štítek „zpožděno“).
+  Bez předplatného futures dat posílá TWS zpožděná data (štítek „zpožděno“);
+  která předplatná zapnout, ukazuje Settings → Interactive Brokers →
+  „Jak na předplatné dat“.
   Nová replay session u futures předvyplní velikost kontraktu násobitelem
   (ES 50, GC 100…) a krok velikosti pozice 1 (celé kontrakty).
 - Chybné knoty u dat MIDPOINT (forex, kovy, CFD): při otevření trhu po
@@ -786,6 +790,8 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   obchodů (Pozice, Příkazy, Historie, Statistiky), záložka sessions v pravém
   panelu, dialogy nové session, přejmenování, příkazu, úpravy obchodu, skoku
   a nastavení session
+- `tickview/ui/ibkr_data_dialog.py` – popup Předplatná dat Interactive
+  Brokers (postup, levná varianta, varianta s futures, srovnání)
 - `tickview/ui/reminders_dialog.py` – dialog Časové připomínky
 - `tickview/ui/notify_fields.py` – pole notifikací (Telegram, oznámení,
   zvuk, webhook) pro časové připomínky

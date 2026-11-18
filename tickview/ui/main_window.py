@@ -117,6 +117,7 @@ from tickview.services.scanner import ScannerService
 from tickview.services.notify import find_telegram_chat_id, send_telegram, telegram_configured, telegram_settings
 from tickview.ui.chart_pane import ChartPane
 from tickview.ui.color_button import ColorButton
+from tickview.ui.ibkr_data_dialog import build_ibkr_data_dialog
 from tickview.ui.icons import ICONS, svg
 from tickview.ui.param_form import ParamForm
 from tickview.ui.plot_style_fields import PlotStyleFields
@@ -3519,6 +3520,9 @@ async def _build_index(
         chart_field.on_value_change(lambda _event: preview_chart_style())
     chart_settings_dialog.on_value_change(on_chart_dialog_change)
 
+    # Popup s předplatnými dat IBKR (otevírá se ze záložky Interactive Brokers v Settings)
+    ibkr_data_dialog = build_ibkr_data_dialog()
+
     # Dialog nastavení: Telegram pro alerty a API klíče Alpaca (config.yaml)
     # Settings aplikace: všechny sekce config.yaml (Telegram, Interactive Brokers,
     # Alpaca) v záložkách; ukládá se jen to, co se změnilo
@@ -3556,6 +3560,9 @@ async def _build_index(
                     settings_ibkr_client = ui.number("Client ID", min=0, step=1).props("outlined dense")
                 with ui.row().classes("dialog-actions"):
                     ui.button("Otestovat připojení", on_click=test_ibkr, color=None).props("flat no-caps")
+                    # Popup s předplatnými dat IB (levná varianta a varianta s futures)
+                    ui.button("Jak na předplatné dat", icon="info", on_click=ibkr_data_dialog.open,
+                              color=None).props("flat no-caps")
             with ui.tab_panel(tab_alpaca).classes("tv-tab-panel"):
                 ui.label(
                     "Volitelný zdroj živých amerických akcií. Klíče z Paper Trading dashboardu; bez klíčů "
