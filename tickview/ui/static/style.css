@@ -2119,22 +2119,41 @@
   opacity: 1;
 }
 
-.layout-sync-title {
-  display: block;
-  margin-top: 10px;
-  margin-bottom: 2px;
+/* Sekce Sync in layout: oddělená od piktogramů, řádky se vzdušnějším rozestupem */
+.layout-sync {
+  gap: 2px !important;
+  margin-top: 12px;
 }
 
+.layout-sync-title {
+  padding: 6px 8px;
+}
+
+/* Jeden řádek volby: popisek, nápověda a přepínač; zvýraznění při najetí */
 .layout-sync-row {
   align-items: center;
   flex-wrap: nowrap;
   gap: 6px !important;
+  min-height: 34px;
+  padding: 2px 6px 2px 8px;
+  border-radius: 6px;
   font-size: 13px;
 }
 
+.layout-sync-row:hover {
+  background: rgba(128, 128, 128, 0.15);
+}
+
+/* Ikona nápovědy: menší a tlumená, plně viditelná až při najetí na řádek */
 .layout-sync-info {
-  font-size: 15px;
+  font-size: 14px;
   color: #808080;
+  opacity: 0.6;
+  cursor: help;
+}
+
+.layout-sync-row:hover .layout-sync-info {
+  opacity: 1;
 }
 
 /* ---------- Šablony indikátorů (Indicator templates) ---------- */

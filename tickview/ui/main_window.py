@@ -3094,15 +3094,17 @@ async def _build_index(
                                         for _ in range(LAYOUTS[layout_id]):
                                             ui.element("div").classes("layout-icon-cell")
                                 layout_items[layout_id] = option
-                    ui.label("Sync in layout").classes("menu-section layout-sync-title")
-                    for sync_key, (sync_label, sync_help) in SYNC_OPTIONS.items():
-                        with ui.row().classes("layout-sync-row w-full"):
-                            ui.label(sync_label)
-                            ui.icon("info_outline").classes("layout-sync-info").tooltip(sync_help)
-                            ui.space()
-                            sync_switches[sync_key] = ui.switch(
-                                value=state["sync"][sync_key], on_change=make_sync_change(sync_key)
-                            ).props("dense")
+                    # Sekce synchronizace: nadpis a řádky s přepínači ve vlastním bloku s odsazením
+                    with ui.column().classes("layout-sync w-full"):
+                        ui.label("Sync in layout").classes("menu-section layout-sync-title")
+                        for sync_key, (sync_label, sync_help) in SYNC_OPTIONS.items():
+                            with ui.row().classes("layout-sync-row w-full"):
+                                ui.label(sync_label)
+                                ui.icon("info_outline").classes("layout-sync-info").tooltip(sync_help)
+                                ui.space()
+                                sync_switches[sync_key] = ui.switch(
+                                    value=state["sync"][sync_key], on_change=make_sync_change(sync_key)
+                                ).props("dense size=sm")
             theme_switch = ui.switch("Tmavý motiv", value=dark)
             ui.button(icon="settings", on_click=open_settings_dialog).props("flat dense").classes(
                 "settings-button"
