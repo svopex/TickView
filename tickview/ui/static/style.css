@@ -44,10 +44,13 @@
   border-bottom: 1px solid rgba(128, 128, 128, 0.25);
 }
 
+/* Název aplikace vlevo nahoře; klik otevře dialog O aplikaci */
 .brand {
   font-size: 1.25rem;
   font-weight: 700;
   letter-spacing: 0.5px;
+  cursor: pointer;
+  user-select: none;
 }
 
 /* Pilulka s aktuálním symbolem v horní liště (klik otevře hledání symbolu) */

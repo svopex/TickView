@@ -3030,10 +3030,13 @@ async def _build_index(
 
     # Dialog časových připomínek (nabídka ⋯ v panelu Alerty)
     reminders_dialog = RemindersDialog(reminders)
+    # Dialog O aplikaci (klik na název vlevo nahoře a ikona dole v pravé liště)
+    about_dialog = build_about_dialog()
+    about_tooltip = "O aplikaci TickView"
 
     with ui.column().classes("page-root w-full") as page_root:
         with ui.row().classes("topbar w-full"):
-            ui.label("TickView").classes("brand")
+            ui.label("TickView").classes("brand").on("click", about_dialog.open).tooltip(about_tooltip)
             # Pilulka s aktuálním symbolem (jako v TradingView): klik otevře hledání
             with (
                 ui.button(color=None, on_click=lambda: open_symbol_search())
@@ -3294,10 +3297,9 @@ async def _build_index(
                     right_buttons[panel] = bar_button
                 # Dole v liště: O aplikaci (produkt, autor, systém, odkaz na web)
                 ui.space()
-                about_dialog = build_about_dialog()
                 with ui.button(color=None, on_click=about_dialog.open).props("flat dense").classes(
                     "right-bar-btn about-btn"
-                ).tooltip("O aplikaci TickView"):
+                ).tooltip(about_tooltip):
                     ui.icon("info_outline")
 
     # Dialog názvu seznamu symbolů (nový / přejmenování / kopie)

@@ -598,8 +598,9 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   s časovým pásmem grafu – nabídka UTC, Exchange (pásmo burzy), místní čas
   a města jako v TradingView; pásmo platí pro časovou osu i crosshair, denní
   svíčky se ukazují v UTC; volba se ukládá.
-- Ikona (i) dole v pravé svislé liště otevře dialog O aplikaci: název
-  a verze, autor a licence, odkaz na web projektu
+- Klik na název TickView vlevo nahoře nebo ikona (i) dole v pravé svislé
+  liště otevře dialog O aplikaci: název a verze, autor a licence, odkaz
+  na web projektu
   (https://svopex.github.io/TickView/) a GitHub a údaje o systému (OS,
   architektura, verze Pythonu, NiceGUI, pandas a pandas-ta, cesta
   k interpretu a složce dat) – hodí se při hlášení chyb.
