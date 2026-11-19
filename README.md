@@ -598,6 +598,11 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   s časovým pásmem grafu – nabídka UTC, Exchange (pásmo burzy), místní čas
   a města jako v TradingView; pásmo platí pro časovou osu i crosshair, denní
   svíčky se ukazují v UTC; volba se ukládá.
+- Ikona (i) dole v pravé svislé liště otevře dialog O aplikaci: název
+  a verze, autor a licence, odkaz na web projektu
+  (https://svopex.github.io/TickView/) a GitHub a údaje o systému (OS,
+  architektura, verze Pythonu, NiceGUI, pandas a pandas-ta, cesta
+  k interpretu a složce dat) – hodí se při hlášení chyb.
 - Když posledních 600 svíček nestačí na zaplnění grafu (RTH před otevřením
   trhu, noc, víkend), načtení sáhne dál do minulosti – graf tak ukáže
   předchozí seanci místo hlášky o chybějících datech.
@@ -831,6 +836,8 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   obchodů (Pozice, Příkazy, Historie, Statistiky), záložka sessions v pravém
   panelu, dialogy nové session, přejmenování, příkazu, úpravy obchodu, skoku
   a nastavení session
+- `tickview/ui/about_dialog.py` – dialog O aplikaci (produkt, autor,
+  licence, systém, odkaz na web projektu)
 - `tickview/ui/ibkr_data_dialog.py` – popup Předplatná dat Interactive
   Brokers (postup, levná varianta, varianta s futures, srovnání)
 - `tickview/ui/reminders_dialog.py` – dialog Časové připomínky

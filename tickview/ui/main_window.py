@@ -115,6 +115,7 @@ from tickview.services.alerts import AlertEngine
 from tickview.services.reminders import ReminderService
 from tickview.services.scanner import ScannerService
 from tickview.services.notify import find_telegram_chat_id, send_telegram, telegram_configured, telegram_settings
+from tickview.ui.about_dialog import build_about_dialog
 from tickview.ui.chart_pane import ChartPane
 from tickview.ui.color_button import ColorButton
 from tickview.ui.ibkr_data_dialog import build_ibkr_data_dialog
@@ -3291,6 +3292,13 @@ async def _build_index(
                             alerts_badge = ui.badge("0").props("floating").classes("alerts-badge")
                             alerts_badge.set_visibility(False)
                     right_buttons[panel] = bar_button
+                # Dole v liště: O aplikaci (produkt, autor, systém, odkaz na web)
+                ui.space()
+                about_dialog = build_about_dialog()
+                with ui.button(color=None, on_click=about_dialog.open).props("flat dense").classes(
+                    "right-bar-btn about-btn"
+                ).tooltip("O aplikaci TickView"):
+                    ui.icon("info_outline")
 
     # Dialog názvu seznamu symbolů (nový / přejmenování / kopie)
     with ui.dialog() as watchlist_name_dialog, ui.card().classes("tpl-name-dialog"):

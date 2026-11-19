@@ -3081,3 +3081,73 @@
   font-size: 12px;
   white-space: nowrap;
 }
+
+/* ---------- Dialog O aplikaci (ikona dole v pravé liště) ---------- */
+
+.right-bar-btn.about-btn {
+  opacity: 0.7;
+}
+
+.right-bar-btn.about-btn:hover {
+  opacity: 1;
+}
+
+.about-dialog {
+  width: 460px;
+}
+
+.about-product {
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 12px !important;
+}
+
+.about-logo {
+  font-size: 40px;
+  color: #2962ff;
+}
+
+.about-product-text {
+  gap: 0 !important;
+}
+
+.about-name {
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.about-version,
+.about-description {
+  font-size: 13px;
+  color: #808080;
+}
+
+.about-links {
+  gap: 16px !important;
+}
+
+.about-link {
+  color: #2962ff;
+  text-decoration: none;
+}
+
+.about-link:hover {
+  text-decoration: underline;
+}
+
+.about-grid {
+  column-gap: 16px;
+  row-gap: 4px;
+  font-size: 13px;
+}
+
+.about-key {
+  color: #808080;
+  white-space: nowrap;
+}
+
+.about-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
