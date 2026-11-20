@@ -973,9 +973,10 @@ v JSON-LD, při změně verze aplikace `softwareVersion`, při změně obsahu
 BTCUSDT 4h s EMA 20, SMA 50 a RSI; rozložení 2 × 2). Soubory v kořenu:
 `sitemap.xml` (cs + en s `xhtml:link` alternates a snímky), `llms.txt`
 (formát llmstxt.org) a `632709df962ce1f96f4daba2fbbb760d.txt` (klíč pro
-IndexNow, obsah = název souboru). `robots.txt` na GitHub Pages projektu
-nefunguje (platí jen v kořenu domény svopex.github.io), sitemapa se proto
-odesílá ručně v nástrojích vyhledávačů.
+IndexNow, obsah = název souboru). `robots.txt` projektové GitHub Pages
+nemají (platí jen v kořeni domény); odkaz na sitemapu je v `robots.txt`
+repozitáře [svopex.github.io](https://github.com/svopex/svopex.github.io),
+kde jsou i kódy Seznam Webmasteru pro ověření na kořeni domény.
 
 ## Licence
 
