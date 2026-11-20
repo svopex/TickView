@@ -965,9 +965,9 @@ společností TradingView, Inc. (název TradingView jen popisně, bez loga).
 V `<head>` jsou title a description, Open Graph a Twitter Card (og:image
 1200 × 630 pro každý jazyk, `og:locale` + `og:locale:alternate`), JSON-LD
 `SoftwareApplication` (verze z `tickview/__init__.py`, autor s odkazem na
-svopex.eu) a `FAQPage`, odkaz na `llms.txt` a zakomentované meta značky pro
-ověření v Google Search Console, Seznam Webmaster a Bing Webmaster Tools
-(kódy se doplní jen do `index.html`, `en/` patří do stejné služby). Při změně FAQ upravit text na stránce i
+svopex.eu) a `FAQPage`, odkaz na `llms.txt`, ověřovací značka Google Search Console
+a zakomentované místo pro Seznam Webmaster a Bing Webmaster Tools
+(kódy jen v `index.html`, `en/` patří do stejné služby). Při změně FAQ upravit text na stránce i
 v JSON-LD, při změně verze aplikace `softwareVersion`, při změně obsahu
 `lastmod` v `sitemap.xml`. Snímky aplikace vznikly z běžící aplikace (graf
 BTCUSDT 4h s EMA 20, SMA 50 a RSI; rozložení 2 × 2). Soubory v kořenu:
