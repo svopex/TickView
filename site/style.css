@@ -316,14 +316,21 @@ h3 {
   margin-bottom: 28px;
 }
 
+/* Základ tlačítek pro odkazy i <button>: průhledný rámeček a žádné pozadí
+   (u <button> ruší výchozí vzhled prohlížeče, výška je stejná pro všechny
+   varianty); .btn-primary / .btn-ghost níže pozadí i rámeček přepíšou */
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   padding: 12px 22px;
+  border: 1px solid transparent;
   border-radius: 10px;
+  background: none;
+  font-family: inherit;
   font-weight: 600;
   font-size: 0.98rem;
+  cursor: pointer;
   transition: background-color 0.15s, border-color 0.15s;
 }
 
@@ -349,14 +356,7 @@ h3 {
   border-color: var(--muted);
 }
 
-/* Tlačítko <button> vzhledově stejné jako odkazy .btn (písmo, bez rámečku, kurzor) */
-button.btn {
-  border: 0;
-  font-family: inherit;
-  cursor: pointer;
-}
-
-/* Kontakt: tlačítko pro e-mail a odkaz na issues vedle sebe */
+/* Kontakt: odkaz na issues a tlačítko pro e-mail vedle sebe */
 .contact-actions {
   display: flex;
   flex-wrap: wrap;

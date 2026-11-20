@@ -901,8 +901,8 @@ https://svopex.github.io/TickView/. Lokální náhled:
 Při změně souborů v `site/` zvýšit v `index.html` číslo `?v=` u odkazů
 na CSS a JS, jinak prohlížeče až 10 minut drží starou verzi z cache.
 Instalační příkazy na webu končí na obou platformách `--open`
-(`./run.sh --open`, `.\run-windows.bat --open`). Sekce Kontakt má zvýrazněná tlačítka
-„Poslat e-mail“ a „Nahlásit chybu na GitHubu“; e-mailová adresa je v `data-email` obrácená a v base64 a `site/script.js`
+(`./run.sh --open`, `.\run-windows.bat --open`). Sekce Kontakt má jako první
+zvýrazněné tlačítko „Nahlásit chybu na GitHubu“ a za ním „Poslat e-mail“; e-mailová adresa je v `data-email` obrácená a v base64 a `site/script.js`
 ji složí až po kliknutí a otevře poštovního klienta (na stránce se nezobrazí,
 roboti ji nenajdou). Patička odkazuje na web autora https://svopex.eu.
 
