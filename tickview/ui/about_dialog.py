@@ -1,4 +1,5 @@
-"""Dialog O aplikaci: informace o produktu, autorovi a systému, odkaz na web projektu."""
+"""Dialog O aplikaci: informace o produktu, autorovi a systému, odkazy na web projektu
+a na hlášení chyb na GitHubu."""
 
 import base64
 import platform
@@ -12,9 +13,10 @@ from tickview import __version__
 from tickview.config import DATA_DIR
 from tickview.ui.templates import settings_header
 
-# Web projektu (GitHub Pages) a zdrojový kód
+# Web projektu (GitHub Pages), zdrojový kód a hlášení chyb
 WEB_URL = "https://svopex.github.io/TickView/"
 GITHUB_URL = "https://github.com/svopex/TickView"
+ISSUES_URL = f"{GITHUB_URL}/issues"
 LICENSE_URL = f"{GITHUB_URL}/blob/main/LICENSE"
 
 # Web autora a kontaktní e-mail; e-mail je ve zdrojovém kódu obrácený a v base64,
@@ -91,6 +93,7 @@ def build_about_dialog() -> ui.dialog:
         with ui.row().classes("about-links w-full"):
             ui.link("Web projektu", WEB_URL, new_tab=True).classes("about-link")
             ui.link("Zdrojový kód na GitHubu", GITHUB_URL, new_tab=True).classes("about-link")
+            ui.link("Nahlásit chybu na GitHubu", ISSUES_URL, new_tab=True).classes("about-link")
 
         # Autor a licence
         ui.label("Autor a licence").classes("tv-settings-section")

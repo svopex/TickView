@@ -602,7 +602,8 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   liště otevře dialog O aplikaci: název a verze, autor (web autora
   https://svopex.eu a odkaz „Poslat e-mail“, který otevře poštovního
   klienta) a licence, odkaz na web projektu
-  (https://svopex.github.io/TickView/) a GitHub a údaje o systému (OS,
+  (https://svopex.github.io/TickView/), GitHub a nahlášení chyby (issues
+  na GitHubu) a údaje o systému (OS,
   architektura, verze Pythonu, NiceGUI, pandas a pandas-ta, cesta
   k interpretu a složce dat) – hodí se při hlášení chyb.
 - Když posledních 600 svíček nestačí na zaplnění grafu (RTH před otevřením
@@ -839,7 +840,7 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   panelu, dialogy nové session, přejmenování, příkazu, úpravy obchodu, skoku
   a nastavení session
 - `tickview/ui/about_dialog.py` – dialog O aplikaci (produkt, autor, web
-  autora a e-mail, licence, systém, odkaz na web projektu); e-mail je ve
+  autora a e-mail, licence, systém, odkazy na web projektu a hlášení chyb); e-mail je ve
   zdrojovém kódu obrácený a v base64, aby ho v repozitáři nenašli roboti
 - `tickview/ui/ibkr_data_dialog.py` – popup Předplatná dat Interactive
   Brokers (postup, levná varianta, varianta s futures, srovnání)
@@ -900,8 +901,8 @@ https://svopex.github.io/TickView/. Lokální náhled:
 Při změně souborů v `site/` zvýšit v `index.html` číslo `?v=` u odkazů
 na CSS a JS, jinak prohlížeče až 10 minut drží starou verzi z cache.
 Instalační příkazy na webu končí na obou platformách `--open`
-(`./run.sh --open`, `.\run-windows.bat --open`). Sekce Kontakt má tlačítko
-„Poslat e-mail“: adresa je v `data-email` obrácená a v base64 a `site/script.js`
+(`./run.sh --open`, `.\run-windows.bat --open`). Sekce Kontakt má zvýrazněná tlačítka
+„Poslat e-mail“ a „Nahlásit chybu na GitHubu“; e-mailová adresa je v `data-email` obrácená a v base64 a `site/script.js`
 ji složí až po kliknutí a otevře poštovního klienta (na stránce se nezobrazí,
 roboti ji nenajdou). Patička odkazuje na web autora https://svopex.eu.
 
