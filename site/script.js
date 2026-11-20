@@ -1,5 +1,5 @@
 // Skripty prezentačního webu TickView: mobilní menu, záložky instalace,
-// kopírování příkazů a ilustrační svíčkový graf s živou simulací.
+// kopírování příkazů, tlačítko pro e-mail a ilustrační svíčkový graf s živou simulací.
 
 "use strict";
 
@@ -9,8 +9,23 @@ document.addEventListener("DOMContentLoaded", () => {
   initNavToggle();
   initInstallTabs();
   initCopyButtons();
+  initEmailButtons();
   initHeroChart();
 });
+
+// Tlačítka „Poslat e-mail“: adresa je v data-email obrácená a v base64, aby ji
+// nenašli roboti. Složí se až po kliknutí a otevře poštovního klienta; na stránce
+// se nezobrazí.
+function initEmailButtons() {
+  for (const button of document.querySelectorAll(".email-btn")) {
+    button.addEventListener("click", () => {
+      const email = atob(button.dataset.email || "").split("").reverse().join("");
+      if (email.includes("@")) {
+        window.location.href = `mailto:${email}`;
+      }
+    });
+  }
+}
 
 // Rozbalení navigace na mobilu; klik na odkaz menu zase zavře.
 function initNavToggle() {

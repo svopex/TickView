@@ -349,6 +349,20 @@ h3 {
   border-color: var(--muted);
 }
 
+/* Tlačítko <button> vzhledově stejné jako odkazy .btn (písmo, bez rámečku, kurzor) */
+button.btn {
+  border: 0;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+/* Kontakt: tlačítko pro e-mail a odkaz na issues vedle sebe */
+.contact-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
 .pill-list {
   display: flex;
   flex-wrap: wrap;

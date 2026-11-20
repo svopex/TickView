@@ -1,5 +1,6 @@
 """Dialog O aplikaci: informace o produktu, autorovi a systému, odkaz na web projektu."""
 
+import base64
 import platform
 import sys
 from functools import cache
@@ -15,6 +16,12 @@ from tickview.ui.templates import settings_header
 WEB_URL = "https://svopex.github.io/TickView/"
 GITHUB_URL = "https://github.com/svopex/TickView"
 LICENSE_URL = f"{GITHUB_URL}/blob/main/LICENSE"
+
+# Web autora a kontaktní e-mail; e-mail je ve zdrojovém kódu obrácený a v base64,
+# aby ho v repozitáři na GitHubu nenašli roboti; stejný řetězec je v data-email
+# tlačítka Poslat e-mail v index.html (při změně upravit obojí)
+AUTHOR_URL = "https://svopex.eu"
+CONTACT_EMAIL = base64.b64decode("dWUueGVwb3ZzQHdlaXZrY2l0").decode()[::-1]
 
 
 def package_version(name: str) -> str:
@@ -56,9 +63,11 @@ def info_table(rows: list[tuple[str, ...]]) -> None:
     with ui.grid(columns="auto 1fr").classes("about-grid w-full"):
         for label, value, *url in rows:
             ui.label(label).classes("about-key")
-            # Hodnota s URL se zobrazí jako odkaz do nové záložky
+            # Hodnota s URL se zobrazí jako odkaz do nové záložky; mailto: otevře
+            # poštovního klienta, nová záložka by zůstala prázdná
             if url:
-                ui.link(value, url[0], new_tab=True).classes("about-value about-link")
+                new_tab = not url[0].startswith("mailto:")
+                ui.link(value, url[0], new_tab=new_tab).classes("about-value about-link")
             else:
                 ui.label(value).classes("about-value")
 
@@ -85,7 +94,14 @@ def build_about_dialog() -> ui.dialog:
 
         # Autor a licence
         ui.label("Autor a licence").classes("tv-settings-section")
-        info_table([("Autor", "© 2026 Svopex"), ("Licence", "Apache License 2.0", LICENSE_URL)])
+        info_table(
+            [
+                ("Autor", "© 2026 Svopex"),
+                ("Web autora", "svopex.eu", AUTHOR_URL),
+                ("E-mail", "Poslat e-mail", f"mailto:{CONTACT_EMAIL}"),
+                ("Licence", "Apache License 2.0", LICENSE_URL),
+            ]
+        )
 
         # Systém a prostředí, ve kterém aplikace běží (pro hlášení chyb)
         ui.label("Systém").classes("tv-settings-section")

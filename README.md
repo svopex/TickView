@@ -599,8 +599,9 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   a města jako v TradingView; pásmo platí pro časovou osu i crosshair, denní
   svíčky se ukazují v UTC; volba se ukládá.
 - Klik na název TickView vlevo nahoře nebo ikona (i) dole v pravé svislé
-  liště otevře dialog O aplikaci: název a verze, autor a licence, odkaz
-  na web projektu
+  liště otevře dialog O aplikaci: název a verze, autor (web autora
+  https://svopex.eu a odkaz „Poslat e-mail“, který otevře poštovního
+  klienta) a licence, odkaz na web projektu
   (https://svopex.github.io/TickView/) a GitHub a údaje o systému (OS,
   architektura, verze Pythonu, NiceGUI, pandas a pandas-ta, cesta
   k interpretu a složce dat) – hodí se při hlášení chyb.
@@ -837,8 +838,9 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   obchodů (Pozice, Příkazy, Historie, Statistiky), záložka sessions v pravém
   panelu, dialogy nové session, přejmenování, příkazu, úpravy obchodu, skoku
   a nastavení session
-- `tickview/ui/about_dialog.py` – dialog O aplikaci (produkt, autor,
-  licence, systém, odkaz na web projektu)
+- `tickview/ui/about_dialog.py` – dialog O aplikaci (produkt, autor, web
+  autora a e-mail, licence, systém, odkaz na web projektu); e-mail je ve
+  zdrojovém kódu obrácený a v base64, aby ho v repozitáři nenašli roboti
 - `tickview/ui/ibkr_data_dialog.py` – popup Předplatná dat Interactive
   Brokers (postup, levná varianta, varianta s futures, srovnání)
 - `tickview/ui/reminders_dialog.py` – dialog Časové připomínky
@@ -897,6 +899,11 @@ https://svopex.github.io/TickView/. Lokální náhled:
 `python3 -m http.server` a otevřít http://localhost:8000/.
 Při změně souborů v `site/` zvýšit v `index.html` číslo `?v=` u odkazů
 na CSS a JS, jinak prohlížeče až 10 minut drží starou verzi z cache.
+Instalační příkazy na webu končí na obou platformách `--open`
+(`./run.sh --open`, `.\run-windows.bat --open`). Sekce Kontakt má tlačítko
+„Poslat e-mail“: adresa je v `data-email` obrácená a v base64 a `site/script.js`
+ji složí až po kliknutí a otevře poštovního klienta (na stránce se nezobrazí,
+roboti ji nenajdou). Patička odkazuje na web autora https://svopex.eu.
 
 ## Licence
 
