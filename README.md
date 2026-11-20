@@ -1,5 +1,27 @@
 # TickView
 
+TickView je bezplatná open-source alternativa k TradingView – desktopová
+a webová aplikace v Pythonu pro svíčkové grafy akcií, ETF, forexu, futures
+a kryptoměn, která běží lokálně na Windows, macOS i Linuxu. Zdarma, bez
+registrace a bez reklam; data bere z Binance, Yahoo Finance, Alpaca,
+Interactive Brokers a CFTC (COT report), nabízí 28 indikátorů a vlastní
+indikátory v Pythonu, kreslení, alerty (Telegram/webhook), scanner, replay
+a až 16 grafů najednou.
+
+**Web projektu: https://svopex.github.io/TickView/** (English:
+https://svopex.github.io/TickView/en/) – funkce, srovnání TickView vs.
+TradingView, časté otázky a instalace.
+
+*Free, open-source TradingView alternative written in Python – local stock,
+forex and crypto charts for Windows, macOS and Linux. English website:
+https://svopex.github.io/TickView/en/*
+
+![TickView – svíčkový graf BTCUSDT s indikátory EMA, SMA a RSI a watchlistem](site/img/tickview-alternativa-k-tradingview-graf-btcusdt.webp)
+
+TickView je nezávislý projekt a není spojen se společností TradingView, Inc.;
+grafy vykresluje open-source knihovna Lightweight Charts™ od TradingView
+(Apache 2.0). TradingView je ochranná známka společnosti TradingView, Inc.
+
 ## Prvotní zadaní
 
 Naprogramuj desktopovou/webovou aplikaci pro zobrazení burzovních a krypto grafů
@@ -899,9 +921,13 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   projektu níže); styly, skript s ilustračním
   grafem, přepínač motivu (podle prohlížeče / světlý / tmavý, volba se
   pamatuje v prohlížeči) a ikona jsou v `site/` (`style.css`, `script.js`,
-  `theme.js`, `favicon.svg`),
+  `theme.js`, `favicon.svg`), snímky aplikace (WebP) a obrázky pro sdílení
+  (og:image, PNG 1200 × 630) v `site/img/`,
   `.nojekyll` vypíná zpracování Jekyllem. S aplikací nesouvisí – ta ho
   nepoužívá ani neservíruje.
+- `en/index.html` – anglická verze webu
+- `sitemap.xml`, `llms.txt`, `632709df962ce1f96f4daba2fbbb760d.txt` – mapa
+  webu, popis projektu pro jazykové modely a klíč IndexNow (viz Web projektu)
 - `tests/` – unit testy logiky (cache, indikátory, polling, omezovač dotazů,
   konfigurace, skládání timeframů, seance, časová pásma, forex, barvy,
   šablony a oblíbené nástroje; alerty, engine alertů, Telegram/webhook přes
@@ -929,6 +955,27 @@ Instalační příkazy na webu končí na obou platformách `--open`
 zvýrazněné tlačítko „Nahlásit chybu na GitHubu“ a za ním „Poslat e-mail“; e-mailová adresa je v `data-email` obrácená a v base64 a `site/script.js`
 ji složí až po kliknutí a otevře poštovního klienta (na stránce se nezobrazí,
 roboti ji nenajdou). Patička odkazuje na web autora https://svopex.eu.
+
+SEO: web cílí na hledání „alternativa k TradingView“ / „TradingView
+alternative“. Obě verze mají shodný obsah: sekci se skutečnými snímky
+aplikace (`site/img/*.webp` a zmenšené varianty `*-800.webp` pro `srcset`, s `width`/`height` a `loading="lazy"`), férovou
+srovnávací tabulku „TickView vs. TradingView“ (včetně toho, co TickView nemá),
+FAQ (8 otázek v `<details>`) a viditelné upozornění, že projekt není spojen se
+společností TradingView, Inc. (název TradingView jen popisně, bez loga).
+V `<head>` jsou title a description, Open Graph a Twitter Card (og:image
+1200 × 630 pro každý jazyk, `og:locale` + `og:locale:alternate`), JSON-LD
+`SoftwareApplication` (verze z `tickview/__init__.py`, autor s odkazem na
+svopex.eu) a `FAQPage`, odkaz na `llms.txt` a zakomentované meta značky pro
+ověření v Google Search Console, Seznam Webmaster a Bing Webmaster Tools
+(kódy se doplní jen do `index.html`, `en/` patří do stejné služby). Při změně FAQ upravit text na stránce i
+v JSON-LD, při změně verze aplikace `softwareVersion`, při změně obsahu
+`lastmod` v `sitemap.xml`. Snímky aplikace vznikly z běžící aplikace (graf
+BTCUSDT 4h s EMA 20, SMA 50 a RSI; rozložení 2 × 2). Soubory v kořenu:
+`sitemap.xml` (cs + en s `xhtml:link` alternates a snímky), `llms.txt`
+(formát llmstxt.org) a `632709df962ce1f96f4daba2fbbb760d.txt` (klíč pro
+IndexNow, obsah = název souboru). `robots.txt` na GitHub Pages projektu
+nefunguje (platí jen v kořenu domény svopex.github.io), sitemapa se proto
+odesílá ručně v nástrojích vyhledávačů.
 
 ## Licence
 

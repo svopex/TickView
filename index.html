@@ -3,22 +3,169 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>TickView – grafy burz a kryptoměn</title>
-  <meta name="description" content="TickView je open-source aplikace pro burzovní a krypto grafy v Pythonu. Běží lokálně na Windows, macOS i Linuxu, používá bezplatné zdroje dat a nabízí indikátory, kreslení, alerty, scanner a replay.">
+  <title>TickView – open-source alternativa k TradingView zdarma</title>
+  <meta name="description" content="Bezplatná open-source alternativa k TradingView. Grafy akcií, forexu a kryptoměn lokálně na Windows, macOS i Linuxu: indikátory v Pythonu, alerty, replay.">
+  <meta name="robots" content="index, follow, max-image-preview:large">
+  <meta name="author" content="Svopex">
   <meta name="theme-color" content="#0b0e14">
+  <!-- Ověření vlastnictví webu ve vyhledávačích: kód z dané služby vložit do content,
+       řádek přesunout mimo tento komentář (stačí tady – en/ patří do stejné služby)
+       (Google Search Console → Ověření pomocí značky HTML,
+       Seznam Webmaster → Ověření meta značkou, Bing Webmaster Tools → Meta tag).
+  <meta name="google-site-verification" content="KÓD-GOOGLE">
+  <meta name="seznam-wmt" content="KÓD-SEZNAM">
+  <meta name="msvalidate.01" content="KÓD-BING">
+  -->
+  <!-- Náhled při sdílení (Open Graph a Twitter/X); og:image má 1200 × 630 px -->
   <meta property="og:type" content="website">
-  <meta property="og:title" content="TickView – grafy burz a kryptoměn">
-  <meta property="og:description" content="Open-source aplikace pro grafy akcií, forexu, futures a kryptoměn. Lokálně, zdarma, pouze pro čtení.">
+  <meta property="og:site_name" content="TickView">
+  <meta property="og:url" content="https://svopex.github.io/TickView/">
+  <meta property="og:title" content="TickView – open-source alternativa k TradingView zdarma">
+  <meta property="og:description" content="Burzovní a krypto grafy, které běží lokálně na vašem počítači. Zdarma, bez registrace a bez reklam – indikátory v Pythonu, alerty, scanner a replay.">
+  <meta property="og:locale" content="cs_CZ">
+  <meta property="og:locale:alternate" content="en_US">
+  <meta property="og:image" content="https://svopex.github.io/TickView/site/img/tickview-open-source-alternativa-k-tradingview-og.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="TickView – open-source alternativa k TradingView zdarma, ukázka svíčkového grafu BTCUSDT s indikátory">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="TickView – open-source alternativa k TradingView zdarma">
+  <meta name="twitter:description" content="Burzovní a krypto grafy, které běží lokálně na vašem počítači. Zdarma, bez registrace a bez reklam.">
+  <meta name="twitter:image" content="https://svopex.github.io/TickView/site/img/tickview-open-source-alternativa-k-tradingview-og.png">
+  <meta name="twitter:image:alt" content="TickView – open-source alternativa k TradingView zdarma, ukázka svíčkového grafu BTCUSDT s indikátory">
   <!-- Jazykové verze pro vyhledávače: čeština (výchozí) a angličtina v en/ -->
   <link rel="canonical" href="https://svopex.github.io/TickView/">
   <link rel="alternate" hreflang="cs" href="https://svopex.github.io/TickView/">
   <link rel="alternate" hreflang="en" href="https://svopex.github.io/TickView/en/">
   <link rel="alternate" hreflang="x-default" href="https://svopex.github.io/TickView/">
+  <!-- Stručný popis projektu pro jazykové modely (formát llmstxt.org) -->
+  <link rel="help" type="text/markdown" href="https://svopex.github.io/TickView/llms.txt" title="llms.txt">
   <link rel="icon" href="site/favicon.svg" type="image/svg+xml">
-  <!-- ?v= obchází cache prohlížeče (GitHub Pages: max-age 10 min) – při změně souborů v site/ zvýšit -->
-  <script src="site/theme.js?v=7"></script>
-  <link rel="stylesheet" href="site/style.css?v=7">
-  <script src="site/script.js?v=7" defer></script>
+  <!-- ?v= obchází cache prohlížeče (GitHub Pages: max-age 10 min) – při změně souborů v site/ zvýšit v obou HTML.
+       theme.js je záměrně bez defer: motiv se musí nastavit před vykreslením, jinak stránka problikne. -->
+  <script src="site/theme.js?v=8"></script>
+  <link rel="stylesheet" href="site/style.css?v=8">
+  <script src="site/script.js?v=8" defer></script>
+  <!-- Strukturovaná data pro vyhledávače (JSON-LD): aplikace; data, ne spustitelný skript -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "TickView",
+    "description": "Bezplatná open-source alternativa k TradingView: desktopová a webová aplikace v Pythonu pro svíčkové grafy akcií, ETF, forexu, futures a kryptoměn, která běží lokálně.",
+    "url": "https://svopex.github.io/TickView/",
+    "inLanguage": ["cs", "en"],
+    "applicationCategory": "FinanceApplication",
+    "applicationSubCategory": "Grafy a technická analýza",
+    "operatingSystem": "Windows, macOS, Linux",
+    "softwareVersion": "0.1.0",
+    "softwareRequirements": "Python 3.12 nebo 3.13",
+    "downloadUrl": "https://github.com/svopex/TickView/archive/refs/heads/main.zip",
+    "installUrl": "https://svopex.github.io/TickView/#instalace",
+    "codeRepository": "https://github.com/svopex/TickView",
+    "license": "https://www.apache.org/licenses/LICENSE-2.0",
+    "isAccessibleForFree": true,
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "CZK"
+    },
+    "image": "https://svopex.github.io/TickView/site/img/tickview-open-source-alternativa-k-tradingview-og.png",
+    "screenshot": [
+      "https://svopex.github.io/TickView/site/img/tickview-alternativa-k-tradingview-graf-btcusdt.webp",
+      "https://svopex.github.io/TickView/site/img/tickview-alternativa-k-tradingview-4-grafy.webp"
+    ],
+    "featureList": [
+      "Svíčkové grafy akcií, ETF, forexu, futures a kryptoměn",
+      "28 vestavěných indikátorů a vlastní indikátory v Pythonu",
+      "Kreslicí nástroje",
+      "Alerty přes Telegram a webhook",
+      "Scanner až 40 symbolů",
+      "Replay a backtest ručních obchodů",
+      "Až 16 grafů najednou",
+      "COT report CFTC"
+    ],
+    "author": {
+      "@type": "Person",
+      "name": "Svopex",
+      "url": "https://svopex.eu"
+    }
+  }
+  </script>
+  <!-- Strukturovaná data FAQ: otázky a odpovědi musí odpovídat sekci #faq na stránce -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "Je TickView opravdu zdarma?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Ano. TickView je open source pod licencí Apache 2.0 a nemá předplatné, registraci ani reklamy. Data z Binance, Yahoo Finance a CFTC jsou zdarma bez API klíče, Alpaca nabízí bezplatný klíč (plán Basic). Pro Interactive Brokers potřebujete účet u IB (stačí demo) a rozsah dat závisí na vašem předplatném."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Dá se TickView použít místo TradingView?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Pro technickou analýzu na vlastním počítači ano: svíčkové grafy, 28 vestavěných indikátorů, kreslení, watchlisty, alerty, scanner, replay a až 16 grafů najednou. TradingView ale nenahradí, pokud potřebujete Pine Script, mobilní aplikaci, synchronizaci v cloudu, sociální síť s nápady nebo obchodování přes brokera přímo z grafu."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Podporuje TickView Pine Script?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Ne. Vlastní indikátory se v TickView píší v Pythonu: jedna třída dostane svíčky jako pandas DataFrame a vrátí čáry, značky, tabulky nebo signály. Skripty v Pine Script je potřeba do Pythonu přepsat."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Odkud TickView bere data?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Z Binance (kryptoměny, živě), Yahoo Finance (akcie, ETF, indexy, forex a futures, zpožděně), Alpaca (americké akcie, živě po zadání klíče), Interactive Brokers přes TWS nebo IB Gateway a z veřejného API CFTC pro COT report. Historie se ukládá do lokální cache v SQLite."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Na jakých systémech TickView běží?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Na Windows, macOS i Linuxu s Pythonem 3.12 nebo 3.13. Spouštěcí skript si připraví prostředí sám, na Windows Python v případě potřeby i nainstaluje. Aplikace se otevře v prohlížeči na localhost, volitelně v nativním okně."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Kde jsou uložená moje data a API klíče?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Jen na vašem počítači. Cache svíček, nastavení, kresby a watchlisty jsou v lokální databázi SQLite, API klíče v souboru config.yaml. TickView nemá žádný účet ani vlastní server; připojuje se jen ke zvoleným zdrojům dat a k Telegramu nebo webhooku, pokud si je nastavíte pro alerty."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Umí TickView zobrazit COT report?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Ano. Indikátory COT ukazují pozice hedgerů, velkých spekulantů a drobných obchodníků i COT Index s daty zdarma z API CFTC. Trh se odvodí ze symbolu – futures, forex, kovy, indexy i kryptoměny."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Je TickView spojený se společností TradingView?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Ne. TickView je nezávislý open-source projekt a není spojen se společností TradingView, Inc. Grafy vykresluje open-source knihovna Lightweight Charts™ od TradingView pod licencí Apache 2.0. TradingView je ochranná známka společnosti TradingView, Inc."
+        }
+      }
+    ]
+  }
+  </script>
 </head>
 <body>
 
@@ -34,9 +181,11 @@
       </button>
       <nav id="site-nav" class="site-nav">
         <a href="#funkce">Funkce</a>
+        <a href="#srovnani">Srovnání</a>
         <a href="#zdroje">Zdroje dat</a>
         <a href="#indikatory">Vlastní indikátory</a>
         <a href="#instalace">Instalace</a>
+        <a href="#faq">FAQ</a>
         <a href="#kontakt">Kontakt</a>
         <a class="nav-github" href="https://github.com/svopex/TickView" target="_blank" rel="noopener">GitHub</a>
         <!-- Přepínač jazyka: odkaz na anglickou verzi -->
@@ -58,10 +207,11 @@
       <div class="container hero-inner">
         <div class="hero-copy">
           <p class="eyebrow">Zdarma · Open source · Apache 2.0 · Python</p>
-          <h1>Grafy burz a kryptoměn, které běží <span class="accent">u&nbsp;vás</span></h1>
+          <h1>Alternativa k&nbsp;TradingView, která běží <span class="accent">u&nbsp;vás</span></h1>
           <p class="lead">
             TickView je <strong class="accent">zcela zdarma</strong> – open-source desktopová
-            a webová aplikace pro svíčkové grafy akcií, ETF, forexu, futures a kryptoměn.
+            a webová aplikace pro svíčkové grafy akcií, ETF, forexu, futures a kryptoměn,
+            kterou můžete používat místo TradingView přímo na svém počítači.
             Data bere z bezplatných zdrojů, všechno ukládá lokálně a nikdy nic
             neobchoduje – je pouze pro čtení.
           </p>
@@ -170,6 +320,139 @@
             <p>Pozice hedgerů, velkých spekulantů a drobných obchodníků a COT Index s daty zdarma z API CFTC. Trh se odvodí ze symbolu – futures, forex, kovy, indexy i krypto.</p>
           </article>
         </div>
+      </div>
+    </section>
+
+    <!-- Skutečné snímky aplikace (WebP 1600 × 900); jsou pod ohybem stránky, proto loading="lazy" -->
+    <section id="ukazka" class="section section-alt">
+      <div class="container">
+        <header class="section-head">
+          <h2>Jak TickView vypadá</h2>
+          <p>Skutečné snímky aplikace v tmavém motivu – žádné makety. Kliknutím otevřete obrázek v plné velikosti.</p>
+        </header>
+        <div class="screenshot-grid">
+          <figure class="screenshot">
+            <a href="site/img/tickview-alternativa-k-tradingview-graf-btcusdt.webp">
+              <img src="site/img/tickview-alternativa-k-tradingview-graf-btcusdt.webp" srcset="site/img/tickview-alternativa-k-tradingview-graf-btcusdt-800.webp 800w, site/img/tickview-alternativa-k-tradingview-graf-btcusdt.webp 1600w" sizes="(min-width: 900px) 560px, 100vw" width="1600" height="900" loading="lazy" decoding="async"
+                   alt="TickView: svíčkový graf BTCUSDT 4h z Binance s indikátory EMA 20, SMA 50 a RSI a watchlistem akcií, indexů a kryptoměn">
+            </a>
+            <figcaption>Graf BTCUSDT z Binance s EMA, SMA a RSI, vpravo watchlist s poslední cenou a denní změnou.</figcaption>
+          </figure>
+          <figure class="screenshot">
+            <a href="site/img/tickview-alternativa-k-tradingview-4-grafy.webp">
+              <img src="site/img/tickview-alternativa-k-tradingview-4-grafy.webp" srcset="site/img/tickview-alternativa-k-tradingview-4-grafy-800.webp 800w, site/img/tickview-alternativa-k-tradingview-4-grafy.webp 1600w" sizes="(min-width: 900px) 560px, 100vw" width="1600" height="900" loading="lazy" decoding="async"
+                   alt="TickView: rozložení čtyř grafů – BTCUSDT s klouzavými průměry, ETHUSDT s Bollingerovými pásmy, akcie Apple s MACD a zlato se Supertrendem">
+            </a>
+            <figcaption>Rozložení 2 × 2: kryptoměny z Binance, akcie Apple a zlato z Yahoo Finance, každý graf s vlastními indikátory.</figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <!-- Férové srovnání s TradingView: název používáme jen popisně, včetně toho, co TickView nemá.
+         Třídy cmp-yes / cmp-no / cmp-partial přidávají před text značku ✓ / ✕ / ~ (site/style.css). -->
+    <section id="srovnani" class="section">
+      <div class="container">
+        <header class="section-head">
+          <h2>TickView vs. TradingView</h2>
+          <p>
+            TradingView je rozsáhlá cloudová platforma s obrovskou komunitou. TickView jde jinou cestou:
+            bezplatná open-source aplikace, která běží jen na vašem počítači. Srovnání níže ukazuje i to,
+            co TickView neumí – vyberte si podle toho, co potřebujete.
+          </p>
+        </header>
+
+        <div class="table-wrap">
+          <table class="compare-table">
+            <caption class="visually-hidden">Srovnání funkcí TickView a TradingView</caption>
+            <thead>
+              <tr>
+                <th scope="col">Vlastnost</th>
+                <th scope="col">TickView</th>
+                <th scope="col">TradingView</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">Cena</th>
+                <td class="cmp-yes">Zdarma, bez předplatného a reklam</td>
+                <td class="cmp-partial">Základní plán zdarma s reklamami a omezeními, další funkce v placených plánech</td>
+              </tr>
+              <tr>
+                <th scope="row">Registrace</th>
+                <td class="cmp-yes">Není potřeba</td>
+                <td class="cmp-partial">Pro alerty, ukládání a většinu funkcí je potřeba účet</td>
+              </tr>
+              <tr>
+                <th scope="row">Kde běží a kde jsou data</th>
+                <td class="cmp-yes">Lokálně na Windows, macOS i Linuxu; cache, kresby a nastavení v lokální SQLite</td>
+                <td class="cmp-partial">V cloudu – web, desktopová a mobilní aplikace se synchronizací mezi zařízeními</td>
+              </tr>
+              <tr>
+                <th scope="row">Open source</th>
+                <td class="cmp-yes">Ano, Apache 2.0</td>
+                <td class="cmp-no">Ne (open source je knihovna Lightweight Charts™)</td>
+              </tr>
+              <tr>
+                <th scope="row">Indikátory</th>
+                <td class="cmp-partial">28 vestavěných</td>
+                <td class="cmp-yes">Přes sto vestavěných a velká knihovna komunitních skriptů</td>
+              </tr>
+              <tr>
+                <th scope="row">Vlastní indikátory</th>
+                <td class="cmp-yes">V Pythonu (pandas), včetně signálů pro alerty a scanner</td>
+                <td class="cmp-yes">V Pine Script</td>
+              </tr>
+              <tr>
+                <th scope="row">Pine Script</th>
+                <td class="cmp-no">Ne – skripty je potřeba přepsat do Pythonu</td>
+                <td class="cmp-yes">Ano</td>
+              </tr>
+              <tr>
+                <th scope="row">Alerty</th>
+                <td class="cmp-yes">Cena, čára, signál indikátoru; Telegram, webhook, toast, zvuk – vyhodnocuje je lokální server TickView</td>
+                <td class="cmp-yes">Ano, běží na serverech TradingView i s vypnutým počítačem</td>
+              </tr>
+              <tr>
+                <th scope="row">Replay a backtest</th>
+                <td class="cmp-partial">Replay svíčku po svíčce s ručními obchody na simulovaném účtu; bez automatického testeru strategií</td>
+                <td class="cmp-yes">Bar Replay a Strategy Tester pro strategie v Pine Script</td>
+              </tr>
+              <tr>
+                <th scope="row">Více grafů najednou</th>
+                <td class="cmp-yes">Až 16 grafů se synchronizací</td>
+                <td class="cmp-partial">Ano, počet grafů podle plánu</td>
+              </tr>
+              <tr>
+                <th scope="row">Zdroje dat</th>
+                <td class="cmp-partial">Binance, Yahoo Finance, Alpaca, Interactive Brokers a CFTC (COT)</td>
+                <td class="cmp-yes">Data z mnoha burz a trhů; část dat v reálném čase je placená</td>
+              </tr>
+              <tr>
+                <th scope="row">Sociální síť a nápady</th>
+                <td class="cmp-no">Ne</td>
+                <td class="cmp-yes">Ano</td>
+              </tr>
+              <tr>
+                <th scope="row">Obchodování přes brokera</th>
+                <td class="cmp-no">Ne – TickView je pouze pro čtení</td>
+                <td class="cmp-yes">Ano, napojení na vybrané brokery</td>
+              </tr>
+              <tr>
+                <th scope="row">Mobilní aplikace</th>
+                <td class="cmp-no">Ne</td>
+                <td class="cmp-yes">Ano</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Viditelné upozornění na nezávislost (právní mantinel: název TradingView jen popisně) -->
+        <p class="note independence-note">
+          TickView je nezávislý projekt a není spojen se společností TradingView, Inc., ani jí není podporován.
+          TradingView je ochranná známka společnosti TradingView, Inc. a v textu je použita jen pro srovnání.
+          Údaje o TradingView vycházejí z veřejně dostupných informací (listopad 2026) a mohou se měnit.
+        </p>
       </div>
     </section>
 
@@ -349,10 +632,54 @@ cd TickView-main
       </div>
     </section>
 
+    <!-- Časté otázky: rozbalovací <details> bez JavaScriptu; texty musí odpovídat FAQPage JSON-LD v <head> -->
+    <section id="faq" class="section section-alt">
+      <div class="container">
+        <header class="section-head">
+          <h2>Časté otázky</h2>
+          <p>Krátké odpovědi na to, na co se lidé ptají nejčastěji – hlavně ve srovnání s TradingView.</p>
+        </header>
+        <div class="faq-list">
+          <details class="faq-item">
+            <summary><h3>Je TickView opravdu zdarma?</h3></summary>
+            <p>Ano. TickView je open source pod licencí Apache 2.0 a nemá předplatné, registraci ani reklamy. Data z Binance, Yahoo Finance a CFTC jsou zdarma bez API klíče, Alpaca nabízí bezplatný klíč (plán Basic). Pro Interactive Brokers potřebujete účet u IB (stačí demo) a rozsah dat závisí na vašem předplatném.</p>
+          </details>
+          <details class="faq-item">
+            <summary><h3>Dá se TickView použít místo TradingView?</h3></summary>
+            <p>Pro technickou analýzu na vlastním počítači ano: svíčkové grafy, 28 vestavěných indikátorů, kreslení, watchlisty, alerty, scanner, replay a až 16 grafů najednou. TradingView ale nenahradí, pokud potřebujete Pine Script, mobilní aplikaci, synchronizaci v cloudu, sociální síť s nápady nebo obchodování přes brokera přímo z grafu.</p>
+          </details>
+          <details class="faq-item">
+            <summary><h3>Podporuje TickView Pine Script?</h3></summary>
+            <p>Ne. Vlastní indikátory se v TickView píší v Pythonu: jedna třída dostane svíčky jako pandas DataFrame a vrátí čáry, značky, tabulky nebo signály. Skripty v Pine Script je potřeba do Pythonu přepsat.</p>
+          </details>
+          <details class="faq-item">
+            <summary><h3>Odkud TickView bere data?</h3></summary>
+            <p>Z Binance (kryptoměny, živě), Yahoo Finance (akcie, ETF, indexy, forex a futures, zpožděně), Alpaca (americké akcie, živě po zadání klíče), Interactive Brokers přes TWS nebo IB Gateway a z veřejného API CFTC pro COT report. Historie se ukládá do lokální cache v SQLite.</p>
+          </details>
+          <details class="faq-item">
+            <summary><h3>Na jakých systémech TickView běží?</h3></summary>
+            <p>Na Windows, macOS i Linuxu s Pythonem 3.12 nebo 3.13. Spouštěcí skript si připraví prostředí sám, na Windows Python v případě potřeby i nainstaluje. Aplikace se otevře v prohlížeči na localhost, volitelně v nativním okně.</p>
+          </details>
+          <details class="faq-item">
+            <summary><h3>Kde jsou uložená moje data a API klíče?</h3></summary>
+            <p>Jen na vašem počítači. Cache svíček, nastavení, kresby a watchlisty jsou v lokální databázi SQLite, API klíče v souboru <code>config.yaml</code>. TickView nemá žádný účet ani vlastní server; připojuje se jen ke zvoleným zdrojům dat a k Telegramu nebo webhooku, pokud si je nastavíte pro alerty.</p>
+          </details>
+          <details class="faq-item">
+            <summary><h3>Umí TickView zobrazit COT report?</h3></summary>
+            <p>Ano. Indikátory COT ukazují pozice hedgerů, velkých spekulantů a drobných obchodníků i COT Index s daty zdarma z API CFTC. Trh se odvodí ze symbolu – futures, forex, kovy, indexy i kryptoměny.</p>
+          </details>
+          <details class="faq-item">
+            <summary><h3>Je TickView spojený se společností TradingView?</h3></summary>
+            <p>Ne. TickView je nezávislý open-source projekt a není spojen se společností TradingView, Inc. Grafy vykresluje open-source knihovna Lightweight Charts™ od TradingView pod licencí Apache 2.0. TradingView je ochranná známka společnosti TradingView, Inc.</p>
+          </details>
+        </div>
+      </div>
+    </section>
+
     <!-- Kontakt: e-mail je v data-email obrácený a v base64, aby ho nenašli roboti;
          site/script.js ho složí až po kliknutí a rovnou otevře poštovního klienta.
          Stejný řetězec je v en/index.html a tickview/ui/about_dialog.py (při změně upravit všude). -->
-    <section id="kontakt" class="section section-alt">
+    <section id="kontakt" class="section">
       <div class="container">
         <header class="section-head">
           <h2>Kontakt</h2>
@@ -377,12 +704,13 @@ cd TickView-main
           <span>TickView</span>
         </a>
         <p>© 2026 Svopex · <a href="https://github.com/svopex/TickView/blob/main/LICENSE" target="_blank" rel="noopener">Apache License 2.0</a></p>
-        <p>Autor: <a href="https://svopex.eu" target="_blank" rel="noopener">Svopex – svopex.eu</a></p>
+        <p>Autor: <a href="https://svopex.eu" target="_blank" rel="author noopener">Svopex – svopex.eu</a></p>
       </div>
       <p class="disclaimer">
         TickView je pouze pro čtení – nezadává žádné obchody a nejde o investiční doporučení.
         Projekt není spojen se společností TradingView, Inc.; grafy vykresluje open-source knihovna
         <a href="https://www.tradingview.com/lightweight-charts/" target="_blank" rel="noopener">Lightweight Charts™</a> od TradingView (Apache 2.0).
+        TradingView je ochranná známka společnosti TradingView, Inc.
       </p>
     </div>
   </footer>

@@ -1,0 +1,25 @@
+# TickView
+
+> TickView is a free, open-source (Apache 2.0) TradingView alternative: a desktop and web charting app written in Python that runs locally on Windows, macOS and Linux. It shows candlestick charts of stocks, ETFs, forex, futures and crypto using free data sources, with no subscription, no sign-up and no ads. It is read-only and never places trades.
+
+Key facts:
+
+- Data sources: Binance (crypto, live), Yahoo Finance (stocks, ETFs, indices, forex, futures; delayed), Alpaca (US stocks, live with a free key), Interactive Brokers (via TWS or IB Gateway) and the CFTC API (Commitments of Traders / COT report).
+- Features: 28 built-in indicators plus custom indicators written in Python (pandas), drawing tools, watchlists, alerts (Telegram, webhook, toast, sound), a scanner for up to 40 symbols, bar replay with manual trades on a simulated account, and layouts with up to 16 synced charts.
+- Stack: Python 3.12–3.13, asyncio, NiceGUI, pandas, SQLite; charts are rendered by the open-source Lightweight Charts™ library by TradingView.
+- Not supported: Pine Script, mobile apps, cloud sync, social features, broker trading, automated strategy tester.
+- TickView is an independent project and is not affiliated with TradingView, Inc. TradingView is a trademark of TradingView, Inc.
+
+## Website
+
+- [TickView – English](https://svopex.github.io/TickView/en/): features, TickView vs. TradingView comparison, FAQ and installation
+- [TickView – česky](https://svopex.github.io/TickView/): the same page in Czech
+
+## Source code
+
+- [GitHub repository svopex/TickView](https://github.com/svopex/TickView): source code, issues and README (in Czech) with full documentation
+- [License – Apache 2.0](https://github.com/svopex/TickView/blob/main/LICENSE)
+
+## Author
+
+- [Svopex – svopex.eu](https://svopex.eu): author's website with other projects
