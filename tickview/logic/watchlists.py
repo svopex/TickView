@@ -3,8 +3,10 @@
 Modul obsahuje jen čisté funkce – načtení seznamu a uložení volby řeší UI.
 """
 
+from tickview.i18n import N_
+
 # Řazení: klíč -> popis ("" = pořadí přidání, asc / desc podle abecedy)
-WATCHLIST_SORTS: dict[str, str] = {"": "Pořadí přidání", "asc": "A→Z", "desc": "Z→A"}
+WATCHLIST_SORTS: dict[str, str] = {"": N_("Pořadí přidání"), "asc": "A→Z", "desc": "Z→A"}
 
 
 def sort_watchlist(items: list[dict], sort: str) -> list[dict]:

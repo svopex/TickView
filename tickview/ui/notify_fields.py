@@ -2,6 +2,7 @@
 
 from nicegui import ui
 
+from tickview.i18n import tr
 from tickview.logic.alerts import normalize_notify
 
 
@@ -11,9 +12,9 @@ class NotifyFields:
     def __init__(self) -> None:
         with ui.column().classes("notify-fields w-full"):
             self.telegram = ui.checkbox("Telegram")
-            self.toast = ui.checkbox("Oznámení v aplikaci")
-            self.sound = ui.checkbox("Zvuk")
-            self.webhook = ui.input("Webhook URL (prázdné = neposílat)").props("outlined dense clearable").classes("w-full")
+            self.toast = ui.checkbox(tr("Oznámení v aplikaci"))
+            self.sound = ui.checkbox(tr("Zvuk"))
+            self.webhook = ui.input(tr("Webhook URL (prázdné = neposílat)")).props("outlined dense clearable").classes("w-full")
 
     def set(self, notify: dict) -> None:
         """Vyplní pole z nastavení notifikací."""

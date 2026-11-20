@@ -17,6 +17,7 @@ from typing import AsyncIterator, Optional
 from ib_async import IB, Contract, Forex, Future, Stock
 
 from tickview.config import load_config
+from tickview.i18n import N_, tr
 from tickview.providers.base import (
     TIMEFRAME_MS,
     US_EQUITY_SESSION,
@@ -80,14 +81,15 @@ FOREX_CURRENCIES = [
     "EUR", "GBP", "AUD", "NZD", "USD", "CAD", "CHF", "NOK", "SEK", "DKK", "CZK",
     "PLN", "HUF", "TRY", "ZAR", "MXN", "SGD", "HKD", "CNH", "ILS", "JPY",
 ]
-# České názvy měn pro popisky návrhů a nadpis grafu
+# České názvy měn pro popisky návrhů a nadpis grafu (překládají se v forex_name)
 CURRENCY_NAMES = {
-    "EUR": "Euro", "GBP": "Britská libra", "AUD": "Australský dolar", "NZD": "Novozélandský dolar",
-    "USD": "Americký dolar", "CAD": "Kanadský dolar", "CHF": "Švýcarský frank", "NOK": "Norská koruna",
-    "SEK": "Švédská koruna", "DKK": "Dánská koruna", "CZK": "Česká koruna", "PLN": "Polský zlotý",
-    "HUF": "Maďarský forint", "TRY": "Turecká lira", "ZAR": "Jihoafrický rand", "MXN": "Mexické peso",
-    "SGD": "Singapurský dolar", "HKD": "Hongkongský dolar", "CNH": "Čínský jüan (offshore)",
-    "ILS": "Izraelský šekel", "JPY": "Japonský jen",
+    "EUR": "Euro", "GBP": N_("Britská libra"), "AUD": N_("Australský dolar"), "NZD": N_("Novozélandský dolar"),
+    "USD": N_("Americký dolar"), "CAD": N_("Kanadský dolar"), "CHF": N_("Švýcarský frank"),
+    "NOK": N_("Norská koruna"), "SEK": N_("Švédská koruna"), "DKK": N_("Dánská koruna"),
+    "CZK": N_("Česká koruna"), "PLN": N_("Polský zlotý"), "HUF": N_("Maďarský forint"),
+    "TRY": N_("Turecká lira"), "ZAR": N_("Jihoafrický rand"), "MXN": N_("Mexické peso"),
+    "SGD": N_("Singapurský dolar"), "HKD": N_("Hongkongský dolar"), "CNH": N_("Čínský jüan (offshore)"),
+    "ILS": N_("Izraelský šekel"), "JPY": N_("Japonský jen"),
 }
 # Hlavní měny, se kterými se nabízí páry při dotazu na jednu měnu (např. "EUR")
 FOREX_MAJORS = ["EUR", "USD", "GBP", "JPY", "CHF", "AUD", "CAD", "NZD", "CZK"]
@@ -99,8 +101,8 @@ FUTURE_CHAIN_TTL_S = 6 * 3600.0
 
 
 def forex_name(base: str, quote: str) -> str:
-    """Český název páru: "Euro / Americký dolar"."""
-    return f"{CURRENCY_NAMES[base]} / {CURRENCY_NAMES[quote]}"
+    """Název páru v jazyce UI: "Euro / Americký dolar"."""
+    return f"{tr(CURRENCY_NAMES[base])} / {tr(CURRENCY_NAMES[quote])}"
 
 
 def forex_pair(first: str, second: str) -> str:
@@ -142,7 +144,7 @@ def forex_suggestions(query: str) -> list[str]:
 # Časové pásmo obchodních hodin v TWS a označení trhu podle typu kontraktu
 # (kovy CMDTY se řídí newyorským časem, CFD londýnským)
 SEC_TYPE_INFO: dict[str, tuple[str, str]] = {
-    "CMDTY": ("America/New_York", "IBKR Kov"),
+    "CMDTY": ("America/New_York", N_("IBKR Kov")),
     "CFD": ("Europe/London", "IBKR CFD"),
 }
 
@@ -172,8 +174,8 @@ class IbInstrument:
 
     @property
     def market(self) -> str:
-        """Označení trhu ve výsledcích hledání a v nadpisu grafu."""
-        return SEC_TYPE_INFO[self.sec_type][1]
+        """Označení trhu ve výsledcích hledání a v nadpisu grafu (v jazyce UI)."""
+        return tr(SEC_TYPE_INFO[self.sec_type][1])
 
 
 # Spotové kovy, indexová a ropná CFD od IB (ověřené v TWS: kontrakt na SMART
@@ -181,8 +183,8 @@ class IbInstrument:
 # v TradingView. IB nemá CFD na Russell 2000 (místo něj ETF IWM jako akcie –
 # CFD na IWM historii přes API nevrací, cena je stejná)
 IB_INSTRUMENTS: dict[str, IbInstrument] = {
-    "XAUUSD": IbInstrument("CMDTY", "USD", "Zlato (London Gold)", "commodity", ("GOLD", "ZLATO", "XAU")),
-    "XAGUSD": IbInstrument("CMDTY", "USD", "Stříbro (London Silver)", "commodity", ("SILVER", "STRIBRO", "XAG")),
+    "XAUUSD": IbInstrument("CMDTY", "USD", N_("Zlato (London Gold)"), "commodity", ("GOLD", "ZLATO", "XAU")),
+    "XAGUSD": IbInstrument("CMDTY", "USD", N_("Stříbro (London Silver)"), "commodity", ("SILVER", "STRIBRO", "XAG")),
     "IBUSOIL": IbInstrument("CFD", "USD", "US Crude Oil (WTI)", "commodity", ("WTI", "OIL", "ROPA", "CRUDE", "USOIL")),
     "IBUKOIL": IbInstrument("CFD", "USD", "UK Crude Oil (Brent)", "commodity", ("BRENT", "OIL", "ROPA", "CRUDE", "UKOIL")),
     "IBUS500": IbInstrument("CFD", "USD", "US 500 (S&P 500)", "index", ("SP500", "SPX", "US500")),
@@ -292,8 +294,9 @@ class IbkrProvider(DataProvider):
         now = time_module.monotonic()
         if now - self._last_fail < RECONNECT_COOLDOWN_S:
             raise RuntimeError(
-                f"TWS ({self._host}:{self._port}) není dostupná – další pokus za "
-                f"{int(RECONNECT_COOLDOWN_S - (now - self._last_fail))} s."
+                tr("TWS ({host}:{port}) není dostupná – další pokus za {seconds} s.").format(
+                    host=self._host, port=self._port, seconds=int(RECONNECT_COOLDOWN_S - (now - self._last_fail)),
+                )
             )
         # Před novým připojením uklidíme starou instanci, pokud existuje
         if self._ib is not None:
@@ -320,8 +323,10 @@ class IbkrProvider(DataProvider):
             return ib
         self._last_fail = time_module.monotonic()
         raise RuntimeError(
-            f"Připojení k TWS ({self._host}:{self._port}, clientId {self._client_id}"
-            f"–{self._client_id + CLIENT_ID_ATTEMPTS - 1}) selhalo: {last_error!r}"
+            tr("Připojení k TWS ({host}:{port}, clientId {first}–{last}) selhalo: {error}").format(
+                host=self._host, port=self._port, first=self._client_id,
+                last=self._client_id + CLIENT_ID_ATTEMPTS - 1, error=repr(last_error),
+            )
         ) from last_error
 
     @staticmethod
@@ -365,8 +370,10 @@ class IbkrProvider(DataProvider):
         ib = IB()
         try:
             await ib.connectAsync(host, port, clientId=client_id + CLIENT_ID_ATTEMPTS, timeout=6)
-            accounts = ", ".join(ib.managedAccounts()) or "bez účtu"
-            return f"TWS odpovídá (server verze {ib.client.serverVersion()}, účet {accounts})."
+            accounts = ", ".join(ib.managedAccounts()) or tr("bez účtu")
+            return tr("TWS odpovídá (server verze {version}, účet {accounts}).").format(
+                version=ib.client.serverVersion(), accounts=accounts,
+            )
         finally:
             IbkrProvider._disconnect_quietly(ib)
 
@@ -383,8 +390,8 @@ class IbkrProvider(DataProvider):
     def _instrument_info(self, symbol: str) -> SymbolInfo:
         # Návrh kovu / CFD pro vyhledávání
         instrument = IB_INSTRUMENTS[symbol]
-        return SymbolInfo(self.id, symbol, f"{symbol} – {instrument.name}", instrument.name, instrument.kind,
-                          instrument.market)
+        name = tr(instrument.name)
+        return SymbolInfo(self.id, symbol, f"{symbol} – {name}", name, instrument.kind, instrument.market)
 
     async def _qualified(self, ib: IB, symbol: str) -> Contract:
         """Kvalifikovaný kontrakt symbolu (conId od TWS); cachuje se, conId se nemění.
@@ -399,13 +406,13 @@ class IbkrProvider(DataProvider):
         if spec := future_spec(symbol):
             leg = await self._front_leg(ib, symbol, spec)
             if leg is None:
-                raise ValueError(f"TWS nemá pro {symbol} žádný obchodovatelný kontrakt.")
+                raise ValueError(tr("TWS nemá pro {symbol} žádný obchodovatelný kontrakt.").format(symbol=symbol))
             return leg.contract
         qualified = await ib.qualifyContractsAsync(self._contract(symbol))
         contract = qualified[0] if qualified else None
         # Neznámý kontrakt (None / bez conId) se necachuje – volající dostane chybu jako dřív
         if contract is None or not contract.conId:
-            raise ValueError(f"TWS nezná kontrakt {symbol}.")
+            raise ValueError(tr("TWS nezná kontrakt {symbol}.").format(symbol=symbol))
         self._contracts[symbol] = contract
         return contract
 
@@ -428,7 +435,9 @@ class IbkrProvider(DataProvider):
             ))
             chain = build_chain(details or [], spec)
             if not chain:
-                raise ValueError(f"TWS nezná futures {symbol} ({spec.root} na {spec.exchange}).")
+                raise ValueError(tr("TWS nezná futures {symbol} ({root} na {exchange}).").format(
+                    symbol=symbol, root=spec.root, exchange=spec.exchange,
+                ))
             self._future_chains[symbol] = (time_module.monotonic(), chain)
             return chain
 
@@ -444,7 +453,7 @@ class IbkrProvider(DataProvider):
     def _future_info(self, symbol: str, description: str = "") -> SymbolInfo:
         # Návrh kontinuálního futures pro vyhledávání (symbol musí být futures)
         spec = future_spec(symbol)
-        name = description or spec.name
+        name = description or tr(spec.name)
         return SymbolInfo(self.id, symbol, f"{symbol} – {name} (futures)", name, "futures", spec.exchange)
 
     def _future_value(self, symbol: str, spec_field: str, leg_field: str) -> Optional[float]:
@@ -470,12 +479,12 @@ class IbkrProvider(DataProvider):
         if parts := forex_parts(symbol):
             return {"name": forex_name(*parts), "exchange": "IDEALPRO"}
         if instrument := IB_INSTRUMENTS.get(symbol):
-            return {"name": instrument.name, "exchange": instrument.market}
+            return {"name": tr(instrument.name), "exchange": instrument.market}
         if spec := future_spec(symbol):
             # Název s aktuálním front month kontraktem ("E-mini S&P 500 · ESZ6")
             leg = await self._front_leg(await self._ensure_connected(), symbol, spec)
             # Obecný symbol: název podkladu z TWS místo kořene
-            name = (not spec.trading_class and leg and leg.long_name) or spec.name
+            name = (not spec.trading_class and leg and leg.long_name) or tr(spec.name)
             return {"name": f"{name} · {leg.local_symbol}" if leg else name, "exchange": spec.exchange}
         if symbol in self._describe_cache:
             return self._describe_cache[symbol]
@@ -785,7 +794,7 @@ class IbkrProvider(DataProvider):
                 raise
             except Exception as exc:
                 # Výpadek TWS hlásíme jen jednou, dokud se neobnoví
-                if status := latch.fail(f"TWS neodpovídá: {exc}"):
+                if status := latch.fail(tr("TWS neodpovídá: {error}").format(error=exc)):
                     yield status
                 await asyncio.sleep(poll_seconds_for(timeframe))
                 continue
@@ -798,8 +807,7 @@ class IbkrProvider(DataProvider):
                 self._cancel_bars(ib, bars)
                 yield StreamStatus(
                     True,
-                    "TWS odmítla průběžné bary (chybí předplatné živých dat?) – "
-                    "data se obnovují v intervalu",
+                    tr("TWS odmítla průběžné bary (chybí předplatné živých dat?) – data se obnovují v intervalu"),
                     live=False,
                 )
                 async for item in self._poll_history(symbol, timeframe):
@@ -849,10 +857,10 @@ class IbkrProvider(DataProvider):
         def on_error(req_id: int, code: int, message: str, _contract) -> None:
             # Chyba našeho odběru; informační zprávy a varování farem ignorujeme
             if req_id == bars.reqId and code not in IGNORED_STREAM_CODES:
-                finish(f"chyba {code}: {message}")
+                finish(tr("chyba {code}: {message}").format(code=code, message=message))
 
         def on_disconnect() -> None:
-            finish("TWS se odpojila")
+            finish(tr("TWS se odpojila"))
 
         bars.updateEvent += on_update
         ib.errorEvent += on_error
@@ -860,7 +868,7 @@ class IbkrProvider(DataProvider):
         try:
             yield StreamStatus(
                 True,
-                "živá data z TWS" if live else "TWS posílá zpožděná data (chybí předplatné)",
+                tr("živá data z TWS") if live else tr("TWS posílá zpožděná data (chybí předplatné)"),
                 live=live,
             )
             fresh_candles = FreshCandles()
@@ -880,7 +888,7 @@ class IbkrProvider(DataProvider):
                 except asyncio.TimeoutError:
                     return
                 changed.clear()
-            if status := latch.fail(f"průběžné bary přerušeny – {end_reason}"):
+            if status := latch.fail(tr("průběžné bary přerušeny – {reason}").format(reason=end_reason)):
                 yield status
         finally:
             bars.updateEvent -= on_update

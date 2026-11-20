@@ -178,9 +178,11 @@ h3 {
   gap: 24px;
 }
 
+/* Odkazy v navigaci se nezalamují (víceslovné položky jako „Data sources“) */
 .site-nav a {
   color: var(--muted);
   font-size: 0.95rem;
+  white-space: nowrap;
 }
 
 .site-nav a:hover {
@@ -188,7 +190,9 @@ h3 {
   text-decoration: none;
 }
 
-.site-nav .nav-github {
+/* GitHub a přepínač jazyka (CS/EN) jako orámovaná tlačítka */
+.site-nav .nav-github,
+.site-nav .nav-lang {
   color: var(--text);
   padding: 6px 14px;
   border: 1px solid var(--border);
@@ -214,8 +218,9 @@ h3 {
   border-radius: 1px;
 }
 
-/* Mobilní navigace – rozbalovací menu pod hlavičkou */
-@media (max-width: 760px) {
+/* Mobilní navigace – rozbalovací menu pod hlavičkou; hranice 960px, protože
+   pod ní se odkazy, GitHub, přepínač jazyka a motivu do jednoho řádku nevejdou */
+@media (max-width: 960px) {
   /* Hamburger až za přepínačem motivu, úplně vpravo */
   .nav-toggle {
     display: block;
@@ -244,7 +249,8 @@ h3 {
     padding: 10px 0;
   }
 
-  .site-nav .nav-github {
+  .site-nav .nav-github,
+  .site-nav .nav-lang {
     margin-top: 8px;
     text-align: center;
   }

@@ -17,6 +17,9 @@ from typing import Any, Optional, Sequence
 
 import pandas as pd
 
+# Překlady textů pro uživatele (re-export: indikátor smí importovat jen API);
+# N_ označí text v deklaraci (popisky, názvy), tr přeloží text sestavený při výpočtu
+from tickview.i18n import N_, tr  # noqa: F401
 from tickview.logic.styles import normalize_color
 # Kanonické timeframy zdrojů dat (volby parametru typu timeframe) a rozklad
 # symbolu "zdroj:SYMBOL" (re-export pro indikátory, které smí importovat jen API)
@@ -27,15 +30,16 @@ from tickview.providers.base import split_symbol  # noqa: F401
 API_VERSION = 1
 
 # Kategorie nabídky indikátorů (pořadí = pořadí v levém sloupci dialogu)
+# (popisky se překládají až při zobrazení)
 CATEGORIES = {
-    "ma": "Klouzavé průměry",
-    "bands": "Pásma a kanály",
-    "trend": "Trend",
-    "osc": "Oscilátory",
-    "volatility": "Volatilita",
-    "volume": "Objem",
+    "ma": N_("Klouzavé průměry"),
+    "bands": N_("Pásma a kanály"),
+    "trend": N_("Trend"),
+    "osc": N_("Oscilátory"),
+    "volatility": N_("Volatilita"),
+    "volume": N_("Objem"),
     "cot": "COT report",
-    "custom": "Vlastní",
+    "custom": N_("Vlastní"),
 }
 
 # Barvy čar instancí (cyklicky podle pořadí přidání, pokud uživatel nezvolí vlastní)
@@ -60,7 +64,7 @@ class Param:
         kind: typ pole – "int", "float", "bool", "color", "select", "string", "timeframe",
             "symbol" (symbol "zdroj:SYMBOL" nebo jen "SYMBOL" = zdroj grafu).
         default: výchozí hodnota.
-        label: popisek v dialogu.
+        label: popisek v dialogu (text označený N_ se při zobrazení přeloží).
         group: skupina (sekce dialogu); prázdná = bez nadpisu.
         tooltip: nápověda k poli.
         min, max, step: rozsah a krok číselných polí.
@@ -130,31 +134,34 @@ class Param:
         """Ověří a převede hodnotu z dialogu nebo z uloženého nastavení.
 
         Chybějící hodnota (None) se nahradí výchozí; neplatná vyhodí
-        ValueError s českou zprávou pro uživatele.
+        ValueError se zprávou pro uživatele v jazyce rozhraní.
         """
-        label = self.label or self.name
+        label = tr(self.label or self.name)
         if value is None:
             return self.default
         if self.kind in ("int", "float"):
             try:
                 number = float(value)
             except (TypeError, ValueError):
-                raise ValueError(f"{label}: zadejte číslo.") from None
+                raise ValueError(tr("{label}: zadejte číslo.").format(label=label)) from None
             if not math.isfinite(number):
-                raise ValueError(f"{label}: zadejte číslo.")
+                raise ValueError(tr("{label}: zadejte číslo.").format(label=label))
             low = -math.inf if self.min is None else self.min
             high = math.inf if self.max is None else self.max
             if self.kind == "int":
                 # Celé číslo v povoleném rozsahu
                 if not number.is_integer() or not low <= number <= high:
-                    raise ValueError(f"{label}: zadejte celé číslo {_fmt(low)}–{_fmt(high)}.")
+                    raise ValueError(tr("{label}: zadejte celé číslo {low}–{high}.").format(
+                        label=label, low=_fmt(low), high=_fmt(high)))
                 return int(number)
             # Desetinné číslo v rozsahu; vyloučená dolní mez = musí být větší
             above_min = low < number if self.exclusive_min else low <= number
             if not above_min or number > high:
                 if self.exclusive_min and low == 0:
-                    raise ValueError(f"{label}: zadejte kladné číslo nejvýš {_fmt(high)}.")
-                raise ValueError(f"{label}: zadejte číslo {_fmt(low)}–{_fmt(high)}.")
+                    raise ValueError(tr("{label}: zadejte kladné číslo nejvýš {high}.").format(
+                        label=label, high=_fmt(high)))
+                raise ValueError(tr("{label}: zadejte číslo {low}–{high}.").format(
+                    label=label, low=_fmt(low), high=_fmt(high)))
             return number
         if self.kind == "bool":
             return bool(value)
@@ -164,13 +171,13 @@ class Param:
         if self.kind in ("select", "timeframe"):
             allowed = [option[0] for option in self.options]
             if value not in allowed:
-                raise ValueError(f"{label}: neplatná volba.")
+                raise ValueError(tr("{label}: neplatná volba.").format(label=label))
             return value
         if self.kind == "symbol":
             # Symbol: bez mezer, zdroj (před dvojtečkou) malými písmeny
             text = str(value).strip()
             if any(char.isspace() for char in text) or len(text) > 60 or text.endswith(":"):
-                raise ValueError(f"{label}: zadejte symbol ve tvaru zdroj:SYMBOL.")
+                raise ValueError(tr("{label}: zadejte symbol ve tvaru zdroj:SYMBOL.").format(label=label))
             source, symbol = split_symbol(text)
             return f"{source}:{symbol}" if source else symbol
         # Text: oříznutý a omezený na rozumnou délku
@@ -186,13 +193,13 @@ def _fmt(number: float) -> str:
 
 # Skupiny vstupů scanneru v dialogu nastavení
 G_SCANNER = "Scanner"
-G_SCANNER_ALERT = "Scanner – alert před zavřením svíčky"
-G_SCANNER_SYMBOLS = "Scanner – symboly"
+G_SCANNER_ALERT = N_("Scanner – alert před zavřením svíčky")
+G_SCANNER_SYMBOLS = N_("Scanner – symboly")
 # Počet polí symbolů scanneru (jako v Pine) a nejvyšší sledovaný počet posledních svíček
 SCANNER_SYMBOLS = 40
 MAX_SCAN_BARS = 20
 # Pozice tabulky scanneru v grafu a velikost písma (hodnoty jako v Pine)
-TABLE_POSITIONS = ("top_right", "top_left", "middle_right", "bottom_right", "bottom_left", ("off", "nezobrazovat"))
+TABLE_POSITIONS = ("top_right", "top_left", "middle_right", "bottom_right", "bottom_left", ("off", N_("nezobrazovat")))
 TABLE_SIZES = ("tiny", "small", "normal", "large")
 
 
@@ -210,22 +217,22 @@ def scanner_params(default_symbols: Sequence[str] = (), timeframe: str = "1h", a
         alert: alert před zavřením svíčky ve výchozím stavu zapnutý.
     """
     params = [
-        Param.timeframe("scan_timeframe", timeframe, "Timeframe scanu", group=G_SCANNER),
-        Param.int("scan_bars", 2, "Počet posledních svíček pro signál", min=1, max=MAX_SCAN_BARS, group=G_SCANNER,
-                  tooltip="0 = běžící svíčka; signál starší než zadaný počet svíček se v tabulce neukáže."),
-        Param.select("scan_table_position", "top_right", "Pozice tabulky", options=TABLE_POSITIONS,
-                     group=G_SCANNER, tooltip="Při „nezobrazovat“ se symboly počítají jen kvůli alertu."),
-        Param.bool("scan_only_hits", True, "Zobrazit pouze trhy se signálem", group=G_SCANNER),
-        Param.select("scan_text_size", "normal", "Velikost textu", options=TABLE_SIZES, group=G_SCANNER),
-        Param.bool("scan_strip_prefix", True, "Skrýt prefix zdroje", group=G_SCANNER),
-        Param.bool("scan_alert", alert, "Posílat alert před zavřením svíčky", group=G_SCANNER_ALERT,
-                   tooltip="Jedna souhrnná zpráva se seznamem trhů se signálem na běžící svíčce timeframu scanu. "
-                           "Odejde přes alert na tento indikátor s podmínkou „Any alert() function call“ "
-                           "(Alert → Condition), kde se nastavují i notifikace (Telegram, toast, zvuk, webhook)."),
-        Param.int("scan_alert_minutes1", 10, "1. upozornění (min před zavřením)", min=0, max=1440,
-                  group=G_SCANNER_ALERT, tooltip="0 = vypnuto; každý práh nejvýš jednou za svíčku."),
-        Param.int("scan_alert_minutes2", 5, "2. upozornění (min před zavřením)", min=0, max=1440,
-                  group=G_SCANNER_ALERT, tooltip="0 = vypnuto; každý práh nejvýš jednou za svíčku."),
+        Param.timeframe("scan_timeframe", timeframe, N_("Timeframe scanu"), group=G_SCANNER),
+        Param.int("scan_bars", 2, N_("Počet posledních svíček pro signál"), min=1, max=MAX_SCAN_BARS, group=G_SCANNER,
+                  tooltip=N_("0 = běžící svíčka; signál starší než zadaný počet svíček se v tabulce neukáže.")),
+        Param.select("scan_table_position", "top_right", N_("Pozice tabulky"), options=TABLE_POSITIONS,
+                     group=G_SCANNER, tooltip=N_("Při „nezobrazovat“ se symboly počítají jen kvůli alertu.")),
+        Param.bool("scan_only_hits", True, N_("Zobrazit pouze trhy se signálem"), group=G_SCANNER),
+        Param.select("scan_text_size", "normal", N_("Velikost textu"), options=TABLE_SIZES, group=G_SCANNER),
+        Param.bool("scan_strip_prefix", True, N_("Skrýt prefix zdroje"), group=G_SCANNER),
+        Param.bool("scan_alert", alert, N_("Posílat alert před zavřením svíčky"), group=G_SCANNER_ALERT,
+                   tooltip=N_("Jedna souhrnná zpráva se seznamem trhů se signálem na běžící svíčce timeframu scanu. "
+                              "Odejde přes alert na tento indikátor s podmínkou „Any alert() function call“ "
+                              "(Alert → Condition), kde se nastavují i notifikace (Telegram, toast, zvuk, webhook).")),
+        Param.int("scan_alert_minutes1", 10, N_("1. upozornění (min před zavřením)"), min=0, max=1440,
+                  group=G_SCANNER_ALERT, tooltip=N_("0 = vypnuto; každý práh nejvýš jednou za svíčku.")),
+        Param.int("scan_alert_minutes2", 5, N_("2. upozornění (min před zavřením)"), min=0, max=1440,
+                  group=G_SCANNER_ALERT, tooltip=N_("0 = vypnuto; každý práh nejvýš jednou za svíčku.")),
     ]
     symbols = list(default_symbols)[:SCANNER_SYMBOLS]
     symbols += [""] * (SCANNER_SYMBOLS - len(symbols))
@@ -397,7 +404,8 @@ class Indicator:
     Atributy třídy:
         id: jednoznačný klíč (ukládá se do nastavení – neměnit).
         title: zkratka do legendy ("SMA").
-        name: celý název do nabídky.
+        name: celý název do nabídky (texty pro uživatele lze označit N_ – přeloží se
+            při zobrazení; neoznačené se zobrazí beze změny).
         category: klíč CATEGORIES.
         description: krátký popis do nabídky.
         overlay: True = kreslí se přes hlavní graf, False = vlastní panel.
@@ -492,4 +500,5 @@ class Indicator:
         for name in names:
             value = params.get(name)
             values.append(f"{value:g}" if isinstance(value, float) else str(value))
-        return " ".join([self.title or self.name, *values]).strip()
+        # Zkratka nebo celý název (označený N_) v jazyce rozhraní
+        return " ".join([tr(self.title or self.name), *values]).strip()

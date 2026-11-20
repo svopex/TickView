@@ -10,6 +10,7 @@ import json
 import logging
 from typing import Optional
 
+from tickview.i18n import tr
 from tickview.logic.cache import KlineCache
 from tickview.logic.reminders import REMINDERS_SETTINGS_KEY, ReminderTracker, load_reminders
 from tickview.providers.base import utc_now_ms
@@ -71,6 +72,6 @@ class ReminderService:
             fire = tracker.check(reminder, now_ms)
             if fire and reminder["active"]:
                 await self._alert_engine.notify_external(
-                    reminder["notify"], source="reminder", symbol=reminder["name"], timeframe="připomínka",
+                    reminder["notify"], source="reminder", symbol=reminder["name"], timeframe=tr("připomínka"),
                     message=reminder["message"],
                 )

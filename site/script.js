@@ -5,6 +5,31 @@
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
+// Jazyk stránky podle <html lang>: anglická verze (en/index.html) má "en",
+// cokoli jiného zůstává česky (výchozí index.html)
+const IS_ENGLISH = (document.documentElement.lang || "").toLowerCase().startsWith("en");
+
+// Texty generované skriptem v obou jazycích; vybírá se podle IS_ENGLISH
+const TEXTS = {
+  cs: {
+    copy: "Kopírovat",
+    copied: "Zkopírováno",
+    copyFailed: "Nelze kopírovat",
+    chartLabel: "Ukázkový svíčkový graf s generovanými daty",
+    alert: "Alert",
+    percentSuffix: " %",
+  },
+  en: {
+    copy: "Copy",
+    copied: "Copied",
+    copyFailed: "Copy failed",
+    chartLabel: "Sample candlestick chart with generated data",
+    alert: "Alert",
+    percentSuffix: "%",
+  },
+};
+const T = IS_ENGLISH ? TEXTS.en : TEXTS.cs;
+
 document.addEventListener("DOMContentLoaded", () => {
   initNavToggle();
   initInstallTabs();
@@ -78,7 +103,7 @@ function initInstallTabs() {
   }
 }
 
-// Tlačítka „Kopírovat“ u příkazů; text bere z elementu podle data-copy-target.
+// Tlačítka „Kopírovat“ (Copy) u příkazů; text bere z elementu podle data-copy-target.
 function initCopyButtons() {
   for (const button of document.querySelectorAll(".copy-btn")) {
     button.addEventListener("click", async () => {
@@ -86,14 +111,14 @@ function initCopyButtons() {
       if (!source) return;
       try {
         await navigator.clipboard.writeText(source.textContent.trim());
-        button.textContent = "Zkopírováno";
+        button.textContent = T.copied;
         button.classList.add("is-copied");
       } catch {
         // Schránka nemusí být dostupná (např. bez HTTPS) – uživatel zkopíruje ručně
-        button.textContent = "Nelze kopírovat";
+        button.textContent = T.copyFailed;
       }
       setTimeout(() => {
-        button.textContent = "Kopírovat";
+        button.textContent = T.copy;
         button.classList.remove("is-copied");
       }, 1800);
     });
@@ -157,8 +182,9 @@ function computeSma(candles, period) {
   });
 }
 
-// Formát ceny jako v aplikaci: dvě desetinná místa, české oddělovače.
-const priceFormat = new Intl.NumberFormat("cs-CZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// Formát ceny jako v aplikaci: dvě desetinná místa, oddělovače podle jazyka
+// stránky (česky 64 200,00, anglicky 64,200.00).
+const priceFormat = new Intl.NumberFormat(IS_ENGLISH ? "en-US" : "cs-CZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 // Pomocník pro vytvoření SVG elementu s atributy (geometrie a třídy, žádné inline styly).
 function svgElement(tag, attributes, parent) {
@@ -199,7 +225,7 @@ function initHeroChart() {
 
   // Graf se kreslí do vlastní skupiny, kterou překreslení vymění; crosshair
   // nad ní vzniká jen jednou a při překreslení se jen posouvá
-  const svg = svgElement("svg", { role: "img", "aria-label": "Ukázkový svíčkový graf s generovanými daty" }, container);
+  const svg = svgElement("svg", { role: "img", "aria-label": T.chartLabel }, container);
   const chartGroup = svgElement("g", {}, svg);
   const crosshair = svgElement("g", { visibility: "hidden" }, svg);
   const crossVertical = svgElement("line", { class: "crosshair-line", y1: 0 }, crosshair);
@@ -327,7 +353,7 @@ function initHeroChart() {
     const alertY = y(state.alertPrice);
     svgElement("line", { class: "alert-line", x1: 0, x2: plotWidth, y1: alertY, y2: alertY }, chartGroup);
     svgElement("rect", { class: "alert-tag", x: 8, y: alertY - 9, width: 46, height: 18, rx: 3 }, chartGroup);
-    svgElement("text", { class: "alert-text", x: 15, y: alertY + 4 }, chartGroup).textContent = "Alert";
+    svgElement("text", { class: "alert-text", x: 15, y: alertY + 4 }, chartGroup).textContent = T.alert;
 
     // Poslední cena – tečkovaná čára a štítek na ose v barvě poslední svíčky
     const last = visible[visible.length - 1];
@@ -371,7 +397,8 @@ function initHeroChart() {
     for (const field of ["open", "high", "low", "close"]) {
       legendFields[field].textContent = priceFormat.format(candle[field]);
     }
-    legendFields.change.textContent = `${change >= 0 ? "+" : ""}${change.toFixed(2)} %`;
+    // Procentní změna: znaménko vždy, mezera před % podle jazyka (česky „1.23 %“, anglicky „1.23%“)
+    legendFields.change.textContent = `${change >= 0 ? "+" : ""}${change.toFixed(2)}${T.percentSuffix}`;
     legend.classList.toggle("is-up", direction(candle) === "up");
     legend.classList.toggle("is-down", direction(candle) === "down");
   }

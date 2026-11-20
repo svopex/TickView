@@ -10,6 +10,7 @@ stránky předaný v konstruktoru.
 import asyncio
 import time
 
+from tickview.i18n import tr
 from tickview.logic.cache import KlineCache, fetch_history, fetch_recent, replay_drawing_source
 from tickview.logic.replay import bucket_start, is_finer, merge_into
 from tickview.indicators.compute import compute_indicators, context_for, tail_payload
@@ -175,7 +176,7 @@ class ChartPane:
         try:
             provider = get_provider(provider_id)
         except KeyError:
-            self.status(f"Neznámý zdroj: {provider_id}", error=True)
+            self.status(tr("Neznámý zdroj: {source}").format(source=provider_id), error=True)
             return False
         self.provider_id = provider_id
         self.provider = provider
@@ -313,7 +314,10 @@ class ChartPane:
     def show_loaded_status(self) -> None:
         # Souhrn načteného grafu ve stavové liště
         count = len(self.candles or [])
-        self.status(f"{self.symbol} · {self.timeframe} · {count} svíček · zdroj {self.provider.name}")
+        message = tr("{symbol} · {timeframe} · {count} svíček · zdroj {source}").format(
+            symbol=self.symbol, timeframe=self.timeframe, count=count, source=self.provider.name
+        )
+        self.status(message)
 
     async def reload_chart(self) -> None:
         """Načte historii zobrazeného symbolu a timeframu, indikátory, kresby a spustí stream."""
@@ -329,7 +333,7 @@ class ChartPane:
             return
         self.replay_shown = False
         self.set_badge(False)
-        self.status(f"Načítám {symbol} ({timeframe})…")
+        self.status(tr("Načítám {symbol} ({timeframe})…").format(symbol=symbol, timeframe=timeframe))
         try:
             # Aspoň tolik svíček, kolik je po načtení vidět a kolik potřebují
             # indikátory (zbytek donačte load_older při posunu doleva)
@@ -340,7 +344,10 @@ class ChartPane:
                 # Mezitím uživatel zvolil jiný symbol/timeframe – zastaralou odpověď zahodíme
                 return
             if not candles:
-                self.status(f"Pro {symbol} ({timeframe}) nejsou dostupná data.", error=True)
+                self.status(
+                    tr("Pro {symbol} ({timeframe}) nejsou dostupná data.").format(symbol=symbol, timeframe=timeframe),
+                    error=True,
+                )
                 await self.clear_chart(timeframe)
                 return
             # Vykreslení držíme pod zámkem a číslo požadavku kontrolujeme znovu
@@ -362,7 +369,7 @@ class ChartPane:
         except Exception as exc:
             if seq != self.load_seq:
                 return
-            self.status(f"Načtení dat selhalo: {exc}", error=True)
+            self.status(tr("Načtení dat selhalo: {error}").format(error=exc), error=True)
             await self.clear_chart(timeframe)
 
     async def reload_replay_chart(self, seq: int) -> None:
@@ -385,7 +392,7 @@ class ChartPane:
         self.set_badge(None)
         self.chart.set_legend_status("replay")
         self.chart.set_alert_lines([])
-        self.status(f"Replay: načítám {symbol} ({timeframe})…")
+        self.status(tr("Replay: načítám {symbol} ({timeframe})…").format(symbol=symbol, timeframe=timeframe))
         try:
             history = await self.fetch_session_history(
                 provider, symbol, timeframe, cursor, min_count=self.required_bars(), seq=seq
@@ -415,10 +422,11 @@ class ChartPane:
                 self.candles = candles
                 await self.push_indicators()
             await self.reload_drawings()
-            self.status(f"Replay {symbol} · {timeframe} · {len(candles)} svíček")
+            message = tr("Replay {symbol} · {timeframe} · {count} svíček")
+            self.status(message.format(symbol=symbol, timeframe=timeframe, count=len(candles)))
         except Exception as exc:
             if seq == self.load_seq:
-                self.status(f"Načtení dat replaye selhalo: {exc}", error=True)
+                self.status(tr("Načtení dat replaye selhalo: {error}").format(error=exc), error=True)
 
     async def apply_replay_bars(self, bars: list[Candle]) -> int:
         """Promítne nově odkryté základní svíčky do grafu; vrací počet nově začatých svíček grafu.
@@ -520,7 +528,8 @@ class ChartPane:
             )
         except Exception as exc:
             if seq == self.load_seq:
-                self.status(f"Starší data {symbol} se nepodařilo načíst: {exc}", error=True)
+                message = tr("Starší data {symbol} se nepodařilo načíst: {error}")
+                self.status(message.format(symbol=symbol, error=exc), error=True)
                 # Nic nepřidáno, historie ale není vyčerpaná – graf to zkusí později
                 await self.chart.prepend_candles([], exhausted=False)
             return
@@ -529,7 +538,8 @@ class ChartPane:
                 return
             await self.chart.prepend_candles(older, exhausted=not older)
             if not older:
-                self.status(f"{symbol} ({timeframe}): starší data nejsou k dispozici.")
+                message = tr("{symbol} ({timeframe}): starší data nejsou k dispozici.")
+                self.status(message.format(symbol=symbol, timeframe=timeframe))
                 return
             first_open = self.candles[0].open_time if self.candles else None
             self.candles = [c for c in older if first_open is None or c.open_time < first_open] + (self.candles or [])
@@ -559,7 +569,7 @@ class ChartPane:
             try:
                 await self.load_older(before_s)
             except Exception as exc:
-                self.status(f"Starší data se nepodařilo načíst: {exc}", error=True)
+                self.status(tr("Starší data se nepodařilo načíst: {error}").format(error=exc), error=True)
 
         asyncio.create_task(run())
 
@@ -587,7 +597,8 @@ class ChartPane:
                     if item.connected:
                         self.status(f"{symbol}: {item.message}")
                     else:
-                        self.status(f"Živý stream {symbol} přerušen, čekám na znovupřipojení: {item.message}", error=True)
+                        message = tr("Živý stream {symbol} přerušen, čekám na znovupřipojení: {reason}")
+                        self.status(message.format(symbol=symbol, reason=item.message), error=True)
                     continue
                 candle = item
                 self.set_badge(live)
@@ -637,14 +648,15 @@ class ChartPane:
                 # ji posílá těsně po konci období i při otevřeném trhu.
                 if not market_closed_warned and candle.open_time + 2 * step_ms <= now_ms:
                     market_closed_warned = True
-                    self.status(f"{symbol}: trh je pravděpodobně zavřený – živá data nepřibývají")
+                    message = tr("{symbol}: trh je pravděpodobně zavřený – živá data nepřibývají")
+                    self.status(message.format(symbol=symbol))
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             # Neočekávaná chyba mimo zdroj (zdroje výpadky hlásí přes StreamStatus)
             if seq == self.load_seq:
                 self.set_badge(False)
-                self.status(f"Živý stream ukončen chybou: {exc}", error=True)
+                self.status(tr("Živý stream ukončen chybou: {error}").format(error=exc), error=True)
 
     def cancel_stream(self) -> None:
         """Zruší živý stream grafu (přepnutí symbolu, timeframu, zavření grafu)."""

@@ -15,6 +15,7 @@ import httpx
 import websockets
 
 from tickview.config import load_config
+from tickview.i18n import tr
 from tickview.providers.base import (
     US_EQUITY_SESSION,
     Candle,
@@ -386,7 +387,7 @@ class _BarHub:
                     self._ws = ws
                     await ws.send(json.dumps({"action": "subscribe", "bars": list(self._queues)}))
                     backoff = 1.0
-                    if status := latch.ok("websocket Alpaca znovu připojen"):
+                    if status := latch.ok(tr("websocket Alpaca znovu připojen")):
                         self._broadcast(status)
                     async for raw in ws:
                         for message in json.loads(raw):
@@ -394,7 +395,7 @@ class _BarHub:
                             if kind == "error":
                                 # Např. neplatné klíče nebo limit spojení: ukončí spojení,
                                 # níže se ohlásí výpadek a čeká se s backoffem
-                                raise RuntimeError(message.get("msg", "chyba websocketu Alpaca"))
+                                raise RuntimeError(message.get("msg", tr("chyba websocketu Alpaca")))
                             if kind != "b":
                                 # success/subscription/... ignorujeme
                                 continue
@@ -415,7 +416,7 @@ class _BarHub:
             except Exception as exc:
                 self._ws = None
                 # Výpadek spojení nebo chyba autentizace: ohlásíme (jednou) a zkusíme znovu
-                if status := latch.fail(f"websocket Alpaca odpojen: {exc}"):
+                if status := latch.fail(tr("websocket Alpaca odpojen: {error}").format(error=exc)):
                     self._broadcast(status)
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, WS_MAX_BACKOFF_S)

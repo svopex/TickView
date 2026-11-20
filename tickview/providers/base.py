@@ -9,6 +9,8 @@ from typing import AsyncIterator, Awaitable, Callable, Optional, Union
 
 import numpy as np
 
+from tickview.i18n import tr
+
 # Kanonické timeframy aplikace; každý zdroj si je mapuje na vlastní API hodnoty
 CANONICAL_TIMEFRAMES = ("1m", "2m", "5m", "10m", "15m", "1h", "4h", "1D", "1W")
 
@@ -218,10 +220,10 @@ async def poll_latest_candles(
             raise
         except Exception as exc:
             # Výpadek zdroje hlásíme jen jednou, dokud se neobnoví
-            if status := latch.fail(f"zdroj neodpovídá: {exc}"):
+            if status := latch.fail(tr("zdroj neodpovídá: {error}").format(error=exc)):
                 yield status
         else:
-            if status := latch.ok("zdroj opět odpovídá"):
+            if status := latch.ok(tr("zdroj opět odpovídá")):
                 yield status
             for candle in fresh_candles.take(candles):
                 yield candle
@@ -437,7 +439,7 @@ class DataProvider(ABC):
         self, symbol: str, timeframe: str
     ) -> AsyncIterator[StreamItem]:
         """Živý stream svíček a stavových zpráv; zdroje bez podpory streamu ho nemají."""
-        raise NotImplementedError(f"Zdroj {self.id} nepodporuje živá data.")
+        raise NotImplementedError(tr("Zdroj {source} nepodporuje živá data.").format(source=self.id))
 
     async def close(self) -> None:
         """Uvolní síťové prostředky zdroje (volá se při ukončení aplikace)."""

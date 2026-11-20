@@ -13,6 +13,7 @@ import logging
 import time
 from typing import Awaitable, Callable, Optional
 
+from tickview.i18n import tr
 from tickview.indicators.compute import normalize_indicators
 from tickview.logic.cache import KlineCache, fetch_history
 from tickview.logic.replay import (
@@ -213,7 +214,8 @@ async def load_conversion(
                 return conversion, ""
     conversion.mode = "fixed"
     conversion.fixed = 1.0
-    return conversion, f"Kurz {quote} → {account} se nepodařilo zjistit – P&L je v {quote} (kurz 1)."
+    warning = tr("Kurz {quote} → {account} se nepodařilo zjistit – P&L je v {quote} (kurz 1).")
+    return conversion, warning.format(quote=quote, account=account)
 
 
 class ReplayController:
@@ -332,7 +334,8 @@ class ReplayController:
         provider = get_provider(provider_id)
         timeframe, candle = await probe_base_timeframe(self.cache, provider, symbol, time_ms, session_filter, base_tf)
         if timeframe is None:
-            self.on_status(f"{symbol}: pro zvolený čas nejsou dostupná data replaye.", True)
+            message = tr("{symbol}: pro zvolený čas nejsou dostupná data replaye.")
+            self.on_status(message.format(symbol=symbol), True)
             return None
         normalized = settings_for(provider, symbol, settings)
         return await self.cache.create_replay_session(name, provider_id, symbol, timeframe, candle.open_time, normalized)
@@ -347,24 +350,24 @@ class ReplayController:
         await self.close()
         row = await self.cache.get_replay_session(session_id)
         if row is None:
-            self.on_status("Session replaye neexistuje.", True)
+            self.on_status(tr("Session replaye neexistuje."), True)
             return False
         try:
             provider = get_provider(row["source"])
         except KeyError:
-            self.on_status(f"Neznámý zdroj session: {row['source']}", True)
+            self.on_status(tr("Neznámý zdroj session: {source}").format(source=row["source"]), True)
             return False
         settings = settings_for(provider, row["symbol"], row["settings"])
-        self.on_status(f"Načítám session {row['name']}…", False)
+        self.on_status(tr("Načítám session {name}…").format(name=row["name"]), False)
         transform = session_filter(row["base_tf"]) if session_filter else None
         feed = ReplayFeed(self.cache, provider, row["symbol"], row["base_tf"], transform)
         try:
             await feed.load(row["start_ms"], row["cursor_ms"])
         except Exception as exc:
-            self.on_status(f"Data session se nepodařilo načíst: {exc}", True)
+            self.on_status(tr("Data session se nepodařilo načíst: {error}").format(error=exc), True)
             return False
         if not feed.candles:
-            self.on_status("Session nemá data (zdroj je nevrátil).", True)
+            self.on_status(tr("Session nemá data (zdroj je nevrátil)."), True)
             return False
         conversion, warning = await load_conversion(self.cache, provider, row["symbol"], settings, row["start_ms"])
         index = feed.index_at(row["cursor_ms"])
@@ -448,7 +451,7 @@ class ReplayController:
             try:
                 await feed.extend(self.index)
             except Exception as exc:
-                self.on_status(f"Další data replaye se nepodařilo načíst: {exc}", True)
+                self.on_status(tr("Další data replaye se nepodařilo načíst: {error}").format(error=exc), True)
 
         self._prefetch_task = asyncio.create_task(run())
 
@@ -461,7 +464,7 @@ class ReplayController:
             try:
                 await feed.extend(self.index, ahead=1)
             except Exception as exc:
-                self.on_status(f"Další data replaye se nepodařilo načíst: {exc}", True)
+                self.on_status(tr("Další data replaye se nepodařilo načíst: {error}").format(error=exc), True)
                 return None
         if self.index + 1 >= len(feed.candles):
             return None
@@ -512,7 +515,7 @@ class ReplayController:
             self.on_status(" · ".join(messages[-3:]), False)
         if ended and not bars:
             self.playing = False
-            self.on_status("Replay došel na konec dostupných dat.", False)
+            self.on_status(tr("Replay došel na konec dostupných dat."), False)
         if bars:
             await self.on_bars(bars, len(bars) > INCREMENTAL_LIMIT)
             if time.monotonic() - self._saved_at >= SAVE_INTERVAL_S or not self.playing:
@@ -538,10 +541,15 @@ class ReplayController:
             1_000_000, stop=lambda bar: bucket_start(bar.open_time, anchor, step_ms) != target, honor_pause=False
         )
 
-    async def _skip_until(self, stop: Callable[[Candle], bool], label: str = "") -> None:
-        """Skok vpřed až po svíčku, pro kterou platí stop (obchody se vyhodnotí svíčku po svíčce)."""
+    async def _skip_until(self, stop: Callable[[Candle], bool], message: str = "") -> None:
+        """Skok vpřed až po svíčku, pro kterou platí stop (obchody se vyhodnotí svíčku po svíčce).
+
+        Parametry:
+            stop: podmínka nad další svíčkou – True = tu už neodkrývat.
+            message: text stavové lišty během skoku (prázdný = obecné „Přeskakuji…“).
+        """
         self.pause()
-        self.on_status(f"Přeskakuji{label}…", False)
+        self.on_status(message or tr("Přeskakuji…"), False)
         await self.advance(10_000_000, stop=stop, honor_pause=False)
 
     async def jump(self, time_ms: int) -> None:
@@ -557,7 +565,9 @@ class ReplayController:
         """
         if self.active:
             stopper = time_of_day_stopper(self.now_ms, time_of_day)
-            await self._skip_until(lambda bar: stopper(bar.open_time), f" na {time_of_day}")
+            await self._skip_until(
+                lambda bar: stopper(bar.open_time), tr("Přeskakuji na {time}…").format(time=time_of_day)
+            )
 
     async def set_jump_time(self, time_of_day: str) -> None:
         """Uloží čas dne pro skok na další den (jen nastavení, bez přepočtu session)."""
@@ -591,8 +601,11 @@ class ReplayController:
         await self.save()
         await self.on_bars([], True)
         self.on_state()
-        suffix = f" – smazáno příkazů: {removed}" if removed else ""
-        self.on_status(f"Replay vrácen zpět{suffix}.", False)
+        # Počet smazaných příkazů se uvádí, jen když krok zpět nějaké smazal
+        if removed:
+            self.on_status(tr("Replay vrácen zpět – smazáno příkazů: {count}.").format(count=removed), False)
+        else:
+            self.on_status(tr("Replay vrácen zpět."), False)
 
     # ----- přehrávání -----
 
@@ -629,7 +642,7 @@ class ReplayController:
                 await asyncio.sleep(max(0.0, interval - (time.monotonic() - started)))
         except Exception as exc:
             logger.exception("Přehrávání replaye selhalo")
-            self.on_status(f"Přehrávání selhalo: {exc}", True)
+            self.on_status(tr("Přehrávání selhalo: {error}").format(error=exc), True)
         finally:
             self.playing = False
             # Kurzor se ukládá v advance; po pauze zvenčí ho uložíme tady

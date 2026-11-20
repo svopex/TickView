@@ -11,6 +11,7 @@ from nicegui import ui
 
 from tickview import __version__
 from tickview.config import DATA_DIR
+from tickview.i18n import N_, tr
 from tickview.ui.templates import settings_header
 
 # Web projektu (GitHub Pages), zdrojový kód a hlášení chyb
@@ -45,14 +46,15 @@ def system_rows() -> list[tuple[str, str]]:
     """Vrátí dvojice (popisek, hodnota) s údaji o systému a prostředí aplikace."""
     return [
         # Systém s verzí, např. „macOS-15.1“, „Windows-11“
-        ("Systém", platform.platform(terse=True)),
-        ("Architektura", platform.machine() or "–"),
+        # Popisky jsou označené N_ (funkce je cachovaná); přeloží je info_table
+        (N_("Systém"), platform.platform(terse=True)),
+        (N_("Architektura"), platform.machine() or "–"),
         ("Python", f"{platform.python_version()} ({platform.python_implementation()})"),
         ("NiceGUI", package_version("nicegui")),
         ("pandas", package_version("pandas")),
         ("pandas-ta", package_version("pandas-ta")),
-        ("Interpret", sys.executable),
-        ("Složka dat", str(DATA_DIR)),
+        (N_("Interpret"), sys.executable),
+        (N_("Složka dat"), str(DATA_DIR)),
     ]
 
 
@@ -60,11 +62,12 @@ def info_table(rows: list[tuple[str, ...]]) -> None:
     """Vykreslí dvousloupcovou tabulku popisků a hodnot (volá se v kontextu stránky).
 
     Parametry:
-        rows: trojice (popisek, hodnota[, URL]); s URL je hodnota odkazem.
+        rows: trojice (popisek, hodnota[, URL]); s URL je hodnota odkazem. Popisky
+            se překládají zde (mohou přijít označené N_ z cachovaných údajů).
     """
     with ui.grid(columns="auto 1fr").classes("about-grid w-full"):
         for label, value, *url in rows:
-            ui.label(label).classes("about-key")
+            ui.label(tr(label)).classes("about-key")
             # Hodnota s URL se zobrazí jako odkaz do nové záložky; mailto: otevře
             # poštovního klienta, nová záložka by zůstala prázdná
             if url:
@@ -80,37 +83,37 @@ def build_about_dialog() -> ui.dialog:
     Vrací dialog; otevírá se ikonou (i) dole v pravé svislé liště.
     """
     with ui.dialog() as dialog, ui.card().classes("tv-settings about-dialog"):
-        settings_header(dialog, "O aplikaci")
+        settings_header(dialog, tr("O aplikaci"))
         # Produkt: název, verze, krátký popis a odkaz na web projektu
         with ui.row().classes("about-product w-full"):
             ui.icon("candlestick_chart").classes("about-logo")
             with ui.column().classes("about-product-text"):
                 ui.label("TickView").classes("about-name")
-                ui.label(f"Verze {__version__}").classes("about-version")
+                ui.label(tr("Verze {version}").format(version=__version__)).classes("about-version")
         ui.label(
-            "Burzovní a krypto grafy ve stylu TradingView – pouze pro čtení, bez obchodování."
+            tr("Burzovní a krypto grafy ve stylu TradingView – pouze pro čtení, bez obchodování.")
         ).classes("about-description")
         with ui.row().classes("about-links w-full"):
-            ui.link("Web projektu", WEB_URL, new_tab=True).classes("about-link")
-            ui.link("Zdrojový kód na GitHubu", GITHUB_URL, new_tab=True).classes("about-link")
-            ui.link("Nahlásit chybu na GitHubu", ISSUES_URL, new_tab=True).classes("about-link")
+            ui.link(tr("Web projektu"), WEB_URL, new_tab=True).classes("about-link")
+            ui.link(tr("Zdrojový kód na GitHubu"), GITHUB_URL, new_tab=True).classes("about-link")
+            ui.link(tr("Nahlásit chybu na GitHubu"), ISSUES_URL, new_tab=True).classes("about-link")
 
         # Autor a licence
-        ui.label("Autor a licence").classes("tv-settings-section")
+        ui.label(tr("Autor a licence")).classes("tv-settings-section")
         info_table(
             [
-                ("Autor", "© 2026 Svopex"),
-                ("Web autora", "svopex.eu", AUTHOR_URL),
-                ("E-mail", "Poslat e-mail", f"mailto:{CONTACT_EMAIL}"),
-                ("Licence", "Apache License 2.0", LICENSE_URL),
+                (N_("Autor"), "© 2026 Svopex"),
+                (N_("Web autora"), "svopex.eu", AUTHOR_URL),
+                ("E-mail", tr("Poslat e-mail"), f"mailto:{CONTACT_EMAIL}"),
+                (N_("Licence"), "Apache License 2.0", LICENSE_URL),
             ]
         )
 
         # Systém a prostředí, ve kterém aplikace běží (pro hlášení chyb)
-        ui.label("Systém").classes("tv-settings-section")
+        ui.label(tr("Systém")).classes("tv-settings-section")
         info_table(system_rows())
 
         with ui.row().classes("tv-settings-actions w-full"):
             ui.space()
-            ui.button("Zavřít", color=None, on_click=dialog.close).props("flat no-caps").classes("tv-btn-cancel")
+            ui.button(tr("Zavřít"), color=None, on_click=dialog.close).props("flat no-caps").classes("tv-btn-cancel")
     return dialog

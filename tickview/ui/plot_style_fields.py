@@ -9,6 +9,7 @@ on price scale) a hodnoty v legendě (Values in status line).
 
 from nicegui import ui
 
+from tickview.i18n import tr
 from tickview.indicators.api import UP_COLOR
 from tickview.logic.styles import PLOT_PRECISIONS, PLOT_TYPES, normalize_color
 from tickview.ui.icons import svg
@@ -103,7 +104,7 @@ class PlotStyleFields:
                     visible = ui.checkbox(name, value=current["visible"]).classes("param-check tv-check plot-check")
                     button = PlotStyleButton(
                         {key: current[key] for key in ("color", "width", "lineStyle")},
-                        title=f"{name} – barva a čára",
+                        title=tr("{name} – barva a čára").format(name=name),
                     )
                     plot_type = PlotTypeButton(current["type"], current["priceLine"])
                 self.rows.append({"name": name, "defaults": defaults, "visible": visible, "style": button,

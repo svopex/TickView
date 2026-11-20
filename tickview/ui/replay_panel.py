@@ -16,6 +16,7 @@ from datetime import datetime
 
 from nicegui import background_tasks, ui
 
+from tickview.i18n import N_, tr, tr_options
 from tickview.indicators.compute import detect_tick, run_indicator
 from tickview.indicators.registry import get_indicator
 from tickview.logic.alerts import format_price
@@ -46,9 +47,10 @@ DATETIME_INPUT_FORMAT = "%Y-%m-%dT%H:%M"
 # Jak často se překreslí lišta a čáry v grafech (s) a nejvýš jak často panel obchodů při přehrávání
 REFRESH_S = 0.2
 PANEL_REFRESH_S = 0.8
-# Volby přesnosti simulace (základní timeframe) v dialogu nové session
-BASE_CHOICES = {"auto": "Automaticky (nejjemnější dostupná data)", "1m": "1 minuta", "5m": "5 minut",
-                "15m": "15 minut", "1h": "1 hodina", "1D": "1 den"}
+# Volby přesnosti simulace (základní timeframe) v dialogu nové session (popisky se
+# překládají při stavbě dialogu)
+BASE_CHOICES = {"auto": N_("Automaticky (nejjemnější dostupná data)"), "1m": N_("1 minuta"), "5m": N_("5 minut"),
+                "15m": N_("15 minut"), "1h": N_("1 hodina"), "1D": N_("1 den")}
 # Kolik posledních uzavřených obchodů se ukáže v historii (export obsahuje všechny)
 HISTORY_LIMIT = 500
 
@@ -100,10 +102,16 @@ def pnl_class(value: float | None) -> str:
 def level_error(side: str, reference: float, sl: float | None, tp: float | None) -> str | None:
     """Kontrola polohy SL / TP vůči ceně (long: SL pod, TP nad; short obráceně); None = v pořádku."""
     long = side == "buy"
+    price = fmt_price(reference)
+    # Celé věty pro obě strany (pod / nad), aby šly přeložit jako celek
     if sl is not None and (sl >= reference if long else sl <= reference):
-        return f"Stop loss musí být {'pod' if long else 'nad'} cenou {fmt_price(reference)}."
+        if long:
+            return tr("Stop loss musí být pod cenou {price}.").format(price=price)
+        return tr("Stop loss musí být nad cenou {price}.").format(price=price)
     if tp is not None and (tp <= reference if long else tp >= reference):
-        return f"Take profit musí být {'nad' if long else 'pod'} cenou {fmt_price(reference)}."
+        if long:
+            return tr("Take profit musí být nad cenou {price}.").format(price=price)
+        return tr("Take profit musí být pod cenou {price}.").format(price=price)
     return None
 
 
@@ -115,20 +123,20 @@ class SessionSettingsFields:
 
     def __init__(self) -> None:
         with ui.grid(columns=2).classes("replay-form w-full"):
-            self.currency = ui.select(list(ACCOUNT_CURRENCIES), value="USD", label="Měna účtu",
+            self.currency = ui.select(list(ACCOUNT_CURRENCIES), value="USD", label=tr("Měna účtu"),
                                       new_value_mode="add-unique").props("outlined dense")
-            self.balance = ui.number("Počáteční zůstatek", min=0).props("outlined dense")
-            self.contract = ui.number("Jednotek v 1 lotu / kontraktu", min=0).props("outlined dense")
-            self.lot_step = ui.number("Nejmenší krok lotu", min=0).props("outlined dense")
-            self.tick = ui.number("Tick (nejmenší změna ceny)", min=0).props("outlined dense")
-            self.fixed_rate = ui.number("Pevný kurz k měně účtu (0 = auto)", min=0).props("outlined dense")
-            self.spread = ui.number("Spread (ticky)", min=0).props("outlined dense")
-            self.slippage = ui.number("Skluz market / stop (ticky)", min=0).props("outlined dense")
-            self.commission = ui.number("Komise za lot a stranu (měna účtu)", min=0).props("outlined dense")
-        ui.label("Automatická pauza přehrávání").classes("tv-settings-section")
-        self.pause_fill = ui.checkbox("Po naplnění příkazu")
-        self.pause_exit = ui.checkbox("Po uzavření obchodu (SL / TP)")
-        self.pause_signal = ui.checkbox("Při signálu indikátoru na uzavřené svíčce")
+            self.balance = ui.number(tr("Počáteční zůstatek"), min=0).props("outlined dense")
+            self.contract = ui.number(tr("Jednotek v 1 lotu / kontraktu"), min=0).props("outlined dense")
+            self.lot_step = ui.number(tr("Nejmenší krok lotu"), min=0).props("outlined dense")
+            self.tick = ui.number(tr("Tick (nejmenší změna ceny)"), min=0).props("outlined dense")
+            self.fixed_rate = ui.number(tr("Pevný kurz k měně účtu (0 = auto)"), min=0).props("outlined dense")
+            self.spread = ui.number(tr("Spread (ticky)"), min=0).props("outlined dense")
+            self.slippage = ui.number(tr("Skluz market / stop (ticky)"), min=0).props("outlined dense")
+            self.commission = ui.number(tr("Komise za lot a stranu (měna účtu)"), min=0).props("outlined dense")
+        ui.label(tr("Automatická pauza přehrávání")).classes("tv-settings-section")
+        self.pause_fill = ui.checkbox(tr("Po naplnění příkazu"))
+        self.pause_exit = ui.checkbox(tr("Po uzavření obchodu (SL / TP)"))
+        self.pause_signal = ui.checkbox(tr("Při signálu indikátoru na uzavřené svíčce"))
 
     def fill(self, settings: dict) -> None:
         """Vyplní pole hodnotami nastavení."""
@@ -270,7 +278,8 @@ class ReplayUI:
                     self._signal_seen[key] = closed_time
                     self.controller.pause()
                     label = f"{signal.direction.upper()} {signal.label}".strip()
-                    self.host.show_status(f"Replay pozastaven: signál {label} ({indicator.name}).", False)
+                    message = tr("Replay pozastaven: signál {signal} ({indicator}).")
+                    self.host.show_status(message.format(signal=label, indicator=tr(indicator.name)), False)
                     return
 
     # ---------- stavba UI ----------
@@ -279,7 +288,7 @@ class ReplayUI:
         """Tlačítko Replay v horní liště (sessions a nová session)."""
         self.topbar_button = ui.button("Replay", icon="history", color=None, on_click=self.host.show_sessions).props(
             "flat dense no-caps"
-        ).classes("topbar-btn replay-topbar-btn").tooltip("Replay – backtest ručních obchodů v historii")
+        ).classes("topbar-btn replay-topbar-btn").tooltip(tr("Replay – backtest ručních obchodů v historii"))
 
     def build_bar(self) -> None:
         """Lišta replaye pod grafy (viditelná jen s otevřenou session)."""
@@ -287,48 +296,50 @@ class ReplayUI:
             ui.icon("history").classes("replay-bar-icon")
             self.name_button = ui.button("", color=None, on_click=self.host.show_sessions).props(
                 "flat dense no-caps"
-            ).classes("replay-name").tooltip("Sessions replaye")
+            ).classes("replay-name").tooltip(tr("Sessions replaye"))
             ui.button(icon="content_cut", color=None, on_click=self.start_rewind_pick).props("flat dense").classes(
                 "replay-btn"
-            ).tooltip("Vrátit replay zpět – klikněte do grafu na svíčku, od které pokračovat")
+            ).tooltip(tr("Vrátit replay zpět – klikněte do grafu na svíčku, od které pokračovat"))
             self.play_button = ui.button(icon="play_arrow", color=None, on_click=self.toggle_play).props(
                 "flat dense"
-            ).classes("replay-btn replay-play").tooltip("Přehrát / pozastavit (mezerník)")
+            ).classes("replay-btn replay-play").tooltip(tr("Přehrát / pozastavit (mezerník)"))
             ui.button(icon="skip_next", color=None, on_click=self.step).props("flat dense").classes(
                 "replay-btn"
-            ).tooltip("Krok vpřed (Shift+→)")
-            self.unit_select = ui.select(STEP_UNITS, value=self.controller.step_unit,
+            ).tooltip(tr("Krok vpřed (Shift+→)"))
+            self.unit_select = ui.select(tr_options(STEP_UNITS), value=self.controller.step_unit,
                                          on_change=lambda e: setattr(self.controller, "step_unit", e.value)).props(
-                "dense borderless options-dense").classes("replay-select").tooltip("Krok tlačítka vpřed")
+                "dense borderless options-dense").classes("replay-select").tooltip(tr("Krok tlačítka vpřed"))
             self.speed_select = ui.select({speed: f"{speed}×" for speed in SPEEDS}, value=self.controller.speed,
                                           on_change=lambda e: self.controller.set_speed(e.value)).props(
                 "dense borderless options-dense").classes("replay-select").tooltip(
-                "Rychlost přehrávání (základních svíček za sekundu)")
+                tr("Rychlost přehrávání (základních svíček za sekundu)"))
             ui.button(icon="event", color=None, on_click=self.open_jump).props("flat dense").classes(
                 "replay-btn"
-            ).tooltip("Skok na datum a čas")
+            ).tooltip(tr("Skok na datum a čas"))
             # Skok na čas dne (např. začátek obchodování) – každý klik = další den
             self.day_time_input = ui.input(on_change=self._on_jump_time_change).props(
                 "dense borderless type=time").classes("replay-day-time").tooltip(
-                "Čas dne pro skok na další den (místní čas)")
+                tr("Čas dne pro skok na další den (místní čas)"))
             ui.button(icon="wb_sunny", color=None, on_click=self.jump_to_day_time).props("flat dense").classes(
                 "replay-btn"
-            ).tooltip("Skok na nejbližší zvolený čas dne (další klik = další den, víkendy a dny bez dat se přeskočí)")
+            ).tooltip(tr("Skok na nejbližší zvolený čas dne (další klik = další den, "
+                         "víkendy a dny bez dat se přeskočí)"))
             self.time_label = ui.label("").classes("replay-time")
             ui.separator().props("vertical").classes("replay-sep")
             ui.button("Buy", color=None, on_click=lambda: self.open_order("buy")).props("unelevated dense no-caps").classes(
-                "replay-buy").tooltip("Nový nákupní příkaz (Market / Limit / Stop)")
+                "replay-buy").tooltip(tr("Nový nákupní příkaz (Market / Limit / Stop)"))
             ui.button("Sell", color=None, on_click=lambda: self.open_order("sell")).props(
-                "unelevated dense no-caps").classes("replay-sell").tooltip("Nový prodejní příkaz (Market / Limit / Stop)")
+                "unelevated dense no-caps").classes("replay-sell").tooltip(
+                tr("Nový prodejní příkaz (Market / Limit / Stop)"))
             self.account_label = ui.label("").classes("replay-account")
             self.pnl_label = ui.label("").classes("replay-account")
             ui.space()
             ui.button(icon="table_rows", color=None, on_click=self.toggle_panel).props("flat dense").classes(
-                "replay-btn").tooltip("Panel obchodů")
+                "replay-btn").tooltip(tr("Panel obchodů"))
             ui.button(icon="tune", color=None, on_click=self.open_session_settings).props("flat dense").classes(
-                "replay-btn").tooltip("Nastavení session (účet, náklady, automatická pauza)")
+                "replay-btn").tooltip(tr("Nastavení session (účet, náklady, automatická pauza)"))
             ui.button(icon="close", color=None, on_click=self.close_session).props("flat dense").classes(
-                "replay-btn").tooltip("Ukončit replay (session zůstane uložená)")
+                "replay-btn").tooltip(tr("Ukončit replay (session zůstane uložená)"))
         self.bar.set_visibility(False)
 
     def build_panel(self) -> None:
@@ -339,15 +350,15 @@ class ReplayUI:
                 "data-resize=replay-panel data-resize-min=120 data-resize-max=0.75")
             with ui.row().classes("replay-panel-head w-full"):
                 with ui.tabs().props("dense no-caps align=left indicator-color=primary").classes("replay-tabs") as tabs:
-                    self.tab_positions = ui.tab("positions", label="Pozice")
-                    self.tab_orders = ui.tab("orders", label="Příkazy")
-                    self.tab_history = ui.tab("history", label="Historie")
-                    self.tab_stats = ui.tab("stats", label="Statistiky")
+                    self.tab_positions = ui.tab("positions", label=tr("Pozice"))
+                    self.tab_orders = ui.tab("orders", label=tr("Příkazy"))
+                    self.tab_history = ui.tab("history", label=tr("Historie"))
+                    self.tab_stats = ui.tab("stats", label=tr("Statistiky"))
                 ui.space()
                 ui.button(icon="download", color=None, on_click=self.export_csv).props("flat dense round size=sm").classes(
-                    "replay-btn").tooltip("Export obchodů do CSV")
+                    "replay-btn").tooltip(tr("Export obchodů do CSV"))
                 ui.button(icon="expand_more", color=None, on_click=self.toggle_panel).props(
-                    "flat dense round size=sm").classes("replay-btn").tooltip("Skrýt panel")
+                    "flat dense round size=sm").classes("replay-btn").tooltip(tr("Skrýt panel"))
             # Přepnutí záložky ji vykreslí (vykresluje se jen viditelná záložka)
             tabs.on_value_change(lambda _e: self._on_state())
             self.panel_tabs = tabs
@@ -422,11 +433,13 @@ class ReplayUI:
         engine = controller.engine
         currency = controller.currency
         self.name_button.text = f"{controller.session['name']} · {controller.session['symbol']}"
-        self.time_label.text = f"{display_time(controller.now_ms)} · přesnost {controller.base_tf}"
+        self.time_label.text = tr("{time} · přesnost {timeframe}").format(
+            time=display_time(controller.now_ms), timeframe=controller.base_tf
+        )
         self.play_button.props(f"icon={'pause' if controller.playing else 'play_arrow'}")
         open_pnl = engine.open_pnl()
-        self.account_label.text = (
-            f"Zůstatek {fmt_money(engine.balance, currency)} · Equity {fmt_money(engine.balance + open_pnl, currency)}"
+        self.account_label.text = tr("Zůstatek {balance} · Equity {equity}").format(
+            balance=fmt_money(engine.balance, currency), equity=fmt_money(engine.balance + open_pnl, currency)
         )
         self.pnl_label.text = f"Open P&L {fmt_money(open_pnl, currency, sign=True)}"
         self.pnl_label.classes(replace=f"replay-account {pnl_class(open_pnl)}")
@@ -485,10 +498,12 @@ class ReplayUI:
         box.clear()
         with box:
             if not trades:
-                ui.label("Žádné otevřené pozice. Buy / Sell v liště nebo nástroj Long / Short position v grafu.").classes(
-                    "replay-empty")
+                ui.label(
+                    tr("Žádné otevřené pozice. Buy / Sell v liště nebo nástroj Long / Short position v grafu.")
+                ).classes("replay-empty")
                 return
-            self._header("replay-cols-positions", ["#", "Strana", "Loty", "Vstup", "SL", "TP", "P&L", "R", ""])
+            self._header("replay-cols-positions",
+                         ["#", tr("Strana"), tr("Loty"), tr("Vstup"), "SL", "TP", "P&L", "R", ""])
             for trade in trades:
                 floating_r = trade["floating"] / trade["risk"] if trade["risk"] > 0 else None
                 with ui.element("div").classes("replay-row replay-cols-positions"):
@@ -502,13 +517,14 @@ class ReplayUI:
                     ui.label(fmt_money(trade["floating"], currency, sign=True)).classes(pnl_class(trade["floating"]))
                     ui.label(fmt_r(floating_r))
                     with ui.row().classes("replay-row-actions"):
-                        self._action("edit", "Upravit SL / TP, částečné zavření, poznámka",
+                        self._action("edit", tr("Upravit SL / TP, částečné zavření, poznámka"),
                                      lambda trade=trade: self.open_edit("trade", trade))
-                        self._action("vertical_align_center", "Stop na vstup (break-even)",
+                        self._action("vertical_align_center", tr("Stop na vstup (break-even)"),
                                      lambda trade=trade: self.break_even(trade))
-                        self._action("content_cut", "Zavřít polovinu pozice",
+                        self._action("content_cut", tr("Zavřít polovinu pozice"),
                                      lambda trade=trade: self.close_trade(trade["id"], trade["open_qty"] / 2))
-                        self._action("close", "Zavřít pozici za trh", lambda trade=trade: self.close_trade(trade["id"]))
+                        self._action("close", tr("Zavřít pozici za trh"),
+                                     lambda trade=trade: self.close_trade(trade["id"]))
 
     def _render_orders(self, orders: list[dict]) -> None:
         # Čekající příkazy s akcemi: upravit, zrušit
@@ -516,9 +532,10 @@ class ReplayUI:
         box.clear()
         with box:
             if not orders:
-                ui.label("Žádné čekající příkazy.").classes("replay-empty")
+                ui.label(tr("Žádné čekající příkazy.")).classes("replay-empty")
                 return
-            self._header("replay-cols-orders", ["#", "Příkaz", "Loty", "Cena", "SL", "TP", "Zadáno", "Expirace", ""])
+            self._header("replay-cols-orders",
+                         ["#", tr("Příkaz"), tr("Loty"), tr("Cena"), "SL", "TP", tr("Zadáno"), tr("Expirace"), ""])
             for order in orders:
                 with ui.element("div").classes("replay-row replay-cols-orders"):
                     ui.label(f"#{order['id']}")
@@ -531,8 +548,8 @@ class ReplayUI:
                     ui.label(display_time(order["created"]))
                     ui.label(display_time(order["expires"]) or "GTC")
                     with ui.row().classes("replay-row-actions"):
-                        self._action("edit", "Upravit příkaz", lambda order=order: self.open_edit("order", order))
-                        self._action("close", "Zrušit příkaz", lambda order=order: self.cancel_order(order["id"]))
+                        self._action("edit", tr("Upravit příkaz"), lambda order=order: self.open_edit("order", order))
+                        self._action("close", tr("Zrušit příkaz"), lambda order=order: self.cancel_order(order["id"]))
 
     def _render_history(self, trades: list[dict]) -> None:
         # Uzavřené obchody (nejnovější nahoře); klik = vstup v grafu, tužka = poznámka a štítek
@@ -541,13 +558,13 @@ class ReplayUI:
         box.clear()
         with box:
             if not trades:
-                ui.label("Zatím žádné uzavřené obchody.").classes("replay-empty")
+                ui.label(tr("Zatím žádné uzavřené obchody.")).classes("replay-empty")
                 return
-            self._header("replay-cols-history", ["#", "Strana", "Loty", "Vstup", "Cena", "Výstup", "Cena", "Důvod",
-                                                 "P&L", "R", "Štítek", ""])
+            self._header("replay-cols-history", ["#", tr("Strana"), tr("Loty"), tr("Vstup"), tr("Cena"), tr("Výstup"),
+                                                 tr("Cena"), tr("Důvod"), "P&L", "R", tr("Štítek"), ""])
             ordered = sorted(trades, key=lambda trade: trade["exit_time"] or 0, reverse=True)[:HISTORY_LIMIT]
             for trade in ordered:
-                reasons = ", ".join(EXIT_REASONS.get(item["reason"], item["reason"]) for item in trade["exits"])
+                reasons = ", ".join(tr(EXIT_REASONS.get(item["reason"], item["reason"])) for item in trade["exits"])
                 with ui.element("div").classes("replay-row replay-cols-history replay-row-click").on(
                     "click", lambda _e, trade=trade: self.show_trade(trade)
                 ):
@@ -561,15 +578,15 @@ class ReplayUI:
                     ui.label(fmt_price(trade["exit_price"]))
                     reason_label = ui.label(reasons + (" ⚠" if trade["ambiguous"] else ""))
                     if trade["ambiguous"]:
-                        reason_label.tooltip("Odhad: stop i cíl (nebo vstup a stop) v jedné základní svíčce – "
-                                             "počítá se konzervativně stop.")
+                        reason_label.tooltip(tr("Odhad: stop i cíl (nebo vstup a stop) v jedné základní svíčce – "
+                                                "počítá se konzervativně stop."))
                     ui.label(fmt_money(trade["realized"], currency, sign=True)).classes(pnl_class(trade["realized"]))
                     ui.label(fmt_r(trade["r"]))
                     tag_label = ui.label(trade["tag"] or "")
                     if trade["note"]:
                         tag_label.tooltip(trade["note"])
                     with ui.row().classes("replay-row-actions"):
-                        self._action("edit_note", "Poznámka a štítek setupu",
+                        self._action("edit_note", tr("Poznámka a štítek setupu"),
                                      lambda trade=trade: self.open_edit("closed", trade))
 
     def _render_stats(self) -> None:
@@ -579,22 +596,23 @@ class ReplayUI:
         currency = controller.currency
         profit_factor = stats["profit_factor"]
         tiles = [
-            ("Čistý zisk", f"{fmt_money(stats['net'], currency, sign=True)} ({stats['return_pct']:+.2f} %)",
+            (tr("Čistý zisk"), f"{fmt_money(stats['net'], currency, sign=True)} ({stats['return_pct']:+.2f} %)",
              pnl_class(stats["net"])),
-            ("Obchodů", f"{stats['count']} ({stats['wins']} / {stats['losses']})", ""),
+            (tr("Obchodů"), f"{stats['count']} ({stats['wins']} / {stats['losses']})", ""),
             ("Win rate", f"{stats['win_rate']:.1f} %", ""),
             ("Profit factor", "∞" if math.isinf(profit_factor) else f"{profit_factor:.2f}", ""),
-            ("Průměrná výhra", fmt_money(stats["avg_win"], currency), "replay-profit"),
-            ("Průměrná ztráta", fmt_money(stats["avg_loss"], currency), "replay-loss"),
-            ("Expectancy / obchod", fmt_money(stats["expectancy"], currency, sign=True), pnl_class(stats["expectancy"])),
-            ("Průměrné R / celkem", f"{fmt_r(stats['avg_r'])} / {fmt_r(stats['total_r'])}", ""),
+            (tr("Průměrná výhra"), fmt_money(stats["avg_win"], currency), "replay-profit"),
+            (tr("Průměrná ztráta"), fmt_money(stats["avg_loss"], currency), "replay-loss"),
+            (tr("Expectancy / obchod"), fmt_money(stats["expectancy"], currency, sign=True),
+             pnl_class(stats["expectancy"])),
+            (tr("Průměrné R / celkem"), f"{fmt_r(stats['avg_r'])} / {fmt_r(stats['total_r'])}", ""),
             ("Max. drawdown", f"{fmt_money(stats['max_drawdown'], currency)} ({stats['max_drawdown_pct']:.2f} %)",
              "replay-loss"),
-            ("Nejdelší série ztrát", str(stats["max_losing_streak"]), ""),
-            ("Největší výhra / ztráta",
+            (tr("Nejdelší série ztrát"), str(stats["max_losing_streak"]), ""),
+            (tr("Největší výhra / ztráta"),
              f"{fmt_money(stats['largest_win'], currency)} / {fmt_money(stats['largest_loss'], currency)}", ""),
-            ("Komise", fmt_money(stats["commissions"], currency), ""),
-            ("Odhadnuté obchody", str(stats["ambiguous"]), ""),
+            (tr("Komise"), fmt_money(stats["commissions"], currency), ""),
+            (tr("Odhadnuté obchody"), str(stats["ambiguous"]), ""),
         ]
         self.stats_box.clear()
         with self.stats_box:
@@ -609,7 +627,7 @@ class ReplayUI:
         self.tags_box.clear()
         with self.tags_box:
             if rows:
-                self._header("replay-cols-tags", ["Štítek", "Obchodů", "Win rate", "P&L", "Průměrné R"])
+                self._header("replay-cols-tags", [tr("Štítek"), tr("Obchodů"), "Win rate", "P&L", tr("Průměrné R")])
                 for row in rows:
                     with ui.element("div").classes("replay-row replay-cols-tags"):
                         ui.label(row["tag"])
@@ -677,36 +695,38 @@ class ReplayUI:
                 ui.label("Replay – sessions").classes("replay-sessions-title")
                 ui.space()
                 ui.button(icon="add", color=None, on_click=self.open_new_session).props(
-                    "flat dense round size=sm").classes("alert-btn").tooltip("Nová session pro symbol aktivního grafu")
+                    "flat dense round size=sm").classes("alert-btn").tooltip(
+                    tr("Nová session pro symbol aktivního grafu"))
             self.sessions_list = ui.column().classes("replay-sessions w-full")
         return section
 
     def _build_new_dialog(self) -> None:
         # Formulář nové session (symbol aktivního grafu, start, přesnost, účet)
         with ui.dialog() as self.new_dialog, ui.card().classes("tv-settings replay-dialog"):
-            settings_header(self.new_dialog, "Nová session replaye")
+            settings_header(self.new_dialog, tr("Nová session replaye"))
             self.new_symbol = ui.label("").classes("settings-note")
-            self.new_name = ui.input("Název").props("outlined dense").classes("w-full")
+            self.new_name = ui.input(tr("Název")).props("outlined dense").classes("w-full")
             with ui.row().classes("replay-start-row w-full"):
-                self.new_start = ui.input("Začátek (historie odkrytá do)").props(
+                self.new_start = ui.input(tr("Začátek (historie odkrytá do)")).props(
                     "outlined dense type=datetime-local").classes("replay-start-input")
-                ui.button("Vybrat v grafu", icon="ads_click", color=None, on_click=self.start_new_pick).props(
-                    "flat no-caps").tooltip("Klikněte do grafu na svíčku, od které replay začne")
-            self.new_base = ui.select(BASE_CHOICES, value="auto", label="Přesnost simulace (základní timeframe)").props(
+                ui.button(tr("Vybrat v grafu"), icon="ads_click", color=None, on_click=self.start_new_pick).props(
+                    "flat no-caps").tooltip(tr("Klikněte do grafu na svíčku, od které replay začne"))
+            self.new_base = ui.select(tr_options(BASE_CHOICES), value="auto",
+                                      label=tr("Přesnost simulace (základní timeframe)")).props(
                 "outlined dense").classes("w-full")
-            ui.label(
+            ui.label(tr(
                 "Příkazy, stopy a cíle se vyhodnocují na základním timeframu (svíčky grafu se z něj skládají). "
                 "Starší data mají u některých zdrojů jen hrubší timeframe (Yahoo 1m jen ~30 dní)."
-            ).classes("settings-note")
+            )).classes("settings-note")
             self.new_fields = SessionSettingsFields()
             with ui.row().classes("tv-settings-actions w-full"):
-                settings_buttons(self.new_dialog, self.create_session, "Spustit replay")
+                settings_buttons(self.new_dialog, self.create_session, tr("Spustit replay"))
 
     def _build_rename_dialog(self) -> None:
         # Přejmenování session (tužka v seznamu sessions)
         with ui.dialog() as self.rename_dialog, ui.card().classes("tpl-name-dialog"):
-            settings_header(self.rename_dialog, "Přejmenovat session")
-            self.rename_input = ui.input("Název").props("outlined dense autofocus").classes("w-full")
+            settings_header(self.rename_dialog, tr("Přejmenovat session"))
+            self.rename_input = ui.input(tr("Název")).props("outlined dense autofocus").classes("w-full")
             self.rename_input.on("keydown.enter", self.submit_rename)
             with ui.row().classes("tv-settings-actions w-full"):
                 settings_buttons(self.rename_dialog, self.submit_rename, "Save")
@@ -715,9 +735,9 @@ class ReplayUI:
         """Dialog nové session s předvyplněným symbolem aktivního grafu, startem a účtem."""
         pane = self.host.active()
         if not pane.key:
-            self.host.show_status("Graf nemá symbol – nejdřív zvolte symbol.", True)
+            self.host.show_status(tr("Graf nemá symbol – nejdřív zvolte symbol."), True)
             return
-        self.new_symbol.text = f"Symbol: {pane.key} (aktivní graf)"
+        self.new_symbol.text = tr("Symbol: {symbol} (aktivní graf)").format(symbol=pane.key)
         if not self.new_name.value:
             self.new_name.value = f"{pane.symbol} {datetime.now().strftime('%d.%m.%Y')}"
         if not self.new_start.value:
@@ -745,7 +765,7 @@ class ReplayUI:
         self.sessions_list.clear()
         with self.sessions_list:
             if not sessions:
-                ui.label("Zatím žádné sessions – tlačítko + založí novou pro symbol aktivního grafu.").classes(
+                ui.label(tr("Zatím žádné sessions – tlačítko + založí novou pro symbol aktivního grafu.")).classes(
                     "replay-empty")
             for session in sessions:
                 summary = session["summary"]
@@ -754,23 +774,24 @@ class ReplayUI:
                     # Klik na název a údaje session ji otevře (tlačítka vpravo mají vlastní akce)
                     with ui.column().classes("replay-session-info").on(
                         "click", lambda _e, s=session: self.resume_session(s)
-                    ).tooltip("Otevřená session" if current else "Otevřít session"):
+                    ).tooltip(tr("Otevřená session") if current else tr("Otevřít session")):
                         ui.label(session["name"]).classes("replay-session-name")
-                        ui.label(f"{session['source']}:{session['symbol']} · přesnost {session['base_tf']}").classes(
-                            "alert-meta")
+                        ui.label(tr("{symbol} · přesnost {timeframe}").format(
+                            symbol=f"{session['source']}:{session['symbol']}", timeframe=session["base_tf"]
+                        )).classes("alert-meta")
                         ui.label(f"{display_time(session['start_ms'])} → {display_time(session['cursor_ms'])}").classes(
                             "alert-meta")
                     with ui.column().classes("replay-session-result"):
                         net = summary.get("net")
                         ui.label(fmt_money(net, summary.get("currency", ""), sign=True) if net is not None else "").classes(
                             pnl_class(net))
-                        ui.label(f"obchodů {summary.get('trades', 0)}").classes("alert-meta")
+                        ui.label(tr("obchodů {count}").format(count=summary.get("trades", 0))).classes("alert-meta")
                     with ui.row().classes("replay-row-actions"):
                         ui.button(icon="edit", color=None, on_click=lambda s=session: self.open_rename(s)).props(
-                            "flat dense round size=sm").classes("replay-row-btn").tooltip("Přejmenovat")
+                            "flat dense round size=sm").classes("replay-row-btn").tooltip(tr("Přejmenovat"))
                         ui.button(icon="delete", color=None, on_click=lambda s=session: self.ask_delete_session(s)).props(
                             "flat dense round size=sm").classes("replay-row-btn wl-danger").tooltip(
-                            "Smazat session (i její obchody a kresby)")
+                            tr("Smazat session (i její obchody a kresby)"))
 
     def open_rename(self, session: dict) -> None:
         """Dialog přejmenování session."""
@@ -782,7 +803,7 @@ class ReplayUI:
         """Uloží nový název session (otevřená session ho hned ukáže v liště)."""
         name = clean_name(self.rename_input.value)
         if not name:
-            ui.notify(f"Zadejte název (1–{MAX_NAME_LENGTH} znaků).", type="warning")
+            ui.notify(tr("Zadejte název (1–{max_length} znaků).").format(max_length=MAX_NAME_LENGTH), type="warning")
             return
         self.rename_dialog.close()
         if self._rename_id == self.controller.session_id:
@@ -803,15 +824,15 @@ class ReplayUI:
             # Čas vybraný klikem do grafu je přesnější než pole (minuty)
             start = self.picked_start
         if start is None:
-            ui.notify("Zadejte začátek replaye.", type="warning")
+            ui.notify(tr("Zadejte začátek replaye."), type="warning")
             return
         if start >= utc_now_ms() - 60_000:
-            ui.notify("Začátek replaye musí být v minulosti.", type="warning")
+            ui.notify(tr("Začátek replaye musí být v minulosti."), type="warning")
             return
         name = clean_session_name(self.new_name.value, f"{pane.symbol} replay")
         base = None if self.new_base.value == "auto" else self.new_base.value
         self.new_dialog.close()
-        self.host.show_status(f"Zakládám replay {name} – hledám data…", False)
+        self.host.show_status(tr("Zakládám replay {name} – hledám data…").format(name=name), False)
         session_id = await self.controller.create(
             name, key, start, self.new_fields.collect(), pane.session_filter(), base
         )
@@ -834,13 +855,13 @@ class ReplayUI:
             await self.host.load_symbol(key)
         if await self.controller.open(session_id, self.host.active().session_filter()):
             self.panel.set_visibility(True)
+            message = tr("Replay {name}: {time}. Mezerník = play / pauza, Shift+→ = krok.")
             self.host.show_status(
-                f"Replay {self.controller.session['name']}: {display_time(self.controller.now_ms)}. "
-                "Mezerník = play / pauza, Shift+→ = krok.", False)
+                message.format(name=self.controller.session["name"], time=display_time(self.controller.now_ms)), False)
 
     def ask_delete_session(self, session: dict) -> None:
         """Potvrzení smazání session."""
-        self.confirm(f"Smazat session „{session['name']}“ včetně obchodů a kreseb?",
+        self.confirm(tr("Smazat session „{name}“ včetně obchodů a kreseb?").format(name=session["name"]),
                      lambda: self.delete_session(session["id"]))
 
     async def delete_session(self, session_id: int) -> None:
@@ -850,12 +871,12 @@ class ReplayUI:
         await self.cache.delete_replay_session(session_id)
         # Seznam obnoví timer
         self._sessions_key = None
-        self.host.show_status("Session replaye smazána.", False)
+        self.host.show_status(tr("Session replaye smazána."), False)
 
     async def close_session(self) -> None:
         """Ukončí replay (session zůstane uložená, grafy se vrátí k živým datům)."""
         await self.controller.close()
-        self.host.show_status("Replay ukončen – session je uložená (záložka Replay v pravém panelu).", False)
+        self.host.show_status(tr("Replay ukončen – session je uložená (záložka Replay v pravém panelu)."), False)
 
     # ---------- výběr času v grafu (start, krok zpět) ----------
 
@@ -864,19 +885,19 @@ class ReplayUI:
         self.new_dialog.close()
         self.pick_purpose = "start"
         await self.host.set_drawing_mode("replay_pick")
-        self.host.show_status("Klikněte do grafu na svíčku, od které má replay začít (Esc = zrušit).", False)
+        self.host.show_status(tr("Klikněte do grafu na svíčku, od které má replay začít (Esc = zrušit)."), False)
 
     async def start_rewind_pick(self) -> None:
         """Krok zpět klikem do grafu na svíčku, od které replay pokračuje."""
         if not self.active:
             return
         if self.host.rewind_mode() == "off":
-            self.host.show_status("Krok zpět je vypnutý (Settings → Replay).", True)
+            self.host.show_status(tr("Krok zpět je vypnutý (Settings → Replay)."), True)
             return
         self.controller.pause()
         self.pick_purpose = "rewind"
         await self.host.set_drawing_mode("replay_pick")
-        self.host.show_status("Klikněte do grafu na svíčku, od které replay pokračuje (Esc = zrušit).", False)
+        self.host.show_status(tr("Klikněte do grafu na svíčku, od které replay pokračuje (Esc = zrušit)."), False)
 
     async def on_pick(self, pane, time_s: int) -> None:
         """Klik do grafu ve výběru času: start nové session nebo krok zpět.
@@ -896,11 +917,12 @@ class ReplayUI:
         """Krok zpět podle nastavení aplikace (smazat / potvrdit / zakázáno)."""
         mode = self.host.rewind_mode()
         if mode == "off":
-            self.host.show_status("Krok zpět je vypnutý (Settings → Replay).", True)
+            self.host.show_status(tr("Krok zpět je vypnutý (Settings → Replay)."), True)
             return
         count = self.controller.trades_after(time_ms)
         if mode == "confirm" and count:
-            self.confirm(f"Krok zpět smaže {count} příkazů / změn zadaných po {display_time(time_ms)}. Pokračovat?",
+            message = tr("Krok zpět smaže {count} příkazů / změn zadaných po {time}. Pokračovat?")
+            self.confirm(message.format(count=count, time=display_time(time_ms)),
                          lambda: self.controller.rewind(time_ms))
             return
         await self.controller.rewind(time_ms)
@@ -909,11 +931,12 @@ class ReplayUI:
 
     def _build_jump_dialog(self) -> None:
         with ui.dialog() as self.jump_dialog, ui.card().classes("tpl-name-dialog"):
-            settings_header(self.jump_dialog, "Skok na datum a čas")
-            self.jump_input = ui.input("Datum a čas").props("outlined dense type=datetime-local").classes("w-full")
-            ui.label("Pozdější čas = skok vpřed (obchody se vyhodnotí), dřívější = krok zpět.").classes("settings-note")
+            settings_header(self.jump_dialog, tr("Skok na datum a čas"))
+            self.jump_input = ui.input(tr("Datum a čas")).props("outlined dense type=datetime-local").classes("w-full")
+            ui.label(tr("Pozdější čas = skok vpřed (obchody se vyhodnotí), dřívější = krok zpět.")).classes(
+                "settings-note")
             with ui.row().classes("tv-settings-actions w-full"):
-                settings_buttons(self.jump_dialog, self.submit_jump, "Skočit")
+                settings_buttons(self.jump_dialog, self.submit_jump, tr("Skočit"))
 
     def open_jump(self) -> None:
         """Dialog skoku v čase s aktuálním časem replaye."""
@@ -926,7 +949,7 @@ class ReplayUI:
         """Skok vpřed nebo krok zpět na zadaný čas."""
         target = parse_local_datetime(self.jump_input.value)
         if target is None:
-            ui.notify("Zadejte datum a čas.", type="warning")
+            ui.notify(tr("Zadejte datum a čas."), type="warning")
             return
         self.jump_dialog.close()
         if target >= self.controller.now_ms:
@@ -944,7 +967,7 @@ class ReplayUI:
         """Skok vpřed na nejbližší čas dne z pole v liště (další klik = další den)."""
         time_of_day = clean_time_of_day(self.day_time_input.value)
         if time_of_day is None:
-            ui.notify("Zadejte čas dne (HH:MM).", type="warning")
+            ui.notify(tr("Zadejte čas dne (HH:MM)."), type="warning")
             return
         await self.controller.jump_to_time_of_day(time_of_day)
 
@@ -952,10 +975,10 @@ class ReplayUI:
 
     def _build_settings_dialog(self) -> None:
         with ui.dialog() as self.settings_dialog, ui.card().classes("tv-settings replay-dialog"):
-            settings_header(self.settings_dialog, "Nastavení session")
-            self.settings_name = ui.input("Název").props("outlined dense").classes("w-full")
+            settings_header(self.settings_dialog, tr("Nastavení session"))
+            self.settings_name = ui.input(tr("Název")).props("outlined dense").classes("w-full")
             self.settings_fields = SessionSettingsFields()
-            ui.label("Změna účtu nebo nákladů přepočítá všechny obchody session.").classes("settings-note")
+            ui.label(tr("Změna účtu nebo nákladů přepočítá všechny obchody session.")).classes("settings-note")
             with ui.row().classes("tv-settings-actions w-full"):
                 settings_buttons(self.settings_dialog, self.submit_session_settings)
 
@@ -976,36 +999,37 @@ class ReplayUI:
             await controller.rename(name)
         values = {**controller.settings, **self.settings_fields.collect()}
         await controller.update_settings(values)
-        self.host.show_status("Nastavení session uloženo.", False)
+        self.host.show_status(tr("Nastavení session uloženo."), False)
 
     # ---------- příkazy ----------
 
     def _build_order_dialog(self) -> None:
         # Nový příkaz: strana, druh, cena, SL / TP, velikost (loty nebo riziko), expirace, štítek
         with ui.dialog() as self.order_dialog, ui.card().classes("tv-settings replay-order-dialog"):
-            self.order_title = settings_header(self.order_dialog, "Nový příkaz")
+            self.order_title = settings_header(self.order_dialog, tr("Nový příkaz"))
             self.order_side = ui.toggle({"buy": "Buy / Long", "sell": "Sell / Short"}, value="buy").classes(
                 "replay-side-toggle")
             self.order_type = ui.toggle(ORDER_TYPES, value="market").classes("replay-type-toggle")
             self.order_quote = ui.label("").classes("settings-note")
-            self.order_price = ui.number("Cena (limit / stop)").props("outlined dense").classes("w-full")
+            self.order_price = ui.number(tr("Cena (limit / stop)")).props("outlined dense").classes("w-full")
             with ui.row().classes("replay-qty-row w-full"):
-                self.order_qty_mode = ui.select(QTY_MODES, value="risk_pct", label="Velikost").props("outlined dense")
-                self.order_qty = ui.number("Hodnota", value=1, min=0).props("outlined dense")
+                self.order_qty_mode = ui.select(tr_options(QTY_MODES), value="risk_pct",
+                                                label=tr("Velikost")).props("outlined dense")
+                self.order_qty = ui.number(tr("Hodnota"), value=1, min=0).props("outlined dense")
             with ui.row().classes("replay-qty-row w-full"):
-                self.order_sl = ui.number("Stop loss (cena)").props("outlined dense")
-                self.order_tp = ui.number("Take profit (cena)").props("outlined dense")
+                self.order_sl = ui.number(tr("Stop loss (cena)")).props("outlined dense")
+                self.order_tp = ui.number(tr("Take profit (cena)")).props("outlined dense")
             self.order_summary = ui.label("").classes("replay-order-summary")
-            self.order_expires = ui.input("Expirace (prázdné = GTC)").props(
+            self.order_expires = ui.input(tr("Expirace (prázdné = GTC)")).props(
                 "outlined dense clearable type=datetime-local").classes("w-full")
             with ui.row().classes("replay-qty-row w-full"):
-                self.order_tag = ui.input("Štítek setupu").props("outlined dense")
-                self.order_note = ui.input("Poznámka").props("outlined dense")
+                self.order_tag = ui.input(tr("Štítek setupu")).props("outlined dense")
+                self.order_note = ui.input(tr("Poznámka")).props("outlined dense")
             with ui.row().classes("tv-settings-actions w-full"):
                 ui.space()
                 ui.button("Cancel", on_click=self.order_dialog.close, color=None).props("outline no-caps").classes(
                     "tv-btn-cancel")
-                self.order_submit = ui.button("Odeslat", on_click=self.submit_order, color=None).props(
+                self.order_submit = ui.button(tr("Odeslat"), on_click=self.submit_order, color=None).props(
                     "unelevated no-caps").classes("replay-buy")
         for field in (self.order_side, self.order_type, self.order_price, self.order_qty_mode, self.order_qty,
                       self.order_sl, self.order_tp):
@@ -1100,17 +1124,18 @@ class ReplayUI:
         self.order_quote.text = f"Bid {fmt_price(engine.bid())} · Ask {fmt_price(engine.ask())} · {controller.session['symbol']}"
         self.order_submit.text = f"{SIDES[values['side']]} {ORDER_TYPES[values['type']]}"
         self.order_submit.classes(replace="replay-buy" if values["side"] == "buy" else "replay-sell")
-        parts = [f"{values['lots']:g} lotu"]
+        parts = [tr("{lots} lotu").format(lots=f"{values['lots']:g}")]
         entry, sl, tp = values["entry"], values["sl"], values["tp"]
         units_value = values["lots"] * controller.settings["contract_size"] * controller.rate_now()
         if entry and sl:
             risk = abs(entry - sl) * units_value
             pct = risk / engine.balance * 100 if engine.balance > 0 else 0
-            parts.append(f"riziko {fmt_money(risk, controller.currency)} ({pct:.2f} %)")
+            parts.append(tr("riziko {amount} ({percent} %)").format(
+                amount=fmt_money(risk, controller.currency), percent=f"{pct:.2f}"))
             if tp:
                 parts.append(f"R:R 1 : {abs(tp - entry) / abs(entry - sl):.2f}")
         elif self.order_qty_mode.value != "lots":
-            parts.append("velikost podle rizika potřebuje stop loss")
+            parts.append(tr("velikost podle rizika potřebuje stop loss"))
         self.order_summary.text = " · ".join(parts)
 
     async def submit_order(self) -> None:
@@ -1119,25 +1144,30 @@ class ReplayUI:
         side, kind, entry = values["side"], values["type"], values["entry"]
         market = values["market"]
         if entry is None:
-            ui.notify("Zadejte cenu příkazu.", type="warning")
+            ui.notify(tr("Zadejte cenu příkazu."), type="warning")
             return
         if kind != "market":
             # Buy limit a sell stop leží pod trhem, buy stop a sell limit nad ním
             want_below = (side == "buy") == (kind == "limit")
             if (entry < market) != want_below:
-                ui.notify(f"{SIDES[side]} {kind} musí být {'pod' if want_below else 'nad'} aktuální cenou "
-                          f"({fmt_price(market)}).", type="warning")
+                # Celé věty pro obě polohy (pod / nad), aby šly přeložit jako celek
+                if want_below:
+                    message = tr("{order} musí být pod aktuální cenou ({price}).")
+                else:
+                    message = tr("{order} musí být nad aktuální cenou ({price}).")
+                ui.notify(message.format(order=f"{SIDES[side]} {kind}", price=fmt_price(market)), type="warning")
                 return
         error = level_error(side, entry, values["sl"], values["tp"])
         if error:
             ui.notify(error, type="warning")
             return
         if values["lots"] <= 0:
-            ui.notify("Velikost pozice vychází nulová (zkontrolujte velikost, stop loss a krok lotu).", type="warning")
+            ui.notify(tr("Velikost pozice vychází nulová (zkontrolujte velikost, stop loss a krok lotu)."),
+                      type="warning")
             return
         expires = parse_local_datetime(self.order_expires.value) if kind != "market" else None
         if expires is not None and expires <= self.controller.now_ms:
-            ui.notify("Expirace musí být po aktuálním čase replaye.", type="warning")
+            ui.notify(tr("Expirace musí být po aktuálním čase replaye."), type="warning")
             return
         self.order_dialog.close()
         command = {"op": "order", "side": side, "type": kind, "qty": values["lots"],
@@ -1167,7 +1197,7 @@ class ReplayUI:
         reference = engine.bid() if trade["long"] else engine.ask()
         error = level_error(trade["side"], reference, trade["entry_price"], None)
         if error:
-            ui.notify(f"Break-even teď nejde: {error}", type="warning")
+            ui.notify(tr("Break-even teď nejde: {reason}").format(reason=error), type="warning")
             return
         await self.controller.submit({"op": "modify", "id": trade["id"], "sl": trade["entry_price"]})
 
@@ -1196,7 +1226,7 @@ class ReplayUI:
             tp = price if field == "tp" else order.tp
             error = level_error(order.side, entry, sl, tp)
         else:
-            error = "Obchod nebo příkaz už neexistuje."
+            error = tr("Obchod nebo příkaz už neexistuje.")
         if error:
             ui.notify(error, type="warning")
         else:
@@ -1234,8 +1264,8 @@ class ReplayUI:
     def drawing_hint(self, pane, kind: str) -> str | None:
         """Nápověda po nakreslení kresby v replayi (pozice = obchod se zadá z menu), jinak None."""
         if kind in ("long", "short") and pane.replay_covers():
-            return ("Pozice nakreslena – upravte SL / TP a obchod zadejte pravým klikem → Zadat obchod… "
-                    "(nebo dvojklikem).")
+            return tr("Pozice nakreslena – upravte SL / TP a obchod zadejte pravým klikem → Zadat obchod… "
+                      "(nebo dvojklikem).")
         return None
 
     def show_trade(self, trade: dict) -> None:
@@ -1248,25 +1278,25 @@ class ReplayUI:
 
     def _build_edit_dialog(self) -> None:
         with ui.dialog() as self.edit_dialog, ui.card().classes("tv-settings replay-order-dialog"):
-            self.edit_title = settings_header(self.edit_dialog, "Obchod")
+            self.edit_title = settings_header(self.edit_dialog, tr("Obchod"))
             self.edit_info = ui.label("").classes("settings-note")
             with ui.row().classes("replay-qty-row w-full") as self.edit_levels:
-                self.edit_price = ui.number("Cena příkazu").props("outlined dense")
-                self.edit_qty = ui.number("Loty", min=0).props("outlined dense")
+                self.edit_price = ui.number(tr("Cena příkazu")).props("outlined dense")
+                self.edit_qty = ui.number(tr("Loty"), min=0).props("outlined dense")
             with ui.row().classes("replay-qty-row w-full") as self.edit_stops:
-                self.edit_sl = ui.number("Stop loss (prázdné = bez)").props("outlined dense")
-                self.edit_tp = ui.number("Take profit (prázdné = bez)").props("outlined dense")
+                self.edit_sl = ui.number(tr("Stop loss (prázdné = bez)")).props("outlined dense")
+                self.edit_tp = ui.number(tr("Take profit (prázdné = bez)")).props("outlined dense")
             with ui.row().classes("replay-qty-row w-full") as self.edit_partial:
-                self.edit_percent = ui.number("Zavřít % pozice", value=50, min=1, max=100).props("outlined dense")
-                ui.button("Zavřít část", color=None, on_click=self.close_part).props("flat no-caps")
+                self.edit_percent = ui.number(tr("Zavřít % pozice"), value=50, min=1, max=100).props("outlined dense")
+                ui.button(tr("Zavřít část"), color=None, on_click=self.close_part).props("flat no-caps")
                 ui.button("Break-even", color=None, on_click=self._edit_break_even).props("flat no-caps")
-            self.edit_cancel_order = ui.button("Zrušit příkaz", color=None, on_click=self._edit_cancel).props(
+            self.edit_cancel_order = ui.button(tr("Zrušit příkaz"), color=None, on_click=self._edit_cancel).props(
                 "flat no-caps").classes("wl-danger")
             with ui.row().classes("replay-qty-row w-full"):
-                self.edit_tag = ui.input("Štítek setupu").props("outlined dense")
-                self.edit_note = ui.input("Poznámka").props("outlined dense")
+                self.edit_tag = ui.input(tr("Štítek setupu")).props("outlined dense")
+                self.edit_note = ui.input(tr("Poznámka")).props("outlined dense")
             with ui.row().classes("tv-settings-actions w-full"):
-                settings_buttons(self.edit_dialog, self.submit_edit, "Uložit")
+                settings_buttons(self.edit_dialog, self.submit_edit, tr("Uložit"))
 
     def open_edit(self, mode: str, item: dict) -> None:
         """Dialog úpravy: "trade" (otevřený obchod), "closed" (poznámka) nebo "order" (čekající příkaz)."""
@@ -1282,16 +1312,18 @@ class ReplayUI:
         self.edit_tp.value = item.get("tp")
         currency = self.controller.currency
         if mode == "order":
-            self.edit_title.text = f"Příkaz #{item['id']}"
+            self.edit_title.text = tr("Příkaz #{id}").format(id=item["id"])
             self.edit_price.value = item["price"]
             self.edit_qty.value = item["qty"]
-            self.edit_info.text = f"{SIDES[item['side']]} {ORDER_TYPES[item['type']]} · zadán {display_time(item['created'])}"
+            self.edit_info.text = tr("{order} · zadán {time}").format(
+                order=f"{SIDES[item['side']]} {ORDER_TYPES[item['type']]}", time=display_time(item["created"])
+            )
         elif mode == "trade":
-            self.edit_title.text = f"Obchod #{item['id']}"
+            self.edit_title.text = tr("Obchod #{id}").format(id=item["id"])
             self.edit_info.text = (f"{'Long' if item['long'] else 'Short'} {item['open_qty']:g} @ "
                                    f"{fmt_price(item['entry_price'])} · P&L {fmt_money(item['floating'], currency, True)}")
         else:
-            self.edit_title.text = f"Obchod #{item['id']}"
+            self.edit_title.text = tr("Obchod #{id}").format(id=item["id"])
             self.edit_info.text = (f"{'Long' if item['long'] else 'Short'} {item['qty']:g} · "
                                    f"{fmt_price(item['entry_price'])} → {fmt_price(item['exit_price'])} · "
                                    f"P&L {fmt_money(item['realized'], currency, True)} · {fmt_r(item['r'])} · "

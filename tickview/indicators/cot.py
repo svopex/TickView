@@ -7,6 +7,10 @@ reportu platí v grafu od okamžiku zveřejnění (pátek 15:30 New York), aby
 replay ani signály neviděly report dřív, než skutečně vyšel; volitelně od data
 reportu (úterý) jako v TradingView. Výpočty (COT Index) běží nad celou týdenní
 řadou reportů, takže délka okna nezávisí na tom, kolik svíček má graf.
+
+Pevné texty pro uživatele (popisky, poznámky, řádky tabulky) jsou označené N_
+a překládají se při zobrazení; texty s hodnotami se překládají přes tr už při
+výpočtu (výpočet běží při každém vykreslení grafu).
 """
 
 import math
@@ -17,6 +21,7 @@ import numpy as np
 import pandas as pd
 
 from tickview.indicators.api import (
+    N_,
     TABLE_POSITIONS,
     TABLE_SIZES,
     Context,
@@ -26,6 +31,7 @@ from tickview.indicators.api import (
     Result,
     Signal,
     Table,
+    tr,
 )
 from tickview.logic.cot import GROUP_OPTIONS, GROUPS, CotMarket, cot_index, cot_key, resolve_market
 
@@ -37,66 +43,68 @@ CHANGE_ALPHA = 0.55
 BACKGROUND_ALPHA = 0.14
 
 # Skupiny parametrů v dialogu nastavení
-G_DATA = "Data COT"
-G_TABLE = "Tabulka"
+G_DATA = N_("Data COT")
+G_TABLE = N_("Tabulka")
 
 # Nadpis bloku poznámek tabulky
-GUIDE_TITLE = "Průvodce interpretací"
+GUIDE_TITLE = N_("Průvodce interpretací")
 # Průvodce interpretací čistých pozic jednotlivých skupin
 POSITION_GUIDES = {
     "commercials": [
-        "Commercials jsou typicky hedgeři (výrobci, zpracovatelé, banky).",
-        "Kladná net pozice: víc longů než shortů; záporná: víc shortů.",
-        "Obchodují proti trendu – kontrariánský indikátor.",
-        "Extrémy pozice často předcházejí obratu trhu.",
+        N_("Commercials jsou typicky hedgeři (výrobci, zpracovatelé, banky)."),
+        N_("Kladná net pozice: víc longů než shortů; záporná: víc shortů."),
+        N_("Obchodují proti trendu – kontrariánský indikátor."),
+        N_("Extrémy pozice často předcházejí obratu trhu."),
     ],
     "noncommercials": [
-        "Non-Commercials jsou velcí spekulanti a fondy.",
-        "Kladná net pozice: víc longů než shortů; záporná: víc shortů.",
-        "Obvykle následují trend – indikátor momenta.",
-        "Extrémní pozice ukazují přeplněný obchod a riziko obratu.",
+        N_("Non-Commercials jsou velcí spekulanti a fondy."),
+        N_("Kladná net pozice: víc longů než shortů; záporná: víc shortů."),
+        N_("Obvykle následují trend – indikátor momenta."),
+        N_("Extrémní pozice ukazují přeplněný obchod a riziko obratu."),
     ],
     "nonreportables": [
-        "Non-reportables jsou drobní obchodníci pod hranicí hlášení.",
-        "Kladná net pozice: víc longů než shortů; záporná: víc shortů.",
-        "Často obchodují proti institucím – kontrariánský indikátor.",
-        "Extrémy pozice bývají u vrcholů a propadů trhu.",
+        N_("Non-reportables jsou drobní obchodníci pod hranicí hlášení."),
+        N_("Kladná net pozice: víc longů než shortů; záporná: víc shortů."),
+        N_("Často obchodují proti institucím – kontrariánský indikátor."),
+        N_("Extrémy pozice bývají u vrcholů a propadů trhu."),
     ],
 }
-# Průvodce COT Indexem podle skupiny (vysoký / nízký index)
+# Průvodce COT Indexem podle skupiny (vysoký / nízký index); zástupné symboly
+# se doplní po překladu při výpočtu
 INDEX_GUIDES = {
-    "commercials": "Commercials > {upper}: potenciální býčí obrat; < {lower}: potenciální medvědí tlak.",
-    "noncommercials": "Non-Commercials > {upper}: přeplněné longy fondů; < {lower}: přeplněné shorty.",
-    "nonreportables": "Non-reportables > {upper}: drobní překoupení (medvědí); < {lower}: přeprodaní (býčí).",
+    "commercials": N_("Commercials > {upper}: potenciální býčí obrat; < {lower}: potenciální medvědí tlak."),
+    "noncommercials": N_("Non-Commercials > {upper}: přeplněné longy fondů; < {lower}: přeplněné shorty."),
+    "nonreportables": N_("Non-reportables > {upper}: drobní překoupení (medvědí); < {lower}: přeprodaní (býčí)."),
 }
 # Řádek poznámek u obráceného směru (pár USD/xxx proti futures na xxx/USD)
-INVERT_NOTE = "Pozice jsou obrácené: pár USD/xxx roste, když xxx slábne."
+INVERT_NOTE = N_("Pozice jsou obrácené: pár USD/xxx roste, když xxx slábne.")
 
 
 def _data_params() -> list[Param]:
     """Společné parametry dat COT (trh, obrácení směru, zarovnání v čase)."""
     return [
-        Param.string("market", "", "Kód trhu CFTC", group=G_DATA,
-                     tooltip="Prázdné = podle symbolu grafu (futures, forex, kovy, indexová CFD). "
-                             "Jinak šestimístný kód trhu z COT reportu, např. 209742 (Nasdaq mini)."),
-        Param.select("invert", "auto", "Obrátit směr", group=G_DATA,
-                     options=(("auto", "Automaticky (pár USD/xxx)"), ("off", "Ne"), ("on", "Ano")),
-                     tooltip="Pár USD/JPY se pohybuje opačně než futures na jen (6J) – pozice se obrátí."),
-        Param.select("align", "release", "Platnost reportu od", group=G_DATA,
-                     options=(("release", "Zveřejnění (pátek 15:30 NY)"), ("report", "Data reportu (úterý)")),
-                     tooltip="Report popisuje stav k úterku, ale vychází až v pátek. Zveřejnění = bez pohledu "
-                             "do budoucnosti (replay, signály); datum reportu = jako v TradingView."),
+        Param.string("market", "", N_("Kód trhu CFTC"), group=G_DATA,
+                     tooltip=N_("Prázdné = podle symbolu grafu (futures, forex, kovy, indexová CFD). "
+                                "Jinak šestimístný kód trhu z COT reportu, např. 209742 (Nasdaq mini).")),
+        Param.select("invert", "auto", N_("Obrátit směr"), group=G_DATA,
+                     options=(("auto", N_("Automaticky (pár USD/xxx)")), ("off", N_("Ne")), ("on", N_("Ano"))),
+                     tooltip=N_("Pár USD/JPY se pohybuje opačně než futures na jen (6J) – pozice se obrátí.")),
+        Param.select("align", "release", N_("Platnost reportu od"), group=G_DATA,
+                     options=(("release", N_("Zveřejnění (pátek 15:30 NY)")), ("report", N_("Data reportu (úterý)"))),
+                     tooltip=N_("Report popisuje stav k úterku, ale vychází až v pátek. Zveřejnění = bez pohledu "
+                                "do budoucnosti (replay, signály); datum reportu = jako v TradingView.")),
     ]
 
 
 def _table_params() -> list[Param]:
     """Společné parametry tabulky (pozice, průvodce interpretací, velikost textu)."""
     return [
-        Param.select("table_position", "top_left", "Pozice tabulky", options=TABLE_POSITIONS, group=G_TABLE,
-                     tooltip="Vlevo tabulka nezakrývá nejnovější data ani popisky čar u cenové osy."),
-        Param.select("guide", "always", "Průvodce interpretací", group=G_TABLE,
-                     options=(("always", "Vždy"), ("hover", "Po najetí myší na tabulku"), ("off", "Nezobrazovat"))),
-        Param.select("table_size", "small", "Velikost textu", options=TABLE_SIZES, group=G_TABLE),
+        Param.select("table_position", "top_left", N_("Pozice tabulky"), options=TABLE_POSITIONS, group=G_TABLE,
+                     tooltip=N_("Vlevo tabulka nezakrývá nejnovější data ani popisky čar u cenové osy.")),
+        Param.select("guide", "always", N_("Průvodce interpretací"), group=G_TABLE,
+                     options=(("always", N_("Vždy")), ("hover", N_("Po najetí myší na tabulku")),
+                              ("off", N_("Nezobrazovat")))),
+        Param.select("table_size", "small", N_("Velikost textu"), options=TABLE_SIZES, group=G_TABLE),
     ]
 
 
@@ -131,7 +139,8 @@ def _report_text(reports: pd.DataFrame, index: int) -> str:
     """Datum reportu a den zveřejnění do tabulky ("10. 11. 2026 (vyšel 13. 11.)")."""
     report = reports["report"].iloc[index]
     released = datetime.fromtimestamp(reports["release_ms"].iloc[index] / 1000, tz=timezone.utc).date()
-    return f"{_format_date(report)} (vyšel {released.day}. {released.month}.)"
+    return tr("{report} (vyšel {released})").format(report=_format_date(report),
+                                                    released=f"{released.day}. {released.month}.")
 
 
 class CotIndicator(Indicator):
@@ -220,18 +229,18 @@ class CotIndicator(Indicator):
     def status_rows(market: Optional[CotMarket], reports) -> Optional[list[tuple[str, str]]]:
         """Řádky tabulky, když data nejsou (symbol bez COT, načítání); None = data jsou."""
         if market is None:
-            return [("Trh", "symbol nemá COT"), ("Tip", "zadejte kód trhu CFTC")]
+            return [(N_("Trh"), N_("symbol nemá COT")), (N_("Tip"), N_("zadejte kód trhu CFTC"))]
         if reports is None:
-            return [("Trh", market.code), ("Data", "načítám COT report…")]
+            return [(N_("Trh"), market.code), ("Data", N_("načítám COT report…"))]
         if reports.empty:
-            return [("Trh", market.code), ("Data", "trh nemá data")]
+            return [(N_("Trh"), market.code), ("Data", N_("trh nemá data"))]
         return None
 
     @staticmethod
     def base_rows(ctx: Context, market: CotMarket, reports: pd.DataFrame) -> list[tuple[str, str]]:
         """Úvodní řádky tabulky: trh a symbol."""
         name = reports["market"].iloc[-1] or market.code
-        return [("Trh", f"{name} ({market.code})"), ("Symbol", ctx.symbol or "–")]
+        return [(N_("Trh"), f"{name} ({market.code})"), ("Symbol", ctx.symbol or "–")]
 
 
 class CotPositions(CotIndicator):
@@ -239,11 +248,11 @@ class CotPositions(CotIndicator):
 
     id = "cot_positions"
     title = "COT"
-    name = "COT – pozice skupiny"
-    description = ("Čistá pozice skupiny obchodníků z COT reportu CFTC (Commercials, Non-Commercials, "
-                   "Non-reportables) a její týdenní změna.")
+    name = N_("COT – pozice skupiny")
+    description = N_("Čistá pozice skupiny obchodníků z COT reportu CFTC (Commercials, Non-Commercials, "
+                     "Non-reportables) a její týdenní změna.")
     params = [
-        Param.select("group", "commercials", "Skupina", options=GROUP_OPTIONS),
+        Param.select("group", "commercials", N_("Skupina"), options=GROUP_OPTIONS),
         *_data_params(),
         *_table_params(),
     ]
@@ -266,7 +275,7 @@ class CotPositions(CotIndicator):
             rows = self.base_rows(ctx, market, reports) + self.value_rows(reports, int(idx[-1]), group, sign)
         lines = [
             Line("Net", net, color=color, type="step", options={"lineWidth": 2, "title": label}),
-            Line("Týdenní změna", change, color=_with_alpha(color, CHANGE_ALPHA), type="histogram"),
+            Line(N_("Týdenní změna"), change, color=_with_alpha(color, CHANGE_ALPHA), type="histogram"),
         ]
         return Result(lines=lines, levels=[0.0],
                       tables=self.table(params, ctx, f"COT {label}", rows, POSITION_GUIDES[group], color, sign))
@@ -275,7 +284,7 @@ class CotPositions(CotIndicator):
     def value_rows(reports: pd.DataFrame, index: int, group: str, sign: int) -> list[tuple[str, str]]:
         """Řádky hodnot reportu platného u poslední svíčky (obrácené pozice prohodí long a short)."""
         if index < 0:
-            return [("Report", "graf končí před prvním reportem")]
+            return [("Report", N_("graf končí před prvním reportem"))]
         row = reports.iloc[index]
         net = row[f"{group}_net"] * sign
         long, short = row[f"{group}_long"], row[f"{group}_short"]
@@ -283,8 +292,8 @@ class CotPositions(CotIndicator):
             long, short = short, long
         oi = row["oi"]
         return [
-            ("Čistá pozice", _format_number(net)),
-            ("Týdenní změna", _format_number(row[f"{group}_change"] * sign, signed=True)),
+            (N_("Čistá pozice"), _format_number(net)),
+            (N_("Týdenní změna"), _format_number(row[f"{group}_change"] * sign, signed=True)),
             ("Long / Short", f"{_format_number(long)} / {_format_number(short)}"),
             ("Net / open interest", f"{_format_decimal(net / oi * 100, signed=True)} %" if oi else "–"),
             ("Report", _report_text(reports, index)),
@@ -297,15 +306,15 @@ class CotIndex(CotIndicator):
     id = "cot_index"
     title = "COT Index"
     name = "COT Index"
-    description = ("Poloha čisté pozice skupiny v rozsahu posledních N týdnů (0–100) podle Larryho Williamse; "
-                   "extrémy nad a pod úrovněmi zvýrazní pozadí a dají signál.")
+    description = N_("Poloha čisté pozice skupiny v rozsahu posledních N týdnů (0–100) podle Larryho Williamse; "
+                     "extrémy nad a pod úrovněmi zvýrazní pozadí a dají signál.")
     params = [
-        Param.int("lookback", 52, "Lookback (týdny)", min=4, max=520),
-        Param.select("group1", "commercials", "Skupina 1 (signály)", options=GROUP_OPTIONS),
-        Param.select("group2", "nonreportables", "Skupina 2", options=(*GROUP_OPTIONS, ("none", "–"))),
-        Param.int("upper", 80, "Horní extrém", min=1, max=99),
-        Param.int("lower", 20, "Dolní extrém", min=1, max=99),
-        Param.bool("background", False, "Zvýraznit extrémy pozadím"),
+        Param.int("lookback", 52, N_("Lookback (týdny)"), min=4, max=520),
+        Param.select("group1", "commercials", N_("Skupina 1 (signály)"), options=GROUP_OPTIONS),
+        Param.select("group2", "nonreportables", N_("Skupina 2"), options=(*GROUP_OPTIONS, ("none", "–"))),
+        Param.int("upper", 80, N_("Horní extrém"), min=1, max=99),
+        Param.int("lower", 20, N_("Dolní extrém"), min=1, max=99),
+        Param.bool("background", False, N_("Zvýraznit extrémy pozadím")),
         *_data_params(),
         *_table_params(),
     ]
@@ -314,9 +323,9 @@ class CotIndex(CotIndicator):
 
     def validate(self, params: dict) -> None:
         if params["lower"] >= params["upper"]:
-            raise ValueError("Dolní extrém musí být menší než horní.")
+            raise ValueError(tr("Dolní extrém musí být menší než horní."))
         if params["group1"] == params["group2"]:
-            raise ValueError("Skupina 2 musí být jiná než skupina 1.")
+            raise ValueError(tr("Skupina 2 musí být jiná než skupina 1."))
 
     def groups(self, params: dict) -> list[str]:
         """Zobrazené skupiny (skupina 2 je volitelná)."""
@@ -327,8 +336,10 @@ class CotIndex(CotIndicator):
         upper, lower = params["upper"], params["lower"]
         market, reports, sign, idx, rows = self.prepare(df, params, ctx)
         values = {group: np.full(len(df), np.nan) for group in groups}
-        notes = [INDEX_GUIDES[group].format(upper=upper, lower=lower) for group in groups]
-        notes.append(f"Index = poloha čisté pozice v rozsahu posledních {params['lookback']} týdnů (0–100).")
+        # Poznámky s hodnotami: nejdřív překlad šablony, pak doplnění hodnot
+        notes = [tr(INDEX_GUIDES[group]).format(upper=upper, lower=lower) for group in groups]
+        notes.append(tr("Index = poloha čisté pozice v rozsahu posledních {weeks} týdnů (0–100).").format(
+            weeks=params["lookback"]))
         background = None
         signals: list[Signal] = []
         if idx is not None:
@@ -341,7 +352,8 @@ class CotIndex(CotIndicator):
                 background = self.extreme_background(values, groups, upper, lower)
             signals = self.signals(df, idx, weekly[groups[0]], groups[0], upper, lower)
             last = int(idx[-1])
-            rows = self.base_rows(ctx, market, reports) + [("Lookback", f"{params['lookback']} týdnů")]
+            weeks = tr("{weeks} týdnů").format(weeks=params["lookback"])
+            rows = self.base_rows(ctx, market, reports) + [("Lookback", weeks)]
             rows += [(GROUPS[group][0], _format_decimal(weekly[group][last] if last >= 0 else math.nan))
                      for group in groups]
             rows.append(("Report", _report_text(reports, last) if last >= 0 else "–"))

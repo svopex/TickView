@@ -8,40 +8,49 @@ grafu, indikátory). Modul obsahuje jen čisté funkce – ukládání řeší U
 
 import json
 
+from tickview.i18n import N_
 from tickview.indicators.compute import normalize_indicators
 from tickview.logic.styles import TIMEFRAMES, normalize_chart_type
 
 # Rozložení po řádcích nabídky podle počtu grafů: (počet, [(id, popis)]);
 # id je zároveň přípona CSS třídy layout-<id>
 LAYOUT_SECTIONS: list[tuple[int, list[tuple[str, str]]]] = [
-    (1, [("1", "1 graf")]),
-    (2, [("2v", "2 vedle sebe"), ("2h", "2 pod sebou")]),
+    (1, [("1", N_("1 graf"))]),
+    (2, [("2v", N_("2 vedle sebe")), ("2h", N_("2 pod sebou"))]),
     (
         3,
         [
-            ("3v", "3 vedle sebe"),
-            ("3h", "3 pod sebou"),
-            ("3l", "1 vlevo, 2 vpravo"),
-            ("3r", "2 vlevo, 1 vpravo"),
-            ("3t", "1 nahoře, 2 dole"),
-            ("3b", "2 nahoře, 1 dole"),
+            ("3v", N_("3 vedle sebe")),
+            ("3h", N_("3 pod sebou")),
+            ("3l", N_("1 vlevo, 2 vpravo")),
+            ("3r", N_("2 vlevo, 1 vpravo")),
+            ("3t", N_("1 nahoře, 2 dole")),
+            ("3b", N_("2 nahoře, 1 dole")),
         ],
     ),
     (
         4,
         [
             ("4", "2 × 2"),
-            ("4v", "4 vedle sebe"),
-            ("4h", "4 pod sebou"),
-            ("4l", "1 vlevo, 3 vpravo"),
-            ("4r", "3 vlevo, 1 vpravo"),
-            ("4t", "1 nahoře, 3 dole"),
-            ("4b", "3 nahoře, 1 dole"),
+            ("4v", N_("4 vedle sebe")),
+            ("4h", N_("4 pod sebou")),
+            ("4l", N_("1 vlevo, 3 vpravo")),
+            ("4r", N_("3 vlevo, 1 vpravo")),
+            ("4t", N_("1 nahoře, 3 dole")),
+            ("4b", N_("3 nahoře, 1 dole")),
         ],
     ),
-    (5, [("5t", "2 nahoře, 3 dole"), ("5b", "3 nahoře, 2 dole"), ("5l", "1 vlevo, 4 vpravo"), ("5v", "5 vedle sebe")]),
-    (6, [("6", "3 × 2"), ("6r", "2 × 3"), ("6v", "6 vedle sebe")]),
-    (7, [("7", "3 nahoře, 4 dole")]),
+    (
+        5,
+        [
+            ("5t", N_("2 nahoře, 3 dole")),
+            ("5b", N_("3 nahoře, 2 dole")),
+            ("5l", N_("1 vlevo, 4 vpravo")),
+            ("5v", N_("5 vedle sebe")),
+        ],
+    ),
+    (6, [("6", "3 × 2"), ("6r", "2 × 3"), ("6v", N_("6 vedle sebe"))]),
+    (7, [("7", N_("3 nahoře, 4 dole"))]),
     (8, [("8", "4 × 2"), ("8r", "2 × 4")]),
     (9, [("9", "3 × 3")]),
     (10, [("10", "5 × 2")]),
@@ -55,11 +64,11 @@ DEFAULT_LAYOUT = "1"
 
 # Volby synchronizace (jako „Sync in layout“ v TradingView) s popisky a nápovědou
 SYNC_OPTIONS: dict[str, tuple[str, str]] = {
-    "symbol": ("Symbol", "Změna symbolu v aktivním grafu se projeví ve všech grafech rozložení."),
-    "interval": ("Interval", "Změna timeframu v aktivním grafu se projeví ve všech grafech rozložení."),
-    "crosshair": ("Crosshair", "Crosshair se ukazuje ve stejném čase ve všech grafech."),
-    "time": ("Time", "Posun grafu v čase posune ostatní grafy na stejné místo (pravý okraj)."),
-    "date_range": ("Date range", "Ostatní grafy převezmou celý viditelný časový rozsah (posun i přiblížení)."),
+    "symbol": ("Symbol", N_("Změna symbolu v aktivním grafu se projeví ve všech grafech rozložení.")),
+    "interval": ("Interval", N_("Změna timeframu v aktivním grafu se projeví ve všech grafech rozložení.")),
+    "crosshair": ("Crosshair", N_("Crosshair se ukazuje ve stejném čase ve všech grafech.")),
+    "time": ("Time", N_("Posun grafu v čase posune ostatní grafy na stejné místo (pravý okraj).")),
+    "date_range": ("Date range", N_("Ostatní grafy převezmou celý viditelný časový rozsah (posun i přiblížení).")),
 }
 DEFAULT_SYNC: dict[str, bool] = {key: False for key in SYNC_OPTIONS}
 

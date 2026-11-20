@@ -18,30 +18,36 @@ from datetime import date, datetime, timedelta
 from datetime import time as dt_time
 from typing import Callable, Optional
 
+from tickview.i18n import N_, tr
 from tickview.logic.sessions import parse_hhmm
 from tickview.logic.styles import clean_name
 from tickview.providers.base import TIMEFRAME_MS, Candle
 
-# Druhy příkazů (vstup do obchodu) a jejich popisky v UI
+# Druhy příkazů (vstup do obchodu) a jejich popisky v UI; popisky označené N_ se
+# překládají až při zobrazení – tr(hodnota), Market / Limit / Stop / Buy / Sell zůstávají
 ORDER_TYPES = {"market": "Market", "limit": "Limit", "stop": "Stop"}
 # Strany příkazu: nákup otevírá long, prodej short
 SIDES = {"buy": "Buy", "sell": "Sell"}
 # Režimy zadání velikosti pozice: loty / kontrakty, % zůstatku účtu, částka rizika
-QTY_MODES = {"lots": "Loty / kontrakty", "risk_pct": "Riziko % účtu", "risk_amount": "Riziko částkou"}
+QTY_MODES = {
+    "lots": N_("Loty / kontrakty"),
+    "risk_pct": N_("Riziko % účtu"),
+    "risk_amount": N_("Riziko částkou"),
+}
 # Důvody uzavření (části) obchodu
-EXIT_REASONS = {"sl": "SL", "tp": "TP", "manual": "Ručně", "partial": "Částečně"}
+EXIT_REASONS = {"sl": "SL", "tp": "TP", "manual": N_("Ručně"), "partial": N_("Částečně")}
 # Chování kroku zpět v čase (Settings aplikace → Replay)
 REWIND_MODES = {
-    "delete": "Povolit – obchody po bodu návratu se smažou",
-    "confirm": "Povolit po potvrzení – zeptat se před smazáním obchodů",
-    "off": "Zakázat krok zpět",
+    "delete": N_("Povolit – obchody po bodu návratu se smažou"),
+    "confirm": N_("Povolit po potvrzení – zeptat se před smazáním obchodů"),
+    "off": N_("Zakázat krok zpět"),
 }
 DEFAULT_REWIND_MODE = "delete"
 # Rychlosti přehrávání (základních svíček za sekundu)
 SPEEDS = (1, 2, 5, 10, 25, 50, 100)
 DEFAULT_SPEED = 5
 # Krok tlačítka Step: jedna svíčka grafu aktivního grafu, nebo jedna základní svíčka
-STEP_UNITS = {"chart": "1 bar grafu", "base": "1 bar základu"}
+STEP_UNITS = {"chart": N_("1 bar grafu"), "base": N_("1 bar základu")}
 # Kandidáti základního timeframu od nejjemnějšího (automatický výběr podle dostupnosti dat)
 BASE_TIMEFRAME_CANDIDATES = ("1m", "5m", "15m", "1h", "1D")
 # Měny účtu nabízené v UI (převod P&L z měny instrumentu)
@@ -541,7 +547,11 @@ class ReplayEngine:
         self.revision += 1
         self.balance -= commission
         direction = "Long" if trade.long else "Short"
-        self.events.append(EngineEvent("fill", trade.id, f"#{trade.id} {direction} {order.qty:g} naplněn za {price:g}"))
+        # Text události se překládá hned (zobrazí se ve stavové liště při zpracování svíčky)
+        message = tr("#{id} {direction} {qty} naplněn za {price}").format(
+            id=trade.id, direction=direction, qty=f"{order.qty:g}", price=f"{price:g}"
+        )
+        self.events.append(EngineEvent("fill", trade.id, message))
         return trade
 
     def _close(self, trade: Trade, price: float, qty: float, time_ms: int, reason: str) -> None:
@@ -559,10 +569,11 @@ class ReplayEngine:
         self.revision += 1
         if trade.closed:
             self.open.pop(trade.id, None)
-            label = EXIT_REASONS.get(reason, reason)
-            self.events.append(
-                EngineEvent("exit", trade.id, f"#{trade.id} uzavřen ({label}) za {price:g}, P&L {trade.realized:+.2f}")
+            label = tr(EXIT_REASONS.get(reason, reason))
+            message = tr("#{id} uzavřen ({reason}) za {price}, P&L {pnl}").format(
+                id=trade.id, reason=label, price=f"{price:g}", pnl=f"{trade.realized:+.2f}"
             )
+            self.events.append(EngineEvent("exit", trade.id, message))
 
     def _check_exits(self, trade: Trade, candle: Candle, entry_bar: bool) -> None:
         """Zásah stopu / cíle obchodu ve svíčce (konzervativně stop před cílem).
@@ -599,7 +610,7 @@ class ReplayEngine:
                 order.status = "expired"
                 del self.pending[order.id]
                 self.revision += 1
-                self.events.append(EngineEvent("expired", order.id, f"Příkaz #{order.id} expiroval"))
+                self.events.append(EngineEvent("expired", order.id, tr("Příkaz #{id} expiroval").format(id=order.id)))
                 continue
             price = self._trigger(order.side, order.type, order.price, candle)
             if price is not None:
@@ -657,11 +668,11 @@ class ReplayEngine:
         kind = command.get("type")
         qty = round_to_step(non_negative(command.get("qty"), 0.0), self.settings["lot_step"])
         if side not in SIDES or kind not in ORDER_TYPES or qty <= 0:
-            self.events.append(EngineEvent("rejected", 0, "Neplatný příkaz (strana, druh nebo velikost)"))
+            self.events.append(EngineEvent("rejected", 0, tr("Neplatný příkaz (strana, druh nebo velikost)")))
             return
         price = self._optional_level(command.get("price"))
         if kind != "market" and price is None:
-            self.events.append(EngineEvent("rejected", 0, "Limit / stop příkaz potřebuje cenu"))
+            self.events.append(EngineEvent("rejected", 0, tr("Limit / stop příkaz potřebuje cenu")))
             return
         expires = command.get("expires")
         order = Order(
@@ -915,14 +926,17 @@ def trades_csv(trades: list[Trade], annotations: dict, currency: str, format_tim
         currency: měna účtu (záhlaví sloupce P&L).
         format_time: převod času (ms) na text.
     """
+    # Záhlaví sloupců v jazyce rozhraní (soubor je určený uživateli, ne pro zpětný import)
     header = [
-        "id", "strana", "druh vstupu", "loty", "vstup čas", "vstup cena", "výstup čas", "výstup cena",
-        "důvod", "SL", "TP", f"P&L {currency}", "R", "MAE", "MFE", "komise", "odhad", "štítek", "poznámka",
+        "id", tr("strana"), tr("druh vstupu"), tr("loty"), tr("vstup čas"), tr("vstup cena"), tr("výstup čas"),
+        tr("výstup cena"), tr("důvod"), "SL", "TP", f"P&L {currency}", "R", "MAE", "MFE", tr("komise"),
+        tr("odhad"), tr("štítek"), tr("poznámka"),
     ]
+    estimate_mark = tr("ano")
     rows = [";".join(header)]
     for trade in sorted(trades, key=lambda item: item.id):
         note = annotations.get(str(trade.id)) or {}
-        reasons = ",".join(EXIT_REASONS.get(item.reason, item.reason) for item in trade.exits)
+        reasons = ",".join(tr(EXIT_REASONS.get(item.reason, item.reason)) for item in trade.exits)
         values = [
             trade.id, "long" if trade.long else "short", trade.entry_type, f"{trade.qty:g}",
             format_time(trade.entry_time), f"{trade.entry_price:g}",
@@ -931,7 +945,7 @@ def trades_csv(trades: list[Trade], annotations: dict, currency: str, format_tim
             reasons, "" if trade.initial_sl is None else f"{trade.initial_sl:g}",
             "" if trade.tp is None else f"{trade.tp:g}", f"{trade.realized:.2f}",
             "" if trade.r_multiple is None else f"{trade.r_multiple:.2f}",
-            f"{trade.mae:g}", f"{trade.mfe:g}", f"{trade.commissions:.2f}", "ano" if trade.ambiguous else "",
+            f"{trade.mae:g}", f"{trade.mfe:g}", f"{trade.commissions:.2f}", estimate_mark if trade.ambiguous else "",
             note.get("tag", ""), note.get("note", ""),
         ]
         # Středník a nový řádek v textu by rozbily CSV – nahradíme je

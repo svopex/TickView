@@ -14,9 +14,10 @@ bez I/O; stahování dat a odesílání řeší tickview/services/scanner.py.
 import json
 from typing import Optional
 
+from tickview.i18n import N_, plural, tr
 from tickview.indicators.api import SCANNER_SYMBOLS, split_symbol
 from tickview.indicators.registry import get_indicator
-from tickview.logic.styles import normalize_indicator_style, plural, timeframe_visible
+from tickview.logic.styles import normalize_indicator_style, timeframe_visible
 
 
 def parse_symbol(text: str, default_source: str) -> Optional[tuple[str, str]]:
@@ -201,11 +202,11 @@ def overview_payload(job: dict, results: Optional[dict], progress: Optional[tupl
     note = ""
     rows: list[dict] = []
     if not results or not results["scanned_at"]:
-        note = f"počítám… {progress[0]}/{progress[1]}" if progress else "počítám…"
+        note = tr("počítám… {done}/{total}").format(done=progress[0], total=progress[1]) if progress else tr("počítám…")
     else:
         rows = [
             {"symbol": row_label(row, config["strip_prefix"]),
-             "text": "chyba" if row.get("error") else status_text(row) or "—",
+             "text": tr("chyba") if row.get("error") else status_text(row) or "—",
              "kind": status_kind(row)}
             for row in visible_rows(results["rows"], config["only_hits"])
         ]
@@ -213,13 +214,13 @@ def overview_payload(job: dict, results: Optional[dict], progress: Optional[tupl
         # jednoho řádku, aby nezahltily tabulku
         errors = sum(1 for row in results["rows"] if row.get("error"))
         if config["only_hits"] and errors:
-            rows.append({"symbol": f"{plural(errors, 'symbol', 'symboly', 'symbolů')} bez dat",
-                         "text": "chyba", "kind": "error"})
+            symbols = plural(errors, N_("symbol"), N_("symboly"), N_("symbolů"))
+            rows.append({"symbol": tr("{symbols} bez dat").format(symbols=symbols), "text": tr("chyba"), "kind": "error"})
         if not rows:
-            note = "žádný signál"
+            note = tr("žádný signál")
     return {
-        "title": f"{job['title']} ({config['timeframe']})",
-        "header": "Signál (svíčka)",
+        "title": f"{tr(job['title'])} ({config['timeframe']})",
+        "header": tr("Signál (svíčka)"),
         "rows": rows,
         "note": note,
         "position": config["position"],
@@ -256,8 +257,10 @@ def alert_message(title: str, timeframe: str, minutes: int, hits: list[tuple[str
     prahem a dopočet by ukazoval o minutu méně.
     """
     listing = ", ".join(f"{symbol} {direction}" for symbol, direction in hits)
-    markets = plural(len(hits), "trh", "trhy", "trhů")
-    return f"{title} {timeframe} | {minutes} min do zavření svíčky | {markets}: {listing}"
+    markets = plural(len(hits), N_("trh"), N_("trhy"), N_("trhů"))
+    return tr("{title} {timeframe} | {minutes} min do zavření svíčky | {markets}: {listing}").format(
+        title=tr(title), timeframe=timeframe, minutes=minutes, markets=markets, listing=listing,
+    )
 
 
 class CloseAlertWindow:

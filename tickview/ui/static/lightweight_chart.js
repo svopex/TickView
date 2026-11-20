@@ -314,6 +314,11 @@ window.TickViewChart = (function () {
     offset: { timeZoneName: 'shortOffset' },
   };
 
+  // Jazyk názvů dnů a měsíců podle jazyka stránky (window.TV_LANG z js_bootstrap);
+  // česky „po 17. lis“, anglicky bez tečky za dnem „Mon 17 Nov“ jako v TradingView
+  const DATE_LOCALE = window.TV_LANG === 'en' ? 'en-US' : 'cs-CZ';
+  const DAY_SUFFIX = window.TV_LANG === 'en' ? '' : '.';
+
   // Cache formátovačů Intl podle pásma a pojmenovaných voleb (vytváření je drahé)
   const dateFormatters = new Map();
 
@@ -323,9 +328,9 @@ window.TickViewChart = (function () {
     if (!dateFormatters.has(key)) {
       let formatter;
       try {
-        formatter = new Intl.DateTimeFormat('cs-CZ', Object.assign({ timeZone: timeZone }, DATE_OPTIONS[name]));
+        formatter = new Intl.DateTimeFormat(DATE_LOCALE, Object.assign({ timeZone: timeZone }, DATE_OPTIONS[name]));
       } catch (err) {
-        formatter = new Intl.DateTimeFormat('cs-CZ', Object.assign({ timeZone: 'UTC' }, DATE_OPTIONS[name]));
+        formatter = new Intl.DateTimeFormat(DATE_LOCALE, Object.assign({ timeZone: 'UTC' }, DATE_OPTIONS[name]));
       }
       dateFormatters.set(key, formatter);
     }
@@ -344,7 +349,7 @@ window.TickViewChart = (function () {
   // Popisek crosshairu na časové ose: „po 17. lis '26 04:15“ (denní bez času)
   function formatCrosshairTime(timeZone, time, daily) {
     const p = dateParts(timeZone, time, 'crosshair');
-    const date = p.weekday + ' ' + p.day + '. ' + p.month + " '" + p.year;
+    const date = p.weekday + ' ' + p.day + DAY_SUFFIX + ' ' + p.month + " '" + p.year;
     return daily ? date : date + '  ' + p.hour + ':' + p.minute;
   }
 
@@ -353,7 +358,7 @@ window.TickViewChart = (function () {
     const TickMarkType = LightweightCharts.TickMarkType || {};
     if (type === TickMarkType.Year) return dateParts(timeZone, time, 'year').year;
     if (type === TickMarkType.Month) return dateParts(timeZone, time, 'month').month;
-    if (type === TickMarkType.DayOfMonth) return dateParts(timeZone, time, 'day').day + '.';
+    if (type === TickMarkType.DayOfMonth) return dateParts(timeZone, time, 'day').day + DAY_SUFFIX;
     const withSeconds = type === TickMarkType.TimeWithSeconds;
     const p = dateParts(timeZone, time, withSeconds ? 'seconds' : 'time');
     return p.hour + ':' + p.minute + (withSeconds ? ':' + p.second : '');
@@ -437,10 +442,10 @@ window.TickViewChart = (function () {
 
   // Popisky stavu dat v nadpisu (tečka za názvem, jako v TradingView)
   const STATUS_TITLES = {
-    live: 'Živá data',
-    delayed: 'Zpožděná data / polling',
-    none: 'Bez živých dat',
-    replay: 'Replay (minulost)',
+    live: tvTr('Živá data'),
+    delayed: tvTr('Zpožděná data / polling'),
+    none: tvTr('Bez živých dat'),
+    replay: tvTr('Replay (minulost)'),
   };
 
   // Sestaví kostru legendy: nadpis tickeru + OHLC + změna, řádek objemu a
@@ -474,7 +479,7 @@ window.TickViewChart = (function () {
     els.volumeRow = volume;
     // Ovládání objemu jako u indikátoru: skrýt (vypnout) a Settings grafu
     const volumeActions = el('span', 'legend-ind-actions');
-    volumeActions.appendChild(legendButton(s, 'visibility_off', 'Skrýt objem', { type: 'volume', visible: false }));
+    volumeActions.appendChild(legendButton(s, 'visibility_off', tvTr('Skrýt objem'), { type: 'volume', visible: false }));
     volumeActions.appendChild(legendButton(s, 'settings', 'Settings…', { type: 'chart_settings' }));
     volume.appendChild(volumeActions);
     bindLegendRow(
@@ -586,9 +591,9 @@ window.TickViewChart = (function () {
     }
     const actions = el('span', 'legend-ind-actions');
     const buttons = [
-      ['toggle', group.visible ? 'visibility' : 'visibility_off', group.visible ? 'Skrýt' : 'Zobrazit'],
+      ['toggle', group.visible ? 'visibility' : 'visibility_off', group.visible ? tvTr('Skrýt') : tvTr('Zobrazit')],
       ['settings', 'settings', 'Settings…'],
-      ['remove', 'close', 'Odebrat'],
+      ['remove', 'close', tvTr('Odebrat')],
     ];
     for (const [action, icon, title] of buttons) {
       actions.appendChild(legendButton(s, icon, title, { type: 'indicator', action: action, id: group.id }));
@@ -1390,13 +1395,13 @@ window.TickViewChart = (function () {
     const items = [];
     // Long / Short position v replayi: zadání obchodu z úrovní kresby
     if (s.replay && isPosition(drawing) && drawing.id) {
-      items.push(['Zadat obchod…', () => requestPositionOrder(s, drawing), 'shopping_cart']);
+      items.push([tvTr('Zadat obchod…'), () => requestPositionOrder(s, drawing), 'shopping_cart']);
     }
     items.push(['Settings…', () => requestDrawingSettings(s, drawing), 'settings']);
     if (alertLineKinds.includes(drawing.kind) && drawing.id) {
-      items.push(['Přidat alert…', () => s.finishedQueue.push({ type: 'alert_request', drawingId: drawing.id, kind: drawing.kind }), 'alarm_add']);
+      items.push([tvTr('Přidat alert…'), () => s.finishedQueue.push({ type: 'alert_request', drawingId: drawing.id, kind: drawing.kind }), 'alarm_add']);
     }
-    items.push(['Smazat objekt', () => { deleteSelected(s); redrawOverlay(s); }, 'delete', 'danger']);
+    items.push([tvTr('Smazat objekt'), () => { deleteSelected(s); redrawOverlay(s); }, 'delete', 'danger']);
     return items;
   }
 
@@ -1415,8 +1420,8 @@ window.TickViewChart = (function () {
   function alertMenuItems(s, line) {
     const push = (action) => () => s.finishedQueue.push({ type: 'alert_action', action: action, id: line.id });
     return [
-      ['Upravit alert…', push('edit'), 'edit'],
-      ['Smazat alert', push('delete'), 'delete', 'danger'],
+      [tvTr('Upravit alert…'), push('edit'), 'edit'],
+      [tvTr('Smazat alert'), push('delete'), 'delete', 'danger'],
     ];
   }
 
@@ -1428,9 +1433,9 @@ window.TickViewChart = (function () {
     const push = (action) => () => s.finishedQueue.push({ type: 'indicator', action: action, id: groupId });
     const items = [['Settings…', push('settings'), 'settings']];
     // Indikátor se signály (has_signals) nabízí alert na signál
-    if (group && group.signals) items.push(['Přidat alert…', push('alert'), 'alarm_add']);
-    items.push([visible ? 'Skrýt' : 'Zobrazit', push('toggle'), visible ? 'visibility_off' : 'visibility']);
-    items.push(['Odebrat indikátor', push('remove'), 'delete', 'danger']);
+    if (group && group.signals) items.push([tvTr('Přidat alert…'), push('alert'), 'alarm_add']);
+    items.push([visible ? tvTr('Skrýt') : tvTr('Zobrazit'), push('toggle'), visible ? 'visibility_off' : 'visibility']);
+    items.push([tvTr('Odebrat indikátor'), push('remove'), 'delete', 'danger']);
     return items;
   }
 
@@ -1439,7 +1444,7 @@ window.TickViewChart = (function () {
     const items = [];
     if (price !== null && price !== undefined && isFinite(price) && s.candles.length) {
       const rounded = roundPrice(s, Number(price));
-      items.push(['Přidat alert na ' + formatInstrumentPrice(s, rounded), () => s.finishedQueue.push({ type: 'alert_request', price: rounded }), 'alarm_add']);
+      items.push([tvTr('Přidat alert na {price}').replace('{price}', formatInstrumentPrice(s, rounded)), () => s.finishedQueue.push({ type: 'alert_request', price: rounded }), 'alarm_add']);
     }
     items.push(['Settings…', () => s.finishedQueue.push({ type: 'chart_settings' }), 'settings']);
     return items;
@@ -1685,7 +1690,7 @@ window.TickViewChart = (function () {
       const on = fav.modes.includes(mode);
       star.innerHTML = toolIcons[on ? 'star' : 'star_border'] || '';
       star.classList.toggle('on', on);
-      star.title = on ? 'Odebrat z oblíbených' : 'Přidat do oblíbených';
+      star.title = on ? tvTr('Odebrat z oblíbených') : tvTr('Přidat do oblíbených');
     };
     paint();
     star.addEventListener('click', (event) => {
@@ -1699,7 +1704,7 @@ window.TickViewChart = (function () {
   // Položka kontextového menu pro přidání / odebrání nástroje z oblíbených
   function favoriteMenuItem(mode) {
     const on = fav.modes.includes(mode);
-    return [on ? 'Odebrat z oblíbených' : 'Přidat do oblíbených', () => toggleFavorite(mode), on ? 'star' : 'star_border'];
+    return [on ? tvTr('Odebrat z oblíbených') : tvTr('Přidat do oblíbených'), () => toggleFavorite(mode), on ? 'star' : 'star_border'];
   }
 
   // Přepne nástroj v oblíbených; seznam se drží v pořadí lišty a ukládá v Pythonu
@@ -1724,7 +1729,7 @@ window.TickViewChart = (function () {
     if (!panel) {
       panel = el('div', 'fav-toolbar');
       const handle = el('span', 'material-icons fav-handle', 'drag_indicator');
-      handle.title = 'Přesunout panel';
+      handle.title = tvTr('Přesunout panel');
       panel.appendChild(handle);
       attachFavoritesDrag(panel, handle);
       // Panel je v body s position: fixed – lze ho přesunout kamkoli v okně
@@ -1851,9 +1856,9 @@ window.TickViewChart = (function () {
 
   // Režimy magnetu pro nabídku (id, ikona, popis)
   const MAGNET_MODES = [
-    ['weak', 'magnet', 'Slabý magnet – přichytí bod k O/H/L/C, když je kurzor blízko'],
-    ['strong', 'magnet', 'Silný magnet – bod vždy na nejbližší O/H/L/C svíčky'],
-    ['off', 'magnet_off', 'Vypnout magnet'],
+    ['weak', 'magnet', tvTr('Slabý magnet – přichytí bod k O/H/L/C, když je kurzor blízko')],
+    ['strong', 'magnet', tvTr('Silný magnet – bod vždy na nejbližší O/H/L/C svíčky')],
+    ['off', 'magnet_off', tvTr('Vypnout magnet')],
   ];
 
   // Flyout s režimy magnetu; výběr jde přes frontu do Pythonu (uloží se)
@@ -1863,7 +1868,7 @@ window.TickViewChart = (function () {
     for (const [mode, icon, label] of MAGNET_MODES) {
       flyout.appendChild(flyoutItem(icon, label, s.overlay.magnet === mode, { type: 'action', action: 'magnet', mode: mode }, s));
     }
-    const hint = el('div', 'tool-flyout-hint', 'Podržením Ctrl/⌘ při kreslení magnet dočasně přepnete.');
+    const hint = el('div', 'tool-flyout-hint', tvTr('Podržením Ctrl/⌘ při kreslení magnet dočasně přepnete.'));
     flyout.appendChild(hint);
     placeFlyout(flyout, anchorButton);
   }
@@ -4465,7 +4470,7 @@ window.TickViewChart = (function () {
     ctx.moveTo(x, 0);
     ctx.lineTo(x, paneHeight);
     ctx.stroke();
-    drawLabelBox(ctx, ['Start replaye'], x, 24, false, REPLAY_BUY, POSITION_LABEL, paneWidth, paneHeight);
+    drawLabelBox(ctx, [tvTr('Start replaye')], x, 24, false, REPLAY_BUY, POSITION_LABEL, paneWidth, paneHeight);
     ctx.restore();
   }
 

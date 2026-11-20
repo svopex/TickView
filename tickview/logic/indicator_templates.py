@@ -11,6 +11,7 @@ jen čisté funkce.
 import json
 import uuid
 
+from tickview.i18n import tr
 from tickview.indicators.compute import indicator_title, normalize_indicators
 from tickview.logic.styles import TIMEFRAMES, clean_name
 
@@ -82,7 +83,7 @@ def save_indicator_template(
     """
     clean = clean_name(name)
     if not clean:
-        raise ValueError("Neplatný název šablony.")
+        raise ValueError(tr("Neplatný název šablony."))
     previous = find_indicator_template(templates, clean)
     template = normalize_indicator_template(
         {
@@ -128,7 +129,7 @@ def template_indicators(template: dict) -> list[dict]:
 
 def describe_indicator_template(template: dict) -> str:
     """Popis šablony pro nabídku: názvy indikátorů, případně symbol a timeframe."""
-    parts = [", ".join(indicator_title(spec) for spec in template["indicators"]) or "Bez indikátorů"]
+    parts = [", ".join(indicator_title(spec) for spec in template["indicators"]) or tr("Bez indikátorů")]
     if template.get("symbol"):
         parts.append(template["symbol"].partition(":")[2])
     if template.get("timeframe"):

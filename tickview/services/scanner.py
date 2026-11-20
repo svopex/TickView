@@ -18,6 +18,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
+from tickview.i18n import tr
 from tickview.indicators.compute import history_bars, run_indicator
 from tickview.indicators.registry import get_indicator
 from tickview.logic.cache import KlineCache, fetch_recent
@@ -182,7 +183,7 @@ class ScannerService(Listeners):
 
         async def scan_one(source: str, symbol: str) -> dict:
             if indicator is None:
-                return error_row(source, symbol, f"Indikátor {job['kind']} se nenačetl.")
+                return error_row(source, symbol, tr("Indikátor {kind} se nenačetl.").format(kind=job["kind"]))
             async with semaphore:
                 row = await self._scan_symbol(indicator, job, needed, source, symbol)
             if state:
@@ -216,14 +217,16 @@ class ScannerService(Listeners):
         try:
             provider = self._provider_lookup(source)
         except KeyError:
-            return error_row(source, symbol, f"Neznámý zdroj {source}.")
+            return error_row(source, symbol, tr("Neznámý zdroj {source}.").format(source=source))
         if timeframe not in provider.timeframes:
-            return error_row(source, symbol, f"Zdroj {provider.name} nemá timeframe {timeframe}.")
+            return error_row(source, symbol, tr("Zdroj {source} nemá timeframe {timeframe}.").format(
+                source=provider.name, timeframe=timeframe,
+            ))
         try:
             candles = await fetch_recent(provider, self._cache, symbol, timeframe, utc_now_ms(),
                                          min_count=needed, window_bars=needed)
             if not candles:
-                return error_row(source, symbol, "Žádná data.")
+                return error_row(source, symbol, tr("Žádná data."))
             # Kontext s externími daty indikátoru (COT report)
             ctx = await datafeeds.context_with_data(provider, symbol, timeframe, candles, [(indicator, params)],
                                                     signal_bars=config["bars"])
@@ -273,5 +276,5 @@ class ScannerService(Listeners):
         # Souhrnná zpráva přes každý aktivní alert scanneru (každý má vlastní notifikace)
         message = alert_message(job["title"], config["timeframe"], due, hits)
         for alert_spec in channels:
-            await self._alert_engine.fire_message(alert_spec, message, symbol=f"Scanner {job['title']}",
+            await self._alert_engine.fire_message(alert_spec, message, symbol=f"Scanner {tr(job['title'])}",
                                                   timeframe=config["timeframe"])

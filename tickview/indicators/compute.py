@@ -16,6 +16,7 @@ from typing import Optional
 
 import pandas as pd
 
+from tickview.i18n import tr
 from tickview.indicators.api import (
     DOWN_COLOR,
     LINE_DASHED,
@@ -111,7 +112,7 @@ def indicator_title(spec: dict, style: Optional[dict] = None) -> str:
     """
     indicator = get_indicator(spec["kind"])
     if indicator is None:
-        return f"{spec['kind']} (nenačten)"
+        return tr("{kind} (nenačten)").format(kind=spec["kind"])
     style = style or normalize_indicator_style(spec.get("style"))
     return indicator.legend_title(spec["params"], with_inputs=style["inputs_in_status"])
 
@@ -124,11 +125,11 @@ def normalize_params(kind: str, values: dict) -> dict:
         values: hodnoty parametrů {název: hodnota nebo None}.
 
     Vrací normalizované parametry; neznámý indikátor nebo neplatná hodnota
-    vyhodí ValueError s českou zprávou pro uživatele.
+    vyhodí ValueError se zprávou pro uživatele v jazyce rozhraní.
     """
     indicator = get_indicator(kind)
     if indicator is None:
-        raise ValueError(f"Neznámý indikátor: {kind}")
+        raise ValueError(tr("Neznámý indikátor: {kind}").format(kind=kind))
     return indicator.normalize_params(values)
 
 
@@ -383,8 +384,9 @@ def _series_payload(line: Line, plot: dict, instance_color: str, times, labels_o
         labels_on_scale: popisek poslední hodnoty na cenové ose (Labels on price scale).
 
     Vrací {"name", "color", "type", "series", "visible", "options", "data"};
-    series je druh série Lightweight Charts ("line", "area", "histogram"),
-    options její volby pro daný druh vykreslení.
+    name je přeložený název do legendy (klíčem vzhledu v záložce Style zůstává
+    původní line.name), series je druh série Lightweight Charts ("line", "area",
+    "histogram"), options její volby pro daný druh vykreslení.
     """
     plot_type = plot["type"]
     series_kind = PLOT_SERIES.get(plot_type, "line")
@@ -420,7 +422,7 @@ def _series_payload(line: Line, plot: dict, instance_color: str, times, labels_o
             pointMarkersRadius=plot["width"] + (0.5 if plot_type == "circles" else 1.5),
         )
     return {
-        "name": line.name,
+        "name": tr(line.name),
         "color": color,
         "type": plot_type,
         "series": series_kind,
@@ -459,13 +461,18 @@ def sample_lines(indicator: Indicator, params: dict) -> list[Line]:
 
 
 def _table_payload(table: Table, group: str, pane_id: Optional[str]) -> dict:
-    """Tabulka indikátoru pro JS graf (pane None = hlavní graf)."""
+    """Tabulka indikátoru pro JS graf (pane None = hlavní graf).
+
+    Texty tabulky (nadpis, řádky, poznámky) se překládají až zde: pevné texty
+    označené v indikátoru N_ se přeloží, ostatní (čísla, názvy trhů, texty
+    sestavené už přeložené přes tr) projdou beze změny.
+    """
     return {
-        "group": group, "pane": pane_id, "title": table.title,
-        "rows": [[str(label), str(value)] for label, value in table.rows],
+        "group": group, "pane": pane_id, "title": tr(table.title),
+        "rows": [[tr(str(label)), tr(str(value))] for label, value in table.rows],
         "position": table.position, "size": table.size, "color": normalize_color(table.color),
-        "notes": [str(note) for note in table.notes] if table.notes_mode != "off" else [],
-        "notesTitle": table.notes_title, "notesMode": table.notes_mode,
+        "notes": [tr(str(note)) for note in table.notes] if table.notes_mode != "off" else [],
+        "notesTitle": tr(table.notes_title), "notesMode": table.notes_mode,
     }
 
 
@@ -524,7 +531,7 @@ def compute_indicators(indicators: list[dict], candles: list[Candle], ctx: Optio
             # Chyba výpočtu jedné instance (degenerovaná data, chyba v indikátoru)
             # nesmí shodit načtení grafu – instance zůstane v legendě bez čar
             logger.exception("Výpočet indikátoru %s selhal", spec["kind"])
-            group["title"] = f"{title} (chyba výpočtu)"
+            group["title"] = tr("{title} (chyba výpočtu)").format(title=title)
             continue
         # Vzhled každého výstupu: výchozí podle deklarace + změny ze záložky Style
         payloads = [

@@ -3,13 +3,15 @@
 Rozložení jako záložka Inputs v TradingView: nadpis skupiny velkými písmeny,
 v každém řádku popisek vlevo a pole vpravo; přepínač zabírá celý řádek
 (zaškrtávátko a popisek). Každé pole odpovídá typu parametru a nese tooltip
-z deklarace.
+z deklarace. Popisky, skupiny, nápovědy a volby výběrů (v deklaraci označené
+N_) se překládají až zde při vykreslení; uložené klíče a hodnoty zůstávají.
 """
 
 from collections.abc import Callable
 
 from nicegui import ui
 
+from tickview.i18n import tr, tr_options
 from tickview.indicators.api import Indicator, Param
 from tickview.ui.color_button import ColorButton
 
@@ -43,23 +45,23 @@ class ParamForm:
         self.container.clear()
         with self.container:
             if indicator is None:
-                ui.label("Indikátor se nenačetl – nastavení nelze upravit.").classes("settings-note")
+                ui.label(tr("Indikátor se nenačetl – nastavení nelze upravit.")).classes("settings-note")
                 return
             if not indicator.params:
-                ui.label("Indikátor nemá nastavitelné parametry.").classes("settings-note")
+                ui.label(tr("Indikátor nemá nastavitelné parametry.")).classes("settings-note")
                 return
             group = None
             for param in indicator.params:
                 # Nadpis sekce při změně skupiny (parametry bez skupiny bez nadpisu)
                 if param.group and param.group != group:
-                    ui.label(param.group).classes("tv-settings-section param-group")
+                    ui.label(tr(param.group)).classes("tv-settings-section param-group")
                 group = param.group
                 value = params.get(param.name, param.default)
                 self.fields[param.name] = self._field(param, value)
 
     def _field(self, param: Param, value):
         """Jeden řádek formuláře podle typu parametru; tooltip z deklarace."""
-        label = param.label or param.name
+        label = tr(param.label or param.name)
         if param.kind == "bool":
             # Přepínač: zaškrtávátko s popiskem přes celý řádek
             field = ui.checkbox(label, value=bool(value)).classes("param-check")
@@ -71,7 +73,7 @@ class ParamForm:
             hinted = [text, field]
         if param.tooltip:
             for element in hinted:
-                element.tooltip(param.tooltip).props("max-width=420px")
+                element.tooltip(tr(param.tooltip)).props("max-width=420px")
         return field
 
     def _control(self, param: Param, value, label: str):
@@ -83,18 +85,19 @@ class ParamForm:
         if param.kind == "color":
             return ColorButton(value or param.default, title=label)
         if param.kind in ("select", "timeframe"):
-            options = {option_value: option_label for option_value, option_label in param.options}
+            # Hodnota volby se ukládá beze změny, překládá se jen popisek
+            options = tr_options(param.options)
             return ui.select(options, value=value if value in options else param.default).props(
                 "outlined dense options-dense").classes("param-control")
         field = ui.input(value=str(value or "")).props("outlined dense").classes("param-control")
         if param.kind == "symbol":
             # Symbol jako input.symbol v TradingView: text + tužka, která otevře hledání
-            field.props('placeholder="zdroj:SYMBOL" clearable').classes("param-symbol")
+            field.props(f'placeholder="{tr("zdroj:SYMBOL")}" clearable').classes("param-symbol")
             if self.on_symbol_search:
                 with field.add_slot("append"):
                     ui.icon("edit").classes("param-symbol-search cursor-pointer").on(
                         "click", lambda _event, field=field: self.on_symbol_search(field.value or "", field.set_value)
-                    ).tooltip("Hledat symbol")
+                    ).tooltip(tr("Hledat symbol"))
         return field
 
     def values(self) -> dict:

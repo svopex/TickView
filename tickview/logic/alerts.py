@@ -23,6 +23,7 @@ import re
 from datetime import datetime, timezone
 from typing import Callable, Optional
 
+from tickview.i18n import N_, tr
 from tickview.indicators.api import Param
 from tickview.indicators.compute import instance_params
 from tickview.indicators.registry import get_indicator
@@ -47,11 +48,11 @@ TRIGGERS: dict[str, str] = {
 
 # Stavy alertu pro seznam alertů (status -> popisek)
 STATUSES: dict[str, str] = {
-    "active": "Aktivní",
-    "paused": "Pozastaveno",
-    "triggered": "Spuštěno",
-    "expired": "Vypršelo",
-    "error": "Chyba",
+    "active": N_("Aktivní"),
+    "paused": N_("Pozastaveno"),
+    "triggered": N_("Spuštěno"),
+    "expired": N_("Vypršelo"),
+    "error": N_("Chyba"),
 }
 
 # Kresby, na které lze nastavit alert (čára s cenou v čase)
@@ -65,16 +66,16 @@ LINE_KINDS: dict[str, str] = {
 
 # Podmínky alertu na signál indikátoru (id -> popisek) a směr signálu, který splňují
 INDICATOR_CONDITIONS: dict[str, str] = {
-    "signal": "Signál Long nebo Short",
-    "signal_long": "Signál Long",
-    "signal_short": "Signál Short",
+    "signal": N_("Signál Long nebo Short"),
+    "signal_long": N_("Signál Long"),
+    "signal_short": N_("Signál Short"),
 }
 _CONDITION_DIRECTIONS = {"signal": ("long", "short"), "signal_long": ("long",), "signal_short": ("short",)}
 
 # Spouštění alertu na signál indikátoru: X minut před zavřením svíčky (jako
 # alert() v Pine) nebo triggery cenových alertů
 INDICATOR_TRIGGERS: dict[str, str] = {
-    "before_close": "X min před zavřením svíčky",
+    "before_close": N_("X min před zavřením svíčky"),
     "per_bar_close": "Once Per Bar Close",
     "per_bar": "Once Per Bar",
     "once": "Only Once",
@@ -84,7 +85,7 @@ INDICATOR_TRIGGERS: dict[str, str] = {
 # určují vstupy indikátoru ve skupině Scanner – alert před zavřením svíčky)
 ALERT_CALL = "alert_call"
 ALERT_CALL_CONDITIONS: dict[str, str] = {ALERT_CALL: "Any alert() function call (scanner)"}
-ALERT_CALL_TRIGGERS: dict[str, str] = {ALERT_CALL: "Podle vstupů indikátoru (před zavřením svíčky)"}
+ALERT_CALL_TRIGGERS: dict[str, str] = {ALERT_CALL: N_("Podle vstupů indikátoru (před zavřením svíčky)")}
 # Výchozí zpráva alertu scanneru: {{message}} = text souhrnné zprávy scanneru
 ALERT_CALL_MESSAGE = "{{message}}"
 
@@ -360,7 +361,7 @@ def target_label(target: dict) -> str:
         return LINE_KINDS.get(target.get("kind"), "Drawing")
     if target.get("type") == "indicator":
         indicator = get_indicator(target.get("kind", ""))
-        return indicator.title if indicator else str(target.get("kind"))
+        return tr(indicator.title) if indicator else str(target.get("kind"))
     return format_price(float(target.get("price", 0.0)))
 
 
@@ -442,7 +443,7 @@ def normalize_notify(values) -> dict:
     webhook = str(source.get("webhook") or "").strip()
     # Webhook jen přes HTTP(S) a bez mezer (TradingView povoluje i jen HTTP)
     if webhook and not re.match(r"^https?://[^\s/]+\S*$", webhook):
-        raise ValueError("Webhook URL musí začínat http:// nebo https://.")
+        raise ValueError(tr("Webhook URL musí začínat http:// nebo https://."))
     return {
         "telegram": bool(source.get("telegram", DEFAULT_NOTIFY["telegram"])),
         "webhook": webhook,
@@ -458,7 +459,7 @@ def normalize_target(values) -> dict:
         kind = source.get("kind")
         indicator = get_indicator(kind) if isinstance(kind, str) else None
         if indicator is None or not indicator.has_signals:
-            raise ValueError("Alert lze nastavit jen na indikátor se signály.")
+            raise ValueError(tr("Alert lze nastavit jen na indikátor se signály."))
         minutes = source.get("minutes", DEFAULT_ALERT_MINUTES)
         if isinstance(minutes, bool):
             minutes = None
@@ -466,21 +467,21 @@ def normalize_target(values) -> dict:
             "type": "indicator",
             "kind": kind,
             "params": instance_params(kind, source.get("params")),
-            "minutes": Param.int("minutes", DEFAULT_ALERT_MINUTES, "Minut před zavřením svíčky", min=1,
+            "minutes": Param.int("minutes", DEFAULT_ALERT_MINUTES, N_("Minut před zavřením svíčky"), min=1,
                                  max=MAX_ALERT_MINUTES).normalize(minutes),
         }
     if source.get("type") == "drawing":
         kind = source.get("kind")
         drawing_id = source.get("id")
         if kind not in LINE_KINDS or not isinstance(drawing_id, int) or isinstance(drawing_id, bool):
-            raise ValueError("Alert lze nastavit jen na čáru (horizontální, trendovou, polopřímku).")
+            raise ValueError(tr("Alert lze nastavit jen na čáru (horizontální, trendovou, polopřímku)."))
         return {"type": "drawing", "id": drawing_id, "kind": kind}
     try:
         price = float(source.get("price"))
     except (TypeError, ValueError):
-        raise ValueError("Zadejte cenu alertu.") from None
+        raise ValueError(tr("Zadejte cenu alertu.")) from None
     if not math.isfinite(price):
-        raise ValueError("Zadejte cenu alertu.")
+        raise ValueError(tr("Zadejte cenu alertu."))
     return {"type": "value", "price": price}
 
 
@@ -492,35 +493,35 @@ def normalize_alert(data: dict) -> dict:
     počty spuštění) řeší úložiště.
     """
     if not isinstance(data, dict):
-        raise ValueError("Neplatný alert.")
+        raise ValueError(tr("Neplatný alert."))
     source = str(data.get("source") or "").strip()
     symbol = str(data.get("symbol") or "").strip()
     timeframe = data.get("timeframe")
     if not source or not symbol:
-        raise ValueError("Alert musí mít symbol.")
+        raise ValueError(tr("Alert musí mít symbol."))
     if timeframe not in TIMEFRAME_MS:
-        raise ValueError("Neplatný timeframe alertu.")
+        raise ValueError(tr("Neplatný timeframe alertu."))
     target = normalize_target(data.get("target"))
     # Alert na indikátor má vlastní podmínky a spouštění (alert() scanneru
     # jen u indikátoru se scannerem)
     on_indicator = target["type"] == "indicator"
     condition = data.get("condition")
     if condition not in (indicator_conditions(target["kind"]) if on_indicator else CONDITIONS):
-        raise ValueError("Neplatná podmínka alertu.")
+        raise ValueError(tr("Neplatná podmínka alertu."))
     trigger = data.get("trigger")
     if trigger not in (indicator_triggers(condition) if on_indicator else TRIGGERS):
-        raise ValueError("Neplatný způsob spouštění alertu.")
+        raise ValueError(tr("Neplatný způsob spouštění alertu."))
     expires_at = data.get("expires_at")
     if expires_at is not None:
         if not isinstance(expires_at, (int, float)) or isinstance(expires_at, bool):
-            raise ValueError("Neplatná expirace alertu.")
+            raise ValueError(tr("Neplatná expirace alertu."))
         expires_at = int(expires_at)
     # Prázdná zpráva = výchozí text podle podmínky a cíle
     message = str(data.get("message") or "").strip()
     if not message:
         message = default_message(symbol, timeframe, condition, target)
     if len(message) > MAX_MESSAGE_LENGTH:
-        raise ValueError(f"Zpráva alertu může mít nejvýš {MAX_MESSAGE_LENGTH} znaků.")
+        raise ValueError(tr("Zpráva alertu může mít nejvýš {limit} znaků.").format(limit=MAX_MESSAGE_LENGTH))
     return {
         "source": source,
         "symbol": symbol,
@@ -537,11 +538,12 @@ def normalize_alert(data: dict) -> dict:
 def describe_alert(alert: dict) -> str:
     """Krátký popis alertu do seznamu: „Crossing 1.22547 · Once Per Bar“ nebo „<název indikátoru>: Signál Long · 10 min před zavřením“."""
     target = alert.get("target") or {}
+    # Popisky podmínek a spouštění jsou v konstantách česky – překládají se až tady
     if target.get("type") == "indicator":
-        condition = indicator_conditions(target.get("kind", "")).get(alert.get("condition"), "?")
-        trigger = indicator_triggers(alert.get("condition")).get(alert.get("trigger"), "?")
+        condition = tr(indicator_conditions(target.get("kind", "")).get(alert.get("condition"), "?"))
+        trigger = tr(indicator_triggers(alert.get("condition")).get(alert.get("trigger"), "?"))
         if alert.get("trigger") == "before_close":
-            trigger = f"{target.get('minutes')} min před zavřením svíčky"
+            trigger = tr("{minutes} min před zavřením svíčky").format(minutes=target.get("minutes"))
         return f"{target_label(target)}: {condition} · {trigger}"
     condition = CONDITIONS.get(alert.get("condition"), "?")
     return f"{condition} {target_label(target)} · {TRIGGERS.get(alert.get('trigger'), '?')}"
@@ -549,10 +551,10 @@ def describe_alert(alert: dict) -> str:
 
 # Řazení seznamu alertů v pravém panelu (id -> popisek v nabídce řazení)
 ALERT_SORTS: dict[str, str] = {
-    "newest": "Nejnovější první",
-    "oldest": "Nejstarší první",
-    "symbol": "Podle symbolu",
-    "status": "Podle stavu",
+    "newest": N_("Nejnovější první"),
+    "oldest": N_("Nejstarší první"),
+    "symbol": N_("Podle symbolu"),
+    "status": N_("Podle stavu"),
 }
 
 # Pořadí stavů při řazení podle stavu (aktivní nahoře jako v TradingView)

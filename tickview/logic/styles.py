@@ -9,6 +9,8 @@ pod klíčem „templates.<rozsah>“; tento modul obsahuje jen čisté funkce
 import json
 import re
 
+from tickview.i18n import N_, tr
+
 # Barva ve tvaru rgb(...) / rgba(...) – průhlednost je volitelná
 _RGBA_PATTERN = re.compile(
     r"^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*(?:,\s*(\d*\.?\d+)\s*)?\)$",
@@ -41,8 +43,8 @@ DEFAULT_DRAWING_COLOR = "#2962ff"
 DEFAULT_LINE_WIDTH = 1.5
 DEFAULT_FONT_SIZE = 13
 # Povolené šířky (px) a styly čar kreseb s popisky pro dialog Settings kresby
-DRAWING_LINE_WIDTHS = {1: "1 px", 1.5: "1,5 px (výchozí)", 2: "2 px", 3: "3 px", 4: "4 px"}
-DRAWING_LINE_STYLES = {"solid": "Plná", "dashed": "Přerušovaná", "dotted": "Tečkovaná"}
+DRAWING_LINE_WIDTHS = {1: "1 px", 1.5: N_("1,5 px (výchozí)"), 2: "2 px", 3: "3 px", 4: "4 px"}
+DRAWING_LINE_STYLES = {"solid": N_("Plná"), "dashed": N_("Přerušovaná"), "dotted": N_("Tečkovaná")}
 
 
 def clamp_font_size(value) -> int:
@@ -58,7 +60,7 @@ def clamp_font_size(value) -> int:
 POSITION_KINDS = ("long", "short")
 POSITION_DEFAULTS: dict = {"accountSize": 10000.0, "risk": 1.0, "riskUnit": "percent", "lotSize": 1.0}
 # Jednotky rizika pozice s popisky pro dialog Settings
-POSITION_RISK_UNITS = {"percent": "% účtu", "amount": "Částka"}
+POSITION_RISK_UNITS = {"percent": N_("% účtu"), "amount": N_("Částka")}
 
 
 def _positive_number(value, default: float) -> float:
@@ -341,15 +343,15 @@ def normalize_position_points(
     try:
         entry, target, stop = float(entry), float(target), float(stop)
     except (TypeError, ValueError):
-        raise ValueError("Zadejte ceny vstupu, cíle a stopu.") from None
+        raise ValueError(tr("Zadejte ceny vstupu, cíle a stopu.")) from None
     if decimals is not None:
         entry, target, stop = (round(price, decimals) for price in (entry, target, stop))
     if kind == "long" and not stop < entry < target:
-        raise ValueError("Long pozice musí mít stop pod vstupem a cíl nad ním.")
+        raise ValueError(tr("Long pozice musí mít stop pod vstupem a cíl nad ním."))
     if kind == "short" and not target < entry < stop:
-        raise ValueError("Short pozice musí mít cíl pod vstupem a stop nad ním.")
+        raise ValueError(tr("Short pozice musí mít cíl pod vstupem a stop nad ním."))
     if len(points) < 3:
-        raise ValueError("Neplatná pozice.")
+        raise ValueError(tr("Neplatná pozice."))
     return [
         {"time": int(points[0]["time"]), "price": entry},
         {"time": int(points[1]["time"]), "price": target},
@@ -375,9 +377,10 @@ DEFAULT_FAVORITE_CHART_TYPES = ["candles"]
 
 # Timeframy po sekcích nabídky (jako v TradingView): (nadpis, [(timeframe, popisek)])
 TIMEFRAME_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
-    ("Minuty", [("1m", "1 minuta"), ("2m", "2 minuty"), ("5m", "5 minut"), ("10m", "10 minut"), ("15m", "15 minut")]),
-    ("Hodiny", [("1h", "1 hodina"), ("4h", "4 hodiny")]),
-    ("Dny", [("1D", "1 den"), ("1W", "1 týden")]),
+    (N_("Minuty"), [("1m", N_("1 minuta")), ("2m", N_("2 minuty")), ("5m", N_("5 minut")), ("10m", N_("10 minut")),
+                    ("15m", N_("15 minut"))]),
+    (N_("Hodiny"), [("1h", N_("1 hodina")), ("4h", N_("4 hodiny"))]),
+    (N_("Dny"), [("1D", N_("1 den")), ("1W", N_("1 týden"))]),
 ]
 # Všechny timeframy v pořadí nabídky
 TIMEFRAMES: list[str] = [timeframe for _, items in TIMEFRAME_SECTIONS for timeframe, _ in items]
@@ -562,9 +565,3 @@ def load_panel_position(raw: str | None) -> dict | None:
         return normalize_panel_position(json.loads(raw or "null"))
     except ValueError:
         return None
-
-
-def plural(count: int, one: str, few: str, many: str) -> str:
-    """Počet se správným tvarem slova: 1 graf, 2–4 grafy, 5+ grafů (i 0 grafů)."""
-    word = one if count == 1 else few if 2 <= count <= 4 else many
-    return f"{count} {word}"

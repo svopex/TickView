@@ -15,6 +15,7 @@ from typing import Callable, Optional
 
 import httpx
 
+from tickview.i18n import tr
 from tickview.indicators.compute import history_bars, run_indicator
 from tickview.indicators.registry import get_indicator
 from tickview.logic.alerts import (
@@ -176,7 +177,7 @@ class AlertEngine(Listeners):
             try:
                 provider = self._provider_lookup(provider_id)
                 if not provider.supports_stream:
-                    await self._fail_key(key, f"Zdroj {provider.name} nepodporuje živá data.")
+                    await self._fail_key(key, tr("Zdroj {source} nepodporuje živá data.").format(source=provider.name))
                     return
                 async for item in provider.stream(symbol, timeframe):
                     if isinstance(item, StreamStatus):
@@ -191,7 +192,7 @@ class AlertEngine(Listeners):
                 raise
             except KeyError:
                 # Zdroj už neexistuje (např. Alpaca bez klíčů po restartu)
-                await self._fail_key(key, f"Neznámý zdroj {provider_id}.")
+                await self._fail_key(key, tr("Neznámý zdroj {source}.").format(source=provider_id))
                 return
             except Exception:
                 logger.exception("Stream alertů %s selhal", key)
@@ -458,7 +459,7 @@ class AlertEngine(Listeners):
         # Zástupné texty signálu a zprávy scanneru dostanou zkušební hodnoty,
         # aby zpráva typu {{message}} nebyla prázdná
         context = message_context(alert, price, self._exchange_name(alert), utc_now_ms(),
-                                  signal="TEST", message="Test alertu")
+                                  signal="TEST", message=tr("Test alertu"))
         return render_message(alert["message"], context)
 
     async def send_test(self, alert: dict, message: str, price: Optional[float] = None) -> list[dict]:
@@ -495,7 +496,7 @@ class AlertEngine(Listeners):
                 jobs.append(("telegram", send_telegram(self._client, token, chat_id, text)))
             else:
                 # Kanál bez nastavení se v logu ukáže jako neodeslaný
-                delivery.append({"channel": "telegram", "ok": False, "error": "Telegram není nastavený (Settings → Telegram)."})
+                delivery.append({"channel": "telegram", "ok": False, "error": tr("Telegram není nastavený (Settings → Telegram).")})
         if notify.get("webhook"):
             jobs.append(("webhook", send_webhook(self._client, notify["webhook"], event["message"])))
         results = await asyncio.gather(*(job for _, job in jobs), return_exceptions=True)

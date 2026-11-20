@@ -12,6 +12,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
+from tickview.i18n import N_, tr
 from tickview.indicators.api import API_VERSION, CATEGORIES, Indicator
 from tickview.indicators.builtin import BUILTIN_INDICATORS
 from tickview.indicators.cot import COT_INDICATORS
@@ -22,29 +23,45 @@ logger = logging.getLogger(__name__)
 CUSTOM_DIR = Path(__file__).parent / "custom"
 CUSTOM_PACKAGE = "tickview.indicators.custom"
 
-# Načtené indikátory (id -> indikátor) a chyby načtení (adresář -> zpráva)
+# Chyba načtení: šablona zprávy (označená N_) a hodnoty zástupných symbolů – zpráva
+# se přeloží až při zobrazení (registr se plní jednou za běh, jazyk se může změnit)
+LoadError = tuple[str, dict]
+
+# Načtené indikátory (id -> indikátor) a chyby načtení (adresář -> chyba)
 _registry: dict[str, Indicator] = {}
-_errors: dict[str, str] = {}
+_errors: dict[str, LoadError] = {}
 _loaded = False
 
 
-def _check(indicator, origin: str) -> Optional[str]:
-    """Ověří načtený indikátor; vrátí popis chyby, nebo None (indikátor je v pořádku).
+def _format_error(error: LoadError, translate: bool = True) -> str:
+    """Text chyby načtení ze šablony a hodnot.
+
+    Parametry:
+        error: (šablona, hodnoty zástupných symbolů).
+        translate: přeložit do jazyka rozhraní (False = česky do logu).
+    """
+    template, values = error
+    return (tr(template) if translate else template).format(**values)
+
+
+def _check(indicator, origin: str) -> Optional[LoadError]:
+    """Ověří načtený indikátor; vrátí chybu (šablona, hodnoty), nebo None (indikátor je v pořádku).
 
     Parametry:
         indicator: objekt z INDICATOR.
         origin: odkud pochází (pro zprávu).
     """
     if not isinstance(indicator, Indicator):
-        return f"{origin}: INDICATOR musí být instance Indicator."
+        return N_("{origin}: INDICATOR musí být instance Indicator."), {"origin": origin}
     if indicator.api_version != API_VERSION:
-        return f"{origin}: indikátor je pro rozhraní verze {indicator.api_version}, TickView má {API_VERSION}."
+        return (N_("{origin}: indikátor je pro rozhraní verze {version}, TickView má {api_version}."),
+                {"origin": origin, "version": indicator.api_version, "api_version": API_VERSION})
     if not indicator.id:
-        return f"{origin}: indikátor nemá id."
+        return N_("{origin}: indikátor nemá id."), {"origin": origin}
     if indicator.id in _registry:
-        return f"{origin}: id {indicator.id} už používá jiný indikátor."
+        return N_("{origin}: id {id} už používá jiný indikátor."), {"origin": origin, "id": indicator.id}
     if indicator.category not in CATEGORIES:
-        return f"{origin}: neznámá kategorie {indicator.category}."
+        return N_("{origin}: neznámá kategorie {category}."), {"origin": origin, "category": indicator.category}
     return None
 
 
@@ -60,13 +77,13 @@ def _load_custom() -> None:
         try:
             module = importlib.import_module(f"{CUSTOM_PACKAGE}.{directory.name}.indicator")
         except Exception as exc:
-            _errors[directory.name] = f"{origin}: chyba importu – {exc}"
+            _errors[directory.name] = (N_("{origin}: chyba importu – {error}"), {"origin": origin, "error": exc})
             logger.exception("Indikátor %s se nepodařilo načíst", origin)
             continue
         indicator = getattr(module, "INDICATOR", None)
         if error := _check(indicator, origin):
             _errors[directory.name] = error
-            logger.error("Indikátor %s odmítnut: %s", origin, error)
+            logger.error("Indikátor %s odmítnut: %s", origin, _format_error(error, translate=False))
             continue
         _registry[indicator.id] = indicator
 
@@ -96,6 +113,6 @@ def all_indicators() -> dict[str, Indicator]:
 
 
 def load_errors() -> dict[str, str]:
-    """Chyby načtení vlastních indikátorů (adresář -> zpráva) pro stavovou lištu."""
+    """Chyby načtení vlastních indikátorů (adresář -> zpráva v jazyce rozhraní) pro stavovou lištu."""
     _ensure_loaded()
-    return dict(_errors)
+    return {directory: _format_error(error) for directory, error in _errors.items()}

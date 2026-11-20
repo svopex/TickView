@@ -8,6 +8,7 @@ import json
 import sqlite3
 from typing import Callable, Optional
 
+from tickview.i18n import tr
 from tickview.providers.base import (
     SPIKE_NEIGHBORS,
     TIMEFRAME_MS,
@@ -770,7 +771,7 @@ class KlineCache:
             "remove_all": "DELETE FROM alerts",
         }
         if action not in statements:
-            raise ValueError(f"Neznámá hromadná akce alertů: {action}")
+            raise ValueError(tr("Neznámá hromadná akce alertů: {action}").format(action=action))
 
         def bulk_sync() -> int:
             count = self._conn.execute(statements[action]).rowcount

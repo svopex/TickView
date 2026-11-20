@@ -5,6 +5,7 @@ from collections.abc import Awaitable, Callable
 
 from nicegui import ui
 
+from tickview.i18n import tr
 from tickview.logic.cache import KlineCache
 from tickview.logic.styles import (
     MAX_NAME_LENGTH,
@@ -106,9 +107,10 @@ class TemplateMenu:
             self.menu = ui.menu().props("anchor='top left' self='bottom left'").classes("tpl-menu")
         # Dialog pro název nové šablony („Save as…“)
         with ui.dialog() as self.name_dialog, ui.card().classes("tpl-name-dialog"):
-            ui.label("Uložit šablonu").classes("tv-settings-title")
+            ui.label(tr("Uložit šablonu")).classes("tv-settings-title")
+            too_long = tr("Nejvýš {max_length} znaků").format(max_length=MAX_NAME_LENGTH)
             self.name_input = (
-                ui.input("Název šablony", validation={"Nejvýš 40 znaků": lambda value: len(value or "") <= MAX_NAME_LENGTH})
+                ui.input(tr("Název šablony"), validation={too_long: lambda value: len(value or "") <= MAX_NAME_LENGTH})
                 .props("outlined dense autofocus")
                 .classes("w-full")
             )
@@ -148,7 +150,7 @@ class TemplateMenu:
                     ui.space()
                     # Křížek smaže šablonu; .stop zabrání současnému použití šablony
                     ui.button(icon="close").props("flat dense round size=xs").classes("tpl-delete").tooltip(
-                        "Smazat šablonu"
+                        tr("Smazat šablonu")
                     ).on("click.stop", self._make_delete(name))
 
     def _make_apply(self, name: str) -> Callable[[], Awaitable[None]]:
@@ -156,7 +158,7 @@ class TemplateMenu:
             templates = await self._templates()
             if name in templates:
                 self._apply(templates[name])
-                ui.notify(f"Použita šablona „{name}“.")
+                ui.notify(tr("Použita šablona „{name}“.").format(name=name))
 
         return _handler
 
@@ -165,7 +167,7 @@ class TemplateMenu:
             templates = delete_template(await self._templates(), name)
             await self._store(templates)
             await self.refresh()
-            ui.notify(f"Šablona „{name}“ smazána.")
+            ui.notify(tr("Šablona „{name}“ smazána.").format(name=name))
 
         return _handler
 
@@ -185,7 +187,7 @@ class TemplateMenu:
         # Uloží hodnoty dialogu pod zadaným názvem (stejný název přepíše)
         name = clean_name(self.name_input.value)
         if not name:
-            ui.notify(f"Zadejte název šablony (1–{MAX_NAME_LENGTH} znaků).", type="warning")
+            ui.notify(tr("Zadejte název šablony (1–{max_length} znaků).").format(max_length=MAX_NAME_LENGTH), type="warning")
             return
         values = self._collect()
         if values is None:
@@ -196,7 +198,9 @@ class TemplateMenu:
         await self._store(templates)
         self.name_dialog.close()
         await self.refresh()
-        ui.notify(f"Šablona „{name}“ {'přepsána' if overwritten else 'uložena'}.")
+        # Celé věty zvlášť – v překladu se tvar slovesa neskládá z kousků
+        message = tr("Šablona „{name}“ přepsána.") if overwritten else tr("Šablona „{name}“ uložena.")
+        ui.notify(message.format(name=name))
 
     async def _save_default(self) -> None:
         # Výchozí šablona: převezmou ji nově přidané instance (indikátory, kresby)
@@ -207,7 +211,7 @@ class TemplateMenu:
         if self._on_default_change:
             await self._on_default_change()
         await self.refresh()
-        ui.notify("Uloženo jako výchozí nastavení.")
+        ui.notify(tr("Uloženo jako výchozí nastavení."))
 
     async def _reset_default(self) -> None:
         # Zruší uživatelskou výchozí šablonu a vrátí tovární hodnoty
@@ -216,4 +220,4 @@ class TemplateMenu:
             await self._on_default_change()
         self._apply_factory()
         await self.refresh()
-        ui.notify("Výchozí nastavení vráceno na tovární.")
+        ui.notify(tr("Výchozí nastavení vráceno na tovární."))

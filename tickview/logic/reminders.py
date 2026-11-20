@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Optional
 from zoneinfo import ZoneInfo
 
+from tickview.i18n import N_, NC_, tr, trc
 from tickview.indicators.api import Param
 from tickview.logic.alerts import DEFAULT_NOTIFY, MAX_MESSAGE_LENGTH, normalize_notify
 from tickview.logic.sessions import parse_hhmm
@@ -19,46 +20,56 @@ from tickview.logic.sessions import parse_hhmm
 # Klíč nastavení se seznamem připomínek (JSON)
 REMINDERS_SETTINGS_KEY = "reminders"
 # Dny v týdnu (0 = pondělí) pro výběr v dialogu
-WEEKDAYS = ("Po", "Út", "St", "Čt", "Pá", "So", "Ne")
-# Výchozí připomínka (upozornění na uzavření pozic před noční seancí)
+WEEKDAYS = (
+    NC_("weekday", "Po"),
+    NC_("weekday", "Út"),
+    NC_("weekday", "St"),
+    NC_("weekday", "Čt"),
+    NC_("weekday", "Pá"),
+    NC_("weekday", "So"),
+    NC_("weekday", "Ne"),
+)
+# Výchozí připomínka (upozornění na uzavření pozic před noční seancí); název
+# a zpráva se ukládají v jazyce, ve kterém se připomínka vytvořila
 DEFAULT_REMINDER: dict = {
-    "name": "Uzavření pozic",
+    "name": N_("Uzavření pozic"),
     "start": "22:30",
     "end": "22:55",
     "interval": 5,
     "timezone": "Europe/Prague",
     "days": [0, 1, 2, 3, 4, 5, 6],
-    "message": "Prosím uzavřete pozici, blíží se noční seance.",
+    "message": N_("Prosím uzavřete pozici, blíží se noční seance."),
     "notify": dict(DEFAULT_NOTIFY),
     "active": True,
 }
 
 # Rozestup upozornění v minutách
-_INTERVAL = Param.int("interval", DEFAULT_REMINDER["interval"], "Rozestup (minuty)", min=1, max=240)
+_INTERVAL = Param.int("interval", DEFAULT_REMINDER["interval"], N_("Rozestup (minuty)"), min=1, max=240)
 
 def normalize_reminder(data) -> dict:
     """Zkontroluje připomínku z dialogu; chyba vyhodí ValueError s českou zprávou."""
     if not isinstance(data, dict):
-        raise ValueError("Neplatná připomínka.")
-    name = str(data.get("name") or "").strip()[:80] or DEFAULT_REMINDER["name"]
+        raise ValueError(tr("Neplatná připomínka."))
+    # Prázdný název a zpráva = výchozí text v aktuálním jazyce
+    name = str(data.get("name") or "").strip()[:80] or tr(DEFAULT_REMINDER["name"])
     start, end = parse_hhmm(data.get("start")), parse_hhmm(data.get("end"))
     if start is None or end is None:
-        raise ValueError("Začátek a konec okna zadejte ve tvaru HH:MM.")
+        raise ValueError(tr("Začátek a konec okna zadejte ve tvaru HH:MM."))
     # Okno nepřechází přes půlnoc
     if end < start:
-        raise ValueError("Konec okna musí být stejně nebo později než začátek (okno nesmí přecházet přes půlnoc).")
+        raise ValueError(tr("Konec okna musí být stejně nebo později než začátek (okno nesmí přecházet přes půlnoc)."))
     interval = _INTERVAL.normalize(data.get("interval"))
     tz_name = str(data.get("timezone") or "").strip() or DEFAULT_REMINDER["timezone"]
     try:
         ZoneInfo(tz_name)
     except Exception:
-        raise ValueError(f"Neznámé časové pásmo: {tz_name}") from None
+        raise ValueError(tr("Neznámé časové pásmo: {timezone}").format(timezone=tz_name)) from None
     days = sorted({day for day in data.get("days") or [] if isinstance(day, int) and 0 <= day <= 6})
     if not days:
-        raise ValueError("Vyberte aspoň jeden den.")
-    message = str(data.get("message") or "").strip() or DEFAULT_REMINDER["message"]
+        raise ValueError(tr("Vyberte aspoň jeden den."))
+    message = str(data.get("message") or "").strip() or tr(DEFAULT_REMINDER["message"])
     if len(message) > MAX_MESSAGE_LENGTH:
-        raise ValueError(f"Zpráva může mít nejvýš {MAX_MESSAGE_LENGTH} znaků.")
+        raise ValueError(tr("Zpráva může mít nejvýš {limit} znaků.").format(limit=MAX_MESSAGE_LENGTH))
     return {
         "id": str(data.get("id") or uuid.uuid4().hex[:8]),
         "name": name,
@@ -91,13 +102,17 @@ def load_reminders(raw: Optional[str]) -> list[dict]:
 def describe_reminder(reminder: dict) -> str:
     """Krátký popis do seznamu: „22:30–22:55 po 5 min · Po–Ne · Europe/Prague“."""
     days = reminder["days"]
+    # Celý týden a pracovní dny zkráceně, jinak výčet dní
     if days == list(range(7)):
-        day_text = "Po–Ne"
+        day_text = tr("Po–Ne")
     elif days == list(range(5)):
-        day_text = "Po–Pá"
+        day_text = tr("Po–Pá")
     else:
-        day_text = ", ".join(WEEKDAYS[day] for day in days)
-    return f"{reminder['start']}–{reminder['end']} po {reminder['interval']} min · {day_text} · {reminder['timezone']}"
+        day_text = ", ".join(trc("weekday", WEEKDAYS[day]) for day in days)
+    return tr("{start}–{end} po {interval} min · {days} · {timezone}").format(
+        start=reminder["start"], end=reminder["end"], interval=reminder["interval"], days=day_text,
+        timezone=reminder["timezone"],
+    )
 
 
 class ReminderTracker:

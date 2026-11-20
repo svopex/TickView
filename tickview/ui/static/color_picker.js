@@ -145,7 +145,7 @@ window.TickViewColorPicker = (function () {
     const add = el('button', 'tv-cp-add');
     add.type = 'button';
     add.appendChild(el('span', 'material-icons', 'add'));
-    add.title = 'Vlastní barva';
+    add.title = tvTr('Vlastní barva');
     const native = el('input', 'tv-cp-native');
     native.type = 'color';
     native.value = toHex(current.color);

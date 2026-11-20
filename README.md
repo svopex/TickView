@@ -598,6 +598,12 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   s časovým pásmem grafu – nabídka UTC, Exchange (pásmo burzy), místní čas
   a města jako v TradingView; pásmo platí pro časovou osu i crosshair, denní
   svíčky se ukazují v UTC; volba se ukládá.
+- Dvojjazyčné rozhraní – čeština (výchozí) a angličtina: přepínač CS / EN
+  v horní liště (vedle Tmavého motivu) uloží volbu do nastavení (`language`)
+  a znovu načte stránku. Jazyk platí pro celé UI včetně kontextových nabídek
+  grafu, indikátorů, alertů, notifikací Telegramu a připomínek; formát data
+  v grafu se řídí jazykem. Popisky, které jsou už v české verzi anglicky po
+  vzoru TradingView (Inputs, Style, Visibility…), zůstávají.
 - Klik na název TickView vlevo nahoře nebo ikona (i) dole v pravé svislé
   liště otevře dialog O aplikaci: název a verze, autor (web autora
   https://svopex.eu a odkaz „Poslat e-mail“, který otevře poštovního
@@ -725,6 +731,21 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   v `.venv/.requirements.sha256`)
 - `tools/python_supported.py` – podporovaný rozsah verzí Pythonu (3.12–3.13);
   spouštěcí skripty jím ověřují kandidáty i Python ve `.venv`
+- `tickview/i18n.py` – překlady UI: zdrojové texty jsou česky a slouží jako
+  klíče; `tr("text")` překládá při zobrazení, `N_("text")` označí text
+  v konstantě (přeloží se až v místě zobrazení), `trc(kontext, text)` / `NC_`
+  pro stejný text s různými významy (např. „Ne“ = neděle vs. ne),
+  `tr_options()` přeloží popisky voleb výběru, `plural()` vybere a přeloží tvar
+  podle počtu, `load_language()` nastaví jazyk z databáze; `js_bootstrap()`
+  vloží do stránky jazyk a slovník `tickview/locales/js.py` pro JS funkci
+  `tvTr()` (`tickview/ui/static/i18n.js`) – texty JS proto patří do `js.py`
+- `tickview/locales/*.py` – anglické slovníky `EN` (český text → překlad)
+  rozdělené podle částí aplikace (hlavní okno, replay, indikátory, logika, UI,
+  JS, O aplikaci); zástupné symboly `{jmeno}` musí zůstat i v překladu
+- `tools/i18n_check.py` – kontrola úplnosti překladů: české texty mimo
+  `tr()`/`N_()`/`tvTr()`, chybějící překlady, rozdílné zástupné symboly
+  a konfliktní překlady mezi slovníky; spouští ho i test `tests/test_i18n.py`.
+  Texty bez diakritiky kontrola nepozná – nové texty vždy psát přes `tr()`
 - `tickview/config.py` – cesty k runtime datům, cache DB, načítání
   konfigurace `config.yaml` a zápis sekce se zachováním komentářů
 - `tickview/providers/base.py` – rozhraní DataProvider (search/history/stream/
@@ -894,12 +915,15 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
 ## Web projektu (GitHub Pages)
 
 Prezentační stránka je `index.html` v kořenu repozitáře (statická, bez build
-kroku). Zapnutí: na GitHubu Settings → Pages → Source „Deploy from a branch“,
+kroku), anglická verze je `en/index.html` (assety přes `../site/`). Obě mají
+v navigaci přepínač CS / EN, v hlavičce `canonical` a `hreflang` (cs, en,
+x-default) a obsah udržovaný 1:1; `site/script.js` a `site/theme.js` volí
+texty podle `lang` stránky. Zapnutí: na GitHubu Settings → Pages → Source „Deploy from a branch“,
 větev `main`, složka `/ (root)` → Save; web pak běží na
 https://svopex.github.io/TickView/. Lokální náhled:
 `python3 -m http.server` a otevřít http://localhost:8000/.
-Při změně souborů v `site/` zvýšit v `index.html` číslo `?v=` u odkazů
-na CSS a JS, jinak prohlížeče až 10 minut drží starou verzi z cache.
+Při změně souborů v `site/` zvýšit v `index.html` i `en/index.html` číslo `?v=`
+u odkazů na CSS a JS, jinak prohlížeče až 10 minut drží starou verzi z cache.
 Instalační příkazy na webu končí na obou platformách `--open`
 (`./run.sh --open`, `.\run-windows.bat --open`). Sekce Kontakt má jako první
 zvýrazněné tlačítko „Nahlásit chybu na GitHubu“ a za ním „Poslat e-mail“; e-mailová adresa je v `data-email` obrácená a v base64 a `site/script.js`

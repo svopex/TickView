@@ -8,6 +8,7 @@ from typing import Any, AsyncIterator, Optional
 import httpx
 import websockets
 
+from tickview.i18n import tr
 from tickview.providers.base import (
     TIMEFRAME_MS,
     Candle,
@@ -251,7 +252,7 @@ class BinanceProvider(DataProvider):
             try:
                 async with websockets.connect(url) as ws:
                     backoff = 1.0
-                    if status := latch.ok("websocket Binance znovu připojen"):
+                    if status := latch.ok(tr("websocket Binance znovu připojen")):
                         yield status
                     async for raw in ws:
                         message = json.loads(raw)
@@ -271,7 +272,7 @@ class BinanceProvider(DataProvider):
                 raise
             except Exception as exc:
                 # Výpadek spojení: ohlásíme (jednou), exponenciálně čekáme a připojíme znovu
-                if status := latch.fail(f"websocket Binance odpojen: {exc}"):
+                if status := latch.fail(tr("websocket Binance odpojen: {error}").format(error=exc)):
                     yield status
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, WS_MAX_BACKOFF_S)

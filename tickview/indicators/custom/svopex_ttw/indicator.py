@@ -19,7 +19,7 @@ import math
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-from tickview.indicators.api import Context, Indicator, Param, Result, Segment, Signal, scanner_params
+from tickview.indicators.api import N_, Context, Indicator, Param, Result, Segment, Signal, scanner_params
 
 NAN = math.nan
 
@@ -33,12 +33,12 @@ FORMATION_LABELS = {1: "ONE", 2: "ENG", 3: "STAR"}
 # Hranice timeframu, od které se půlnoční svíčky neřeší (H2 a výš)
 MIDNIGHT_MAX_STEP_MS = 7_200_000
 
-# Volby časového pásma pro hodinu půlnoční svíčky
+# Volby časového pásma pro hodinu půlnoční svíčky (popisky se překládají při zobrazení)
 TIMEZONE_OPTIONS = [
-    ("Europe/Prague", "Praha (Europe/Prague)"),
-    ("exchange", "Pásmo burzy symbolu"),
+    ("Europe/Prague", N_("Praha (Europe/Prague)")),
+    ("exchange", N_("Pásmo burzy symbolu")),
     ("UTC", "UTC"),
-    ("Europe/London", "Londýn (Europe/London)"),
+    ("Europe/London", N_("Londýn (Europe/London)")),
     ("America/New_York", "New York (America/New_York)"),
 ]
 
@@ -89,13 +89,14 @@ DEFAULT_SCAN_SYMBOLS = (
     "ibkr:IBUKOIL",      # Brent (navíc proti Pine)
 )
 
-# Skupiny parametrů (sekce dialogu) – pořadí jako v Pine
-G_SIGNAL = "Detekce signálu"
-G_RANGE = "Rozsah zpracování"
-G_SWING = "Swingy"
-G_TOLERANCE = "Tolerance"
-G_MIDNIGHT = "Půlnoční svíčky"
-G_DISPLAY = "Zobrazení"
+# Skupiny parametrů (sekce dialogu) – pořadí jako v Pine; texty pro uživatele
+# (popisky, nápovědy, popis) jsou označené N_ a překládají se při zobrazení
+G_SIGNAL = N_("Detekce signálu")
+G_RANGE = N_("Rozsah zpracování")
+G_SWING = N_("Swingy")
+G_TOLERANCE = N_("Tolerance")
+G_MIDNIGHT = N_("Půlnoční svíčky")
+G_DISPLAY = N_("Zobrazení")
 
 
 def pine_range(start: int, end: int) -> range:
@@ -127,7 +128,7 @@ class SvopexTTW(Indicator):
     id = "svopex_ttw"
     title = "Svopex TTW"
     name = "Svopex TTW"
-    description = "Trendové linky, šablony a double bottom/top u formací ONE / ENG / STAR (převod z Pine)."
+    description = N_("Trendové linky, šablony a double bottom/top u formací ONE / ENG / STAR (převod z Pine).")
     has_signals = True
     has_lines = True
     # V legendě jen název (parametrů je mnoho)
@@ -135,63 +136,64 @@ class SvopexTTW(Indicator):
 
     params = [
         # Detekce svíčkové formace (ONE / ENG / STAR)
-        Param.float("min_candle_length", 10, "Minimální délka svíčky (poměr k průměrné)", min=0, max=1000,
+        Param.float("min_candle_length", 10, N_("Minimální délka svíčky (poměr k průměrné)"), min=0, max=1000,
                     step=1, group=G_SIGNAL),
-        Param.float("max_candle_length", 45, "Maximální délka svíčky (poměr k průměrné)", min=0, max=1000,
+        Param.float("max_candle_length", 45, N_("Maximální délka svíčky (poměr k průměrné)"), min=0, max=1000,
                     step=1, exclusive_min=True, group=G_SIGNAL),
-        Param.bool("eng_close_beyond_previous", True, "ENG/STAR: uzavření nad high předchozí svíčky", group=G_SIGNAL),
-        Param.float("star_ratio", 1, "STAR: poměr velikosti 1. a 3. svíčky ku 2.", min=0, max=100, group=G_SIGNAL),
-        Param.bool("from_extreme", True, "Brát signály pouze zdola (long) / shora (short)", group=G_SIGNAL),
-        Param.float("from_extreme_coef", 0.9, "Koeficient pro „brát zdola“", min=0, max=1, step=0.05,
+        Param.bool("eng_close_beyond_previous", True, N_("ENG/STAR: uzavření nad high předchozí svíčky"),
+                   group=G_SIGNAL),
+        Param.float("star_ratio", 1, N_("STAR: poměr velikosti 1. a 3. svíčky ku 2."), min=0, max=100, group=G_SIGNAL),
+        Param.bool("from_extreme", True, N_("Brát signály pouze zdola (long) / shora (short)"), group=G_SIGNAL),
+        Param.float("from_extreme_coef", 0.9, N_("Koeficient pro „brát zdola“"), min=0, max=1, step=0.05,
                     group=G_SIGNAL),
-        Param.int("from_extreme_bars", 180, "Počet svíček pro test „brát zdola“", min=1, max=2000, group=G_SIGNAL),
-        Param.bool("show_shorts", True, "Zobrazovat i shorty", group=G_SIGNAL),
+        Param.int("from_extreme_bars", 180, N_("Počet svíček pro test „brát zdola“"), min=1, max=2000, group=G_SIGNAL),
+        Param.bool("show_shorts", True, N_("Zobrazovat i shorty"), group=G_SIGNAL),
         # Rozsah zpracování a délky formací
-        Param.int("bars_to_process", 360, "Počet svíček, které se zpracovávají", min=10, max=2000, group=G_RANGE,
-                  tooltip="Zároveň perioda průměrné velikosti svíčky – graf musí mít aspoň tolik svíček."),
-        Param.int("max_signal_length", 90, "Maximální délka signálu (svíčky)", min=1, max=1000, group=G_RANGE),
-        Param.int("min_formation_length", 10, "Minimální délka formace (svíčky)", min=0, max=1000, group=G_RANGE),
-        Param.int("min_gap", 3, "Minimální mezera mezi doteky", min=0, max=100, group=G_RANGE),
-        Param.int("max_segments_per_signal", 2, "Maximální počet úseček pro jeden signál", min=1, max=50,
+        Param.int("bars_to_process", 360, N_("Počet svíček, které se zpracovávají"), min=10, max=2000, group=G_RANGE,
+                  tooltip=N_("Zároveň perioda průměrné velikosti svíčky – graf musí mít aspoň tolik svíček.")),
+        Param.int("max_signal_length", 90, N_("Maximální délka signálu (svíčky)"), min=1, max=1000, group=G_RANGE),
+        Param.int("min_formation_length", 10, N_("Minimální délka formace (svíčky)"), min=0, max=1000, group=G_RANGE),
+        Param.int("min_gap", 3, N_("Minimální mezera mezi doteky"), min=0, max=100, group=G_RANGE),
+        Param.int("max_segments_per_signal", 2, N_("Maximální počet úseček pro jeden signál"), min=1, max=50,
                   group=G_RANGE),
         # Swingy
-        Param.int("swing_bars", 2, "Počet svíček pro minor swing", min=1, max=50, group=G_SWING),
-        Param.float("swing_height_mult", 0.8, "Násobek průměrné výšky svíčky pro swing", min=0, max=10,
+        Param.int("swing_bars", 2, N_("Počet svíček pro minor swing"), min=1, max=50, group=G_SWING),
+        Param.float("swing_height_mult", 0.8, N_("Násobek průměrné výšky svíčky pro swing"), min=0, max=10,
                     group=G_SWING),
-        Param.bool("use_major_swing", True, "Použít major swing indikátor pro startovní svíčku", group=G_SWING),
-        Param.int("major_swing_width", 9, "Šířka major swingu", min=1, max=100, group=G_SWING),
-        Param.int("minor_swing_width", 4, "Šířka minor swingu", min=1, max=100, group=G_SWING),
+        Param.bool("use_major_swing", True, N_("Použít major swing indikátor pro startovní svíčku"), group=G_SWING),
+        Param.int("major_swing_width", 9, N_("Šířka major swingu"), min=1, max=100, group=G_SWING),
+        Param.int("minor_swing_width", 4, N_("Šířka minor swingu"), min=1, max=100, group=G_SWING),
         # Tolerance
-        Param.float("trendline_miss", 0.07, "Maximální míra nedosednutí na trendlinku", min=0, max=10, step=0.01,
+        Param.float("trendline_miss", 0.07, N_("Maximální míra nedosednutí na trendlinku"), min=0, max=10, step=0.01,
                     group=G_TOLERANCE),
-        Param.float("segment_cross_tolerance", 0.15, "Povolené protnutí úsečky svíčkou", min=0, max=10, step=0.01,
+        Param.float("segment_cross_tolerance", 0.15, N_("Povolené protnutí úsečky svíčkou"), min=0, max=10, step=0.01,
                     group=G_TOLERANCE),
-        Param.float("double_bottom_tolerance", 0.25, "Maximální odchylka u double bottom", min=0, max=10, step=0.01,
+        Param.float("double_bottom_tolerance", 0.25, N_("Maximální odchylka u double bottom"), min=0, max=10, step=0.01,
                     group=G_TOLERANCE),
-        Param.int("min_double_bottom_length", 10, "Minimální délka formace double bottom", min=0, max=1000,
+        Param.int("min_double_bottom_length", 10, N_("Minimální délka formace double bottom"), min=0, max=1000,
                   group=G_TOLERANCE),
-        Param.bool("first_touches_on_wicks", True, "První dva doteky na knotech", group=G_TOLERANCE),
-        Param.bool("last_touch_on_wicks", True, "Poslední dotek na knotech", group=G_TOLERANCE),
+        Param.bool("first_touches_on_wicks", True, N_("První dva doteky na knotech"), group=G_TOLERANCE),
+        Param.bool("last_touch_on_wicks", True, N_("Poslední dotek na knotech"), group=G_TOLERANCE),
         # Půlnoční svíčky
-        Param.bool("skip_midnight_candles", True, "Vynechat půlnoční svíčky", group=G_MIDNIGHT,
-                   tooltip="Na timeframu od H2 výš se půlnoční svíčky neřeší."),
-        Param.int("midnight_hour", 23, "Hodina půlnoční svíčky", min=0, max=23, group=G_MIDNIGHT),
-        Param.select("midnight_timezone", "Europe/Prague", "Časové pásmo hodiny", options=TIMEZONE_OPTIONS,
+        Param.bool("skip_midnight_candles", True, N_("Vynechat půlnoční svíčky"), group=G_MIDNIGHT,
+                   tooltip=N_("Na timeframu od H2 výš se půlnoční svíčky neřeší.")),
+        Param.int("midnight_hour", 23, N_("Hodina půlnoční svíčky"), min=0, max=23, group=G_MIDNIGHT),
+        Param.select("midnight_timezone", "Europe/Prague", N_("Časové pásmo hodiny"), options=TIMEZONE_OPTIONS,
                      group=G_MIDNIGHT,
-                     tooltip="V Pine se hodina počítá v pásmu burzy symbolu. Zvolte pásmo, ve kterém má "
-                             "půlnoční (rolloverová) svíčka nastavenou hodinu – jinak se vynechají jiné svíčky "
-                             "než v TradingView."),
+                     tooltip=N_("V Pine se hodina počítá v pásmu burzy symbolu. Zvolte pásmo, ve kterém má "
+                                "půlnoční (rolloverová) svíčka nastavenou hodinu – jinak se vynechají jiné svíčky "
+                                "než v TradingView.")),
         # Zobrazení
-        Param.bool("show_trendline", True, "Zobraz trendlinku", group=G_DISPLAY),
-        Param.bool("show_template", True, "Zobraz šablonu", group=G_DISPLAY),
-        Param.bool("show_double_top_bottom", True, "Zobraz double top / double bottom", group=G_DISPLAY),
-        Param.bool("two_color_line", False, "Dvoubarevná linka signálu", group=G_DISPLAY),
-        Param.int("line_width", 2, "Tloušťka čar", min=1, max=4, group=G_DISPLAY),
-        Param.color("trendline_long_color", "#4caf50", "Barva trendline long", group=G_DISPLAY),
-        Param.color("trendline_short_color", "#f23645", "Barva trendline short", group=G_DISPLAY),
-        Param.color("double_bottom_color", "#00ced1", "Barva double bottom", group=G_DISPLAY),
-        Param.color("double_top_color", "#00ced1", "Barva double top", group=G_DISPLAY),
-        Param.color("two_color_middle_color", "#b8860b", "Barva prostřední části dvoubarevné linky",
+        Param.bool("show_trendline", True, N_("Zobraz trendlinku"), group=G_DISPLAY),
+        Param.bool("show_template", True, N_("Zobraz šablonu"), group=G_DISPLAY),
+        Param.bool("show_double_top_bottom", True, N_("Zobraz double top / double bottom"), group=G_DISPLAY),
+        Param.bool("two_color_line", False, N_("Dvoubarevná linka signálu"), group=G_DISPLAY),
+        Param.int("line_width", 2, N_("Tloušťka čar"), min=1, max=4, group=G_DISPLAY),
+        Param.color("trendline_long_color", "#4caf50", N_("Barva trendline long"), group=G_DISPLAY),
+        Param.color("trendline_short_color", "#f23645", N_("Barva trendline short"), group=G_DISPLAY),
+        Param.color("double_bottom_color", "#00ced1", N_("Barva double bottom"), group=G_DISPLAY),
+        Param.color("double_top_color", "#00ced1", N_("Barva double top"), group=G_DISPLAY),
+        Param.color("two_color_middle_color", "#b8860b", N_("Barva prostřední části dvoubarevné linky"),
                     group=G_DISPLAY),
         # Scanner přes symboly (tabulka v grafu, alert před zavřením svíčky)
         *scanner_params(DEFAULT_SCAN_SYMBOLS, alert=True),

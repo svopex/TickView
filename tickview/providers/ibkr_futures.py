@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
+from tickview.i18n import N_
 from tickview.providers.base import TIMEFRAME_MS
 
 # Přípona kontinuálního front month kontraktu (jako v TradingView)
@@ -90,35 +91,35 @@ FUTURES: dict[str, FutureSpec] = {
     "FDAX": FutureSpec("DAX", "EUREX", "FDAX", "EUR", "DAX 40", 25, 1.0, "HMUZ", 8, ("DAX", "DE40", "GER40")),
     "FDXM": FutureSpec("DAX", "EUREX", "FDXM", "EUR", "Mini DAX 40", 5, 1.0, "HMUZ", 8, ("DAX", "DE40", "GER40")),
     "FESX": FutureSpec("ESTX50", "EUREX", "FESX", "EUR", "Euro Stoxx 50", 10, 1.0, "HMUZ", 8, ("STOXX", "EU50", "SX5E")),
-    "VX": FutureSpec("VIX", "CFE", "VX", "USD", "VIX (volatilita S&P 500)", 1000, 0.05, "", 1, ("VIX",)),
+    "VX": FutureSpec("VIX", "CFE", "VX", "USD", N_("VIX (volatilita S&P 500)"), 1000, 0.05, "", 1, ("VIX",)),
     # Kovy
-    "GC": FutureSpec("GC", "COMEX", "GC", "USD", "Zlato", 100, 0.1, "GJMQVZ", 32, ("GOLD", "ZLATO")),
-    "MGC": FutureSpec("MGC", "COMEX", "MGC", "USD", "Micro zlato", 10, 0.1, "GJMQVZ", 32, ("GOLD", "ZLATO")),
-    "SI": FutureSpec("SI", "COMEX", "SI", "USD", "Stříbro", 5000, 0.005, "HKNUZ", 32, ("SILVER", "STRIBRO")),
-    "HG": FutureSpec("HG", "COMEX", "HG", "USD", "Měď", 25000, 0.0005, "HKNUZ", 32, ("COPPER", "MED")),
-    "PL": FutureSpec("PL", "NYMEX", "PL", "USD", "Platina", 50, 0.1, "FJNV", 32, ("PLATINUM", "PLATINA")),
+    "GC": FutureSpec("GC", "COMEX", "GC", "USD", N_("Zlato"), 100, 0.1, "GJMQVZ", 32, ("GOLD", "ZLATO")),
+    "MGC": FutureSpec("MGC", "COMEX", "MGC", "USD", N_("Micro zlato"), 10, 0.1, "GJMQVZ", 32, ("GOLD", "ZLATO")),
+    "SI": FutureSpec("SI", "COMEX", "SI", "USD", N_("Stříbro"), 5000, 0.005, "HKNUZ", 32, ("SILVER", "STRIBRO")),
+    "HG": FutureSpec("HG", "COMEX", "HG", "USD", N_("Měď"), 25000, 0.0005, "HKNUZ", 32, ("COPPER", "MED")),
+    "PL": FutureSpec("PL", "NYMEX", "PL", "USD", N_("Platina"), 50, 0.1, "FJNV", 32, ("PLATINUM", "PLATINA")),
     # Energie
-    "CL": FutureSpec("CL", "NYMEX", "CL", "USD", "Ropa WTI", 1000, 0.01, "", 5, ("WTI", "OIL", "ROPA", "CRUDE", "USOIL")),
-    "MCL": FutureSpec("MCL", "NYMEX", "MCL", "USD", "Micro ropa WTI", 100, 0.01, "", 5, ("WTI", "OIL", "ROPA", "CRUDE", "USOIL")),
-    "BZ": FutureSpec("BZ", "NYMEX", "BZ", "USD", "Ropa Brent", 1000, 0.01, "", 3, ("BRENT", "OIL", "ROPA", "UKOIL")),
-    "NG": FutureSpec("NG", "NYMEX", "NG", "USD", "Zemní plyn (Henry Hub)", 10000, 0.001, "", 3, ("NATGAS", "GAS", "PLYN")),
+    "CL": FutureSpec("CL", "NYMEX", "CL", "USD", N_("Ropa WTI"), 1000, 0.01, "", 5, ("WTI", "OIL", "ROPA", "CRUDE", "USOIL")),
+    "MCL": FutureSpec("MCL", "NYMEX", "MCL", "USD", N_("Micro ropa WTI"), 100, 0.01, "", 5, ("WTI", "OIL", "ROPA", "CRUDE", "USOIL")),
+    "BZ": FutureSpec("BZ", "NYMEX", "BZ", "USD", N_("Ropa Brent"), 1000, 0.01, "", 3, ("BRENT", "OIL", "ROPA", "UKOIL")),
+    "NG": FutureSpec("NG", "NYMEX", "NG", "USD", N_("Zemní plyn (Henry Hub)"), 10000, 0.001, "", 3, ("NATGAS", "GAS", "PLYN")),
     # Dluhopisy
-    "ZT": FutureSpec("ZT", "CBOT", "ZT", "USD", "2letá US Treasury Note", 2000, 0.00390625, "HMUZ", 25, ("TNOTE", "TREASURY")),
-    "ZF": FutureSpec("ZF", "CBOT", "ZF", "USD", "5letá US Treasury Note", 1000, 0.0078125, "HMUZ", 25, ("TNOTE", "TREASURY")),
-    "ZN": FutureSpec("ZN", "CBOT", "ZN", "USD", "10letá US Treasury Note", 1000, 0.015625, "HMUZ", 25, ("TNOTE", "TREASURY")),
+    "ZT": FutureSpec("ZT", "CBOT", "ZT", "USD", N_("2letá US Treasury Note"), 2000, 0.00390625, "HMUZ", 25, ("TNOTE", "TREASURY")),
+    "ZF": FutureSpec("ZF", "CBOT", "ZF", "USD", N_("5letá US Treasury Note"), 1000, 0.0078125, "HMUZ", 25, ("TNOTE", "TREASURY")),
+    "ZN": FutureSpec("ZN", "CBOT", "ZN", "USD", N_("10letá US Treasury Note"), 1000, 0.015625, "HMUZ", 25, ("TNOTE", "TREASURY")),
     "ZB": FutureSpec("ZB", "CBOT", "ZB", "USD", "US Treasury Bond", 1000, 0.03125, "HMUZ", 25, ("TBOND", "TREASURY")),
     "FGBL": FutureSpec("GBL", "EUREX", "FGBL", "EUR", "Euro Bund", 1000, 0.01, "HMUZ", 2, ("BUND",)),
     # Zemědělské komodity
-    "ZC": FutureSpec("ZC", "CBOT", "ZC", "USD", "Kukuřice", 5000, 0.0025, "HKNUZ", 18, ("CORN", "KUKURICE")),
-    "ZS": FutureSpec("ZS", "CBOT", "ZS", "USD", "Sója", 5000, 0.0025, "FHKNQUX", 18, ("SOYBEAN", "SOJA")),
-    "ZW": FutureSpec("ZW", "CBOT", "ZW", "USD", "Pšenice", 5000, 0.0025, "HKNUZ", 18, ("WHEAT", "PSENICE")),
+    "ZC": FutureSpec("ZC", "CBOT", "ZC", "USD", N_("Kukuřice"), 5000, 0.0025, "HKNUZ", 18, ("CORN", "KUKURICE")),
+    "ZS": FutureSpec("ZS", "CBOT", "ZS", "USD", N_("Sója"), 5000, 0.0025, "FHKNQUX", 18, ("SOYBEAN", "SOJA")),
+    "ZW": FutureSpec("ZW", "CBOT", "ZW", "USD", N_("Pšenice"), 5000, 0.0025, "HKNUZ", 18, ("WHEAT", "PSENICE")),
     # Měny
     "6E": FutureSpec("EUR", "CME", "6E", "USD", "Euro FX", 125000, 0.00005, "HMUZ", 7, ("EURUSD", "EURO")),
-    "6B": FutureSpec("GBP", "CME", "6B", "USD", "Britská libra", 62500, 0.0001, "HMUZ", 7, ("GBPUSD", "POUND")),
-    "6J": FutureSpec("JPY", "CME", "6J", "USD", "Japonský jen", 12500000, 0.0000005, "HMUZ", 7, ("USDJPY", "YEN")),
-    "6A": FutureSpec("AUD", "CME", "6A", "USD", "Australský dolar", 100000, 0.00005, "HMUZ", 7, ("AUDUSD",)),
-    "6C": FutureSpec("CAD", "CME", "6C", "USD", "Kanadský dolar", 100000, 0.00005, "HMUZ", 7, ("USDCAD",)),
-    "6S": FutureSpec("CHF", "CME", "6S", "USD", "Švýcarský frank", 125000, 0.00005, "HMUZ", 7, ("USDCHF",)),
+    "6B": FutureSpec("GBP", "CME", "6B", "USD", N_("Britská libra"), 62500, 0.0001, "HMUZ", 7, ("GBPUSD", "POUND")),
+    "6J": FutureSpec("JPY", "CME", "6J", "USD", N_("Japonský jen"), 12500000, 0.0000005, "HMUZ", 7, ("USDJPY", "YEN")),
+    "6A": FutureSpec("AUD", "CME", "6A", "USD", N_("Australský dolar"), 100000, 0.00005, "HMUZ", 7, ("AUDUSD",)),
+    "6C": FutureSpec("CAD", "CME", "6C", "USD", N_("Kanadský dolar"), 100000, 0.00005, "HMUZ", 7, ("USDCAD",)),
+    "6S": FutureSpec("CHF", "CME", "6S", "USD", N_("Švýcarský frank"), 125000, 0.00005, "HMUZ", 7, ("USDCHF",)),
     # Krypto (CME)
     "BTC": FutureSpec("BRR", "CME", "BTC", "USD", "Bitcoin (CME)", 5, 5.0, "", 1, ("BITCOIN",)),
     "MBT": FutureSpec("MBT", "CME", "MBT", "USD", "Micro Bitcoin (CME)", 0.1, 5.0, "", 1, ("BITCOIN",)),

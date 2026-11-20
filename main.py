@@ -5,6 +5,7 @@ import argparse
 from nicegui import app, ui
 
 from tickview.config import DB_PATH, PROJECT_ROOT, ensure_dirs
+from tickview.i18n import load_language
 from tickview.logic.cache import KlineCache
 from tickview.providers import PROVIDERS
 from tickview.services import datafeeds
@@ -38,8 +39,10 @@ def main() -> None:
     reminders = ReminderService(cache, alert_engine)
 
     async def startup() -> None:
-        # Nejdřív databáze (schéma), pak služby, které z ní čtou
+        # Nejdřív databáze (schéma), pak služby, které z ní čtou; jazyk UI platí
+        # od startu i pro texty služeb na pozadí (alerty, Telegram, scanner)
         await cache.init()
+        await load_language(cache)
         await alert_engine.start()
         await scanner.start()
         await reminders.start()

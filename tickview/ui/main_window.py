@@ -11,6 +11,17 @@ import httpx
 from nicegui import background_tasks, context, ui
 
 from tickview.config import load_config, update_config_section
+from tickview.i18n import (
+    LANGUAGE_SETTING,
+    LANGUAGES,
+    N_,
+    js_bootstrap,
+    load_language,
+    plural,
+    set_language,
+    tr,
+    tr_options,
+)
 from tickview.logic.alerts import (
     ALERT_SORTS,
     CONDITIONS,
@@ -98,7 +109,6 @@ from tickview.logic.styles import (
     normalize_position_points,
     normalize_indicator_style,
     normalize_text_options,
-    plural,
 )
 from tickview.logic.replay import DEFAULT_REWIND_MODE, REWIND_MODES
 from tickview.logic.sessions import (
@@ -139,8 +149,10 @@ ui.dialog.default_props("transition-duration=120")
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
-# Skripty UI v pořadí načítání (vendored knihovna grafu před komponentou grafu)
+# Skripty UI v pořadí načítání (překlady tvTr jako první, vendored knihovna grafu
+# před komponentou grafu)
 STATIC_SCRIPTS = (
+    "i18n.js",
     "lightweight-charts.standalone.production.js",
     "color_picker.js",
     "dialog_tabs.js",
@@ -209,10 +221,15 @@ def register(cache: KlineCache, alert_engine: AlertEngine, scanner: ScannerServi
 async def _build_index(
     cache: KlineCache, alert_engine: AlertEngine, scanner: ScannerService, reminders: ReminderService
 ) -> None:
+    # Jazyk rozhraní z nastavení – platí pro vše, co se na stránce vykreslí
+    language = await load_language(cache)
+
     # Statické soubory (styly + JS grafu + vendored knihovna) do hlavičky stránky;
-    # verze v URL zajistí, že prohlížeč po změně souborů nepoužije starou cache
+    # verze v URL zajistí, že prohlížeč po změně souborů nepoužije starou cache.
+    # Slovník překladů pro JS (tvTr) musí být v hlavičce před skripty.
     ui.add_head_html(
-        f'<link rel="stylesheet" href="/static/style.css?v={STATIC_VERSION}">'
+        js_bootstrap()
+        + f'<link rel="stylesheet" href="/static/style.css?v={STATIC_VERSION}">'
         + "".join(f'<script src="/static/{name}?v={STATIC_VERSION}"></script>' for name in STATIC_SCRIPTS)
     )
 
@@ -326,7 +343,7 @@ async def _build_index(
         pane = active()
         live = pane.badge_live
         name = pane.provider.name if pane.provider else "—"
-        text = "—" if live is None else f"{name} · {'živě' if live else 'zpožděno'}"
+        text = "—" if live is None else f"{name} · {tr('živě') if live else tr('zpožděno')}"
         if pane.replay_shown:
             text = f"{name} · replay"
         # Z background tasků (živý stream) musíme vstoupit do slotu prvku
@@ -344,7 +361,7 @@ async def _build_index(
 
     def alerts_blocked() -> None:
         """Hláška: graf v replayi ukazuje minulost, alerty v něm nejsou."""
-        show_status("Alerty v replayi nejsou k dispozici – graf ukazuje minulost.", True)
+        show_status(tr("Alerty v replayi nejsou k dispozici – graf ukazuje minulost."), True)
 
     def replay_rewind_mode() -> str:
         """Chování kroku zpět v replayi (Settings → Replay, config.yaml)."""
@@ -378,14 +395,14 @@ async def _build_index(
 
     # Kategorie hledání (druhy instrumentů zdrojů) s popisky tlačítek
     SEARCH_CATEGORIES = {
-        "all": "Vše",
-        "stock": "Akcie",
-        "fund": "Fondy",
-        "futures": "Futures",
-        "forex": "Forex",
-        "crypto": "Krypto",
-        "index": "Indexy",
-        "commodity": "Komodity",
+        "all": tr("Vše"),
+        "stock": tr("Akcie"),
+        "fund": tr("Fondy"),
+        "futures": tr("Futures"),
+        "forex": tr("Forex"),
+        "crypto": tr("Krypto"),
+        "index": tr("Indexy"),
+        "commodity": tr("Komodity"),
     }
     # Stav dialogu: kategorie, zdroj, výsledky, zvýrazněný řádek, pořadí hledání
     # a režim výběru (funkce, která zvolený symbol zapíše do pole indikátoru)
@@ -419,7 +436,7 @@ async def _build_index(
             direct_provider, query = direct
             providers = [direct_provider]
             direct_row = result_row(direct_provider, SymbolInfo(
-                direct_provider.id, query, query, "Zadaný symbol", direct_provider.symbol_kind(query)
+                direct_provider.id, query, query, tr("Zadaný symbol"), direct_provider.symbol_kind(query)
             ))
         found_by_provider: dict[str, list[dict]] = {}
         search_state["errors"] = []
@@ -489,9 +506,9 @@ async def _build_index(
         symbol_search_results.clear()
         with symbol_search_results:
             if not visible:
-                empty = "Nic nenalezeno."
+                empty = tr("Nic nenalezeno.")
                 if search_state["errors"]:
-                    empty += " Nedostupné zdroje: " + ", ".join(search_state["errors"]) + "."
+                    empty += " " + tr("Nedostupné zdroje: {sources}.").format(sources=", ".join(search_state["errors"]))
                 ui.label(empty).classes("sym-empty")
             for index, result in enumerate(visible):
                 classes = "sym-row w-full" + (" active" if index == search_state["highlight"] else "")
@@ -507,13 +524,15 @@ async def _build_index(
                                 ui.label(result["kind"]).classes("sym-kind")
                     ui.space()
                     ui.label(result["exchange"]).classes("sym-exchange")
-                    ui.label(result["code"]).classes("sym-source").tooltip(f"Zdroj {result['provider']}")
+                    ui.label(result["code"]).classes("sym-source").tooltip(tr("Zdroj {provider}").format(provider=result["provider"]))
                     # Přidání do aktivního seznamu (nepřepne graf); symbol už v seznamu = fajfka
                     in_list = result["key"] in watch_rows
                     ui.button(icon="check" if in_list else "add", color=None).props("flat dense round size=sm").classes(
                         "sym-add"
                     ).tooltip(
-                        f"V seznamu {state.get('watchlist_name', '')}" if in_list else f"Přidat do seznamu {state.get('watchlist_name', '')}"
+                        (tr("V seznamu {name}") if in_list else tr("Přidat do seznamu {name}")).format(
+                            name=state.get("watchlist_name", "")
+                        )
                     ).on("click.stop", make_search_watch_add(result["key"]))
                 search_state["rows"].append(row)
 
@@ -604,11 +623,11 @@ async def _build_index(
         provider_id, _, symbol = key.partition(":")
         list_name = state.get("watchlist_name", "")
         if key in watch_rows:
-            show_status(f"{symbol} už v seznamu {list_name} je ({provider_id}).")
+            show_status(tr("{symbol} už v seznamu {name} je ({source}).").format(symbol=symbol, name=list_name, source=provider_id))
             return
         await cache.watchlist_add(state["watchlist_id"], provider_id, symbol)
         await rebuild_watchlist()
-        show_status(f"{symbol} přidán do seznamu {list_name} ({provider_id}).")
+        show_status(tr("{symbol} přidán do seznamu {name} ({source}).").format(symbol=symbol, name=list_name, source=provider_id))
 
     async def save_layout() -> None:
         """Uloží rozložení, synchronizaci, aktivní graf a stav všech grafů (přetrvá restart).
@@ -741,7 +760,7 @@ async def _build_index(
                     ui.button(color=None, on_click=make_chart_type_click(type_id))
                     .props("flat dense")
                     .classes("chart-type-btn" + (" chart-type-btn-active" if type_id == current else ""))
-                    .tooltip(label)
+                    .tooltip(tr(label))
                 ):
                     icon_html(icon)
         mark_active(chart_type_items, current)
@@ -755,7 +774,7 @@ async def _build_index(
                 for type_id, type_label, type_icon in section:
                     with ui.menu_item(on_click=make_chart_type_click(type_id)).classes("menu-fav-item") as item:
                         icon_html(type_icon)
-                        ui.label(type_label)
+                        ui.label(tr(type_label))
                         ui.space()
                         favorite_star("favorite_chart_types", type_id, list(CHART_TYPES), render_chart_type_bar)
                     chart_type_items[type_id] = item
@@ -789,10 +808,10 @@ async def _build_index(
                 available = [(t, label) for t, label in items if t in supported]
                 if not available:
                     continue
-                ui.label(section_title).classes("menu-section")
+                ui.label(tr(section_title)).classes("menu-section")
                 for timeframe, label in available:
                     with ui.menu_item(on_click=make_timeframe_click(timeframe)).classes("menu-fav-item") as item:
-                        ui.label(label)
+                        ui.label(tr(label))
                         ui.space()
                         favorite_star("favorite_timeframes", timeframe, TIMEFRAMES, refresh_timeframes)
                     timeframe_items[timeframe] = item
@@ -803,6 +822,14 @@ async def _build_index(
             await set_timeframe(timeframe)
 
         return _handler
+
+    async def change_language(value: str) -> None:
+        """Uloží zvolený jazyk rozhraní a znovu načte stránku (vykreslí se v novém jazyce)."""
+        if value == language:
+            return
+        set_language(value)
+        await cache.set_setting(LANGUAGE_SETTING, value)
+        ui.navigate.reload()
 
     async def toggle_theme(value: bool) -> None:
         dark_mode.set_value(value)
@@ -822,65 +849,65 @@ async def _build_index(
     # Skupiny nástrojů lišty (jako v TradingView): id, ikona, tooltip, nástroje;
     # položka {"section": …} je jen nadpis sekce ve flyout nabídce
     DRAWING_GROUPS = [
-        {"id": "g_cursor", "icon": "cursor", "tooltip": "Kurzor (výběr a tažení kreseb)",
-         "tools": [{"mode": "cursor", "tooltip": "Kurzor", "icon": "cursor"}]},
-        {"id": "g_lines", "icon": "trend", "tooltip": "Čáry, kanály a pitchforky",
+        {"id": "g_cursor", "icon": "cursor", "tooltip": tr("Kurzor (výběr a tažení kreseb)"),
+         "tools": [{"mode": "cursor", "tooltip": tr("Kurzor"), "icon": "cursor"}]},
+        {"id": "g_lines", "icon": "trend", "tooltip": tr("Čáry, kanály a pitchforky"),
          "tools": [
-             {"section": "Čáry"},
-             {"mode": "trend", "tooltip": "Trendová čára", "icon": "trend"},
-             {"mode": "ray", "tooltip": "Polopřímka", "icon": "ray"},
-             {"mode": "extended", "tooltip": "Přímka (oboustranná)", "icon": "extended"},
-             {"mode": "arrow", "tooltip": "Trendová šipka", "icon": "arrow"},
-             {"mode": "hline", "tooltip": "Horizontální linie", "icon": "hline"},
-             {"mode": "hray", "tooltip": "Horizontální polopřímka", "icon": "hray"},
-             {"mode": "vline", "tooltip": "Svislá linie", "icon": "vline"},
-             {"mode": "cross", "tooltip": "Kříž", "icon": "cross"},
-             {"section": "Kanály"},
-             {"mode": "channel", "tooltip": "Paralelní kanál (3 kliky)", "icon": "channel"},
-             {"section": "Pitchforky"},
-             {"mode": "pitchfork", "tooltip": "Pitchfork (3 kliky)", "icon": "pitchfork"},
+             {"section": tr("Čáry")},
+             {"mode": "trend", "tooltip": tr("Trendová čára"), "icon": "trend"},
+             {"mode": "ray", "tooltip": tr("Polopřímka"), "icon": "ray"},
+             {"mode": "extended", "tooltip": tr("Přímka (oboustranná)"), "icon": "extended"},
+             {"mode": "arrow", "tooltip": tr("Trendová šipka"), "icon": "arrow"},
+             {"mode": "hline", "tooltip": tr("Horizontální linie"), "icon": "hline"},
+             {"mode": "hray", "tooltip": tr("Horizontální polopřímka"), "icon": "hray"},
+             {"mode": "vline", "tooltip": tr("Svislá linie"), "icon": "vline"},
+             {"mode": "cross", "tooltip": tr("Kříž"), "icon": "cross"},
+             {"section": tr("Kanály")},
+             {"mode": "channel", "tooltip": tr("Paralelní kanál (3 kliky)"), "icon": "channel"},
+             {"section": tr("Pitchforky")},
+             {"mode": "pitchfork", "tooltip": tr("Pitchfork (3 kliky)"), "icon": "pitchfork"},
          ]},
         {"id": "g_fib", "icon": "fib", "tooltip": "Fibonacci",
          "tools": [
              {"mode": "fib", "tooltip": "Fibonacci retracement", "icon": "fib"},
              {"mode": "fibext", "tooltip": "Fibonacci extension", "icon": "fibext"},
          ]},
-        {"id": "g_shapes", "icon": "rect", "tooltip": "Tvary",
+        {"id": "g_shapes", "icon": "rect", "tooltip": tr("Tvary"),
          "tools": [
-             {"mode": "rect", "tooltip": "Obdélník", "icon": "rect"},
-             {"mode": "brush", "tooltip": "Štětec", "icon": "brush"},
+             {"mode": "rect", "tooltip": tr("Obdélník"), "icon": "rect"},
+             {"mode": "brush", "tooltip": tr("Štětec"), "icon": "brush"},
          ]},
-        {"id": "g_text", "icon": "text", "tooltip": "Text a stickers",
+        {"id": "g_text", "icon": "text", "tooltip": tr("Text a stickers"),
          "tools": [
              {"mode": "text", "tooltip": "Text", "icon": "text"},
              {"mode": "sticker", "tooltip": "Sticker (emoji)", "icon": "sticker"},
          ]},
-        {"id": "g_forecast", "icon": "long", "tooltip": "Prognózy a měření (Long / Short position, měřič)",
+        {"id": "g_forecast", "icon": "long", "tooltip": tr("Prognózy a měření (Long / Short position, měřič)"),
          "tools": [
-             {"section": "Prognózy"},
+             {"section": tr("Prognózy")},
              {"mode": "long", "tooltip": "Long position", "icon": "long"},
              {"mode": "short", "tooltip": "Short position", "icon": "short"},
-             {"section": "Měření"},
-             {"mode": "measure", "tooltip": "Měřič (Δcena, %, bary)", "icon": "measure"},
+             {"section": tr("Měření")},
+             {"mode": "measure", "tooltip": tr("Měřič (Δcena, %, bary)"), "icon": "measure"},
          ]},
     ]
     # Režimy všech nástrojů v pořadí lišty (oblíbené v plovoucím panelu)
     TOOL_MODES = [tool["mode"] for group in DRAWING_GROUPS for tool in group["tools"] if "mode" in tool]
     DRAWING_LABELS = {
-        "hline": "Horizontální linie",
-        "vline": "Svislá linie",
-        "trend": "Trendová čára",
-        "ray": "Polopřímka",
-        "extended": "Přímka",
-        "arrow": "Trendová šipka",
-        "hray": "Horizontální polopřímka",
-        "cross": "Kříž",
-        "channel": "Paralelní kanál",
+        "hline": tr("Horizontální linie"),
+        "vline": tr("Svislá linie"),
+        "trend": tr("Trendová čára"),
+        "ray": tr("Polopřímka"),
+        "extended": tr("Přímka"),
+        "arrow": tr("Trendová šipka"),
+        "hray": tr("Horizontální polopřímka"),
+        "cross": tr("Kříž"),
+        "channel": tr("Paralelní kanál"),
         "fib": "Fibonacci retracement",
         "fibext": "Fibonacci extension",
         "pitchfork": "Pitchfork",
-        "rect": "Obdélník",
-        "brush": "Štětec",
+        "rect": tr("Obdélník"),
+        "brush": tr("Štětec"),
         "text": "Text",
         "sticker": "Sticker",
         "long": "Long position",
@@ -933,7 +960,7 @@ async def _build_index(
         # Oblíbené nástroje z hvězdiček ve flyoutu (JS je už zobrazil)
         favorites = normalize_favorites(modes, TOOL_MODES)
         await cache.set_setting("favorite_tools", json.dumps(favorites))
-        show_status(f"Oblíbené nástroje: {len(favorites)}." if favorites else "Žádné oblíbené nástroje.")
+        show_status(tr("Oblíbené nástroje: {count}.").format(count=len(favorites)) if favorites else tr("Žádné oblíbené nástroje."))
 
     async def save_favorites_position(left, top) -> None:
         # Pozice plovoucího panelu po přetažení (px vůči oknu)
@@ -952,7 +979,7 @@ async def _build_index(
         paint_favorites_button()
         active().chart.set_favorites_visible(visible)
         await cache.set_setting("favorites_visible", "1" if visible else "0")
-        show_status(f"Panel oblíbených nástrojů {'zobrazen' if visible else 'skryt'}.")
+        show_status(tr("Panel oblíbených nástrojů zobrazen.") if visible else tr("Panel oblíbených nástrojů skryt."))
 
     async def restore_favorites() -> None:
         # Oblíbené nástroje, pozice a viditelnost panelu z minula (po init
@@ -965,9 +992,9 @@ async def _build_index(
 
     # Popisy režimů magnetu pro stavovou lištu
     MAGNET_LABELS = {
-        "off": "vypnut",
-        "weak": "slabý – bod kresby se přichytí k O/H/L/C svíčky, když je kurzor blízko",
-        "strong": "silný – body kreseb se vždy přichytí k nejbližší O/H/L/C svíčky",
+        "off": tr("vypnut"),
+        "weak": tr("slabý – bod kresby se přichytí k O/H/L/C svíčky, když je kurzor blízko"),
+        "strong": tr("silný – body kreseb se vždy přichytí k nejbližší O/H/L/C svíčky"),
     }
 
     def set_action_icon(action: str, icon: str) -> None:
@@ -987,7 +1014,7 @@ async def _build_index(
         for pane in panes:
             await pane.chart.set_magnet(mode)
         await cache.set_setting("magnet", mode)
-        show_status(f"Magnet {MAGNET_LABELS[mode]}.")
+        show_status(tr("Magnet {state}.").format(state=MAGNET_LABELS[mode]))
 
     async def toggle_pencil() -> None:
         # Režim tužky: nástroj zůstává vybraný i po nakreslení (jako v TradingView)
@@ -995,7 +1022,7 @@ async def _build_index(
         paint_action("pencil", state["keep_tool"])
         for pane in panes:
             await pane.chart.set_keep_tool(state["keep_tool"])
-        show_status(f"Režim kreslení {'zapnut' if state['keep_tool'] else 'vypnut'}.")
+        show_status(tr("Režim kreslení zapnut.") if state["keep_tool"] else tr("Režim kreslení vypnut."))
 
     async def toggle_lock() -> None:
         # Zámek: kresby nelze vybírat, posouvat ani mazat (všechny grafy)
@@ -1004,7 +1031,7 @@ async def _build_index(
         paint_action("lock", state["locked"])
         for pane in panes:
             await pane.chart.set_locked(state["locked"])
-        show_status(f"Kresby {'uzamčeny' if state['locked'] else 'odemčeny'}.")
+        show_status(tr("Kresby uzamčeny.") if state["locked"] else tr("Kresby odemčeny."))
 
     async def toggle_hide_drawings() -> None:
         # Skrytí/zobrazení všech kreseb (ikona oka, všechny grafy)
@@ -1019,7 +1046,7 @@ async def _build_index(
         # kresby; do databáze se smazání propíše přes události "delete"
         removed = await active().chart.trash_drawings()
         if removed:
-            show_status(f"Smazáno kreseb: {removed}.")
+            show_status(tr("Smazáno kreseb: {count}.").format(count=removed))
 
     async def apply_pane_settings(pane: ChartPane) -> None:
         """Pošle nově inicializovanému grafu společné nastavení kreslení a rozložení."""
@@ -1211,7 +1238,7 @@ async def _build_index(
         if kind == "text":
             text = (drawing_text.value or "").strip()
             if not text:
-                ui.notify("Text nesmí být prázdný.", type="warning")
+                ui.notify(tr("Text nesmí být prázdný."), type="warning")
                 return
         # Pozice: ceny vstupu, cíle a stopu z dialogu (časy zůstanou)
         points = None
@@ -1232,7 +1259,7 @@ async def _build_index(
             # Nový text z nástroje Text: graf ho přidá a pošle k uložení
             anchor = current["points"][0]
             await pane.chart.add_text(anchor["time"], anchor["price"], text, color, options)
-            show_status("Text přidán a uložen.")
+            show_status(tr("Text přidán a uložen."))
             return
         await cache.update_drawing_style(*pane.drawing_owner, current["id"], color, text, options)
         if points is not None:
@@ -1241,7 +1268,7 @@ async def _build_index(
         # Grafy se symbolem kresby si ji načtou znovu (viditelnost podle
         # timeframu může kresbu v některém grafu skrýt nebo ukázat)
         await refresh_symbol_drawings(pane)
-        show_status(f"{DRAWING_LABELS.get(kind, kind)}: nastavení uloženo.")
+        show_status(tr("{drawing}: nastavení uloženo.").format(drawing=DRAWING_LABELS.get(kind, kind)))
 
     async def set_volume_visible(visible: bool) -> None:
         # Zobrazení objemu (Settings grafu / oko v legendě; všechny grafy);
@@ -1357,7 +1384,7 @@ async def _build_index(
         chart_settings_dialog.close()
         await cache.set_setting("chart_style", json.dumps(state["chart_style"]))
         await set_volume_visible(values["volume"])
-        show_status("Settings grafu uloženy.")
+        show_status(tr("Settings grafu uloženy."))
 
     def on_chart_dialog_change(event) -> None:
         # Zavření bez Ok (Cancel, křížek, Esc, klik mimo) vrátí uložený vzhled
@@ -1450,7 +1477,7 @@ async def _build_index(
             drawing_id = payload.get("id")
             if drawing_id:
                 await delete_pane_drawing(pane, int(drawing_id), skip=pane)
-                show_status("Kresba smazána.")
+                show_status(tr("Kresba smazána."))
         elif event_type == "update":
             drawing_id = payload.get("id")
             if drawing_id:
@@ -1495,7 +1522,9 @@ async def _build_index(
             await refresh_symbol_drawings(pane, skip=pane)
             # Kresba v replayi může mít vlastní nápovědu (pozice = zadání obchodu z menu)
             show_status(replay_ui.drawing_hint(pane, payload["kind"])
-                        or f"Kresba uložena ({DRAWING_LABELS[payload['kind']]}) k {symbol}")
+                        or tr("Kresba uložena ({drawing}) k {symbol}").format(
+                            drawing=DRAWING_LABELS[payload["kind"]], symbol=symbol
+                        ))
 
     # ---------- watchlist ----------
 
@@ -1521,7 +1550,7 @@ async def _build_index(
                 provider = get_provider(provider_id)
                 tickers = await provider.tickers(symbols)
             except Exception as exc:
-                show_status(f"Ceny watchlistu ({provider_id}) nedostupné: {exc}", error=True)
+                show_status(tr("Ceny watchlistu ({source}) nedostupné: {error}").format(source=provider_id, error=exc), error=True)
                 continue
             for symbol in symbols:
                 quote = tickers.get(symbol)
@@ -1586,13 +1615,13 @@ async def _build_index(
                     ui.space()
                     ui.label(str(item["count"])).classes("wl-count")
             ui.separator()
-            ui.menu_item("Nový seznam…", on_click=lambda: open_watchlist_name("create")).classes("wl-item")
-            ui.menu_item("Přejmenovat…", on_click=lambda: open_watchlist_name("rename")).classes("wl-item")
-            ui.menu_item("Vytvořit kopii…", on_click=lambda: open_watchlist_name("copy")).classes("wl-item")
-            ui.menu_item("Vyprázdnit seznam", on_click=lambda: confirm_watchlist("clear")).classes("wl-item")
+            ui.menu_item(tr("Nový seznam…"), on_click=lambda: open_watchlist_name("create")).classes("wl-item")
+            ui.menu_item(tr("Přejmenovat…"), on_click=lambda: open_watchlist_name("rename")).classes("wl-item")
+            ui.menu_item(tr("Vytvořit kopii…"), on_click=lambda: open_watchlist_name("copy")).classes("wl-item")
+            ui.menu_item(tr("Vyprázdnit seznam"), on_click=lambda: confirm_watchlist("clear")).classes("wl-item")
             # Poslední seznam smazat nejde – vždy musí existovat aspoň jeden
             if len(lists) > 1:
-                ui.menu_item("Smazat seznam", on_click=lambda: confirm_watchlist("delete")).classes("wl-item wl-danger")
+                ui.menu_item(tr("Smazat seznam"), on_click=lambda: confirm_watchlist("delete")).classes("wl-item wl-danger")
 
     def make_switch_watchlist(list_id: int):
         async def _handler() -> None:
@@ -1604,17 +1633,17 @@ async def _build_index(
     def open_watchlist_name(mode: str) -> None:
         # Dialog názvu seznamu: nový / přejmenování / kopie aktivního seznamu
         state["watchlist_name_mode"] = mode
-        titles = {"create": "Nový seznam", "rename": "Přejmenovat seznam", "copy": "Kopie seznamu"}
+        titles = {"create": tr("Nový seznam"), "rename": tr("Přejmenovat seznam"), "copy": tr("Kopie seznamu")}
         watchlist_name_title.text = titles[mode]
         current = state["watchlist_name"]
-        watchlist_name_input.value = {"create": "", "rename": current, "copy": f"{current} (kopie)"}[mode]
+        watchlist_name_input.value = {"create": "", "rename": current, "copy": tr("{name} (kopie)").format(name=current)}[mode]
         watchlist_name_dialog.open()
 
     async def submit_watchlist_name() -> None:
         # Uloží název podle režimu dialogu; nový seznam i kopie se rovnou zobrazí
         name = clean_name(watchlist_name_input.value)
         if not name:
-            ui.notify(f"Zadejte název seznamu (1–{MAX_NAME_LENGTH} znaků).", type="warning")
+            ui.notify(tr("Zadejte název seznamu (1–{max_length} znaků).").format(max_length=MAX_NAME_LENGTH), type="warning")
             return
         mode = state.get("watchlist_name_mode")
         watchlist_name_dialog.close()
@@ -1623,12 +1652,12 @@ async def _build_index(
             await cache.watchlist_rename(state["watchlist_id"], name)
             state["watchlist_name"] = name
             render_watchlist_menu(await cache.watchlists())
-            show_status(f"Seznam přejmenován na {name}.")
+            show_status(tr("Seznam přejmenován na {name}.").format(name=name))
             return
         copy_from = state["watchlist_id"] if mode == "copy" else None
         list_id = await cache.watchlist_create(name, copy_from=copy_from)
         await cache.set_setting("active_watchlist", str(list_id))
-        show_status(f"Seznam {name} vytvořen.")
+        show_status(tr("Seznam {name} vytvořen.").format(name=name))
         await rebuild_watchlist()
 
     def confirm_watchlist(action: str) -> None:
@@ -1636,8 +1665,8 @@ async def _build_index(
         state["watchlist_confirm"] = action
         name = state["watchlist_name"]
         watchlist_confirm_text.text = (
-            f"Odebrat ze seznamu {name} všechny symboly?" if action == "clear" else f"Smazat seznam {name}?"
-        )
+            tr("Odebrat ze seznamu {name} všechny symboly?") if action == "clear" else tr("Smazat seznam {name}?")
+        ).format(name=name)
         watchlist_confirm_dialog.open()
 
     async def submit_watchlist_confirm() -> None:
@@ -1646,10 +1675,10 @@ async def _build_index(
         name = state["watchlist_name"]
         if action == "clear":
             await cache.watchlist_clear(state["watchlist_id"])
-            show_status(f"Seznam {name} vyprázdněn.")
+            show_status(tr("Seznam {name} vyprázdněn.").format(name=name))
         elif action == "delete":
             await cache.watchlist_delete(state["watchlist_id"])
-            show_status(f"Seznam {name} smazán.")
+            show_status(tr("Seznam {name} smazán.").format(name=name))
         await rebuild_watchlist()
 
     async def rebuild_watchlist() -> None:
@@ -1752,8 +1781,13 @@ async def _build_index(
         try:
             message = await IbkrProvider.test_connection(values["host"], values["port"], values["client_id"])
         except Exception as exc:
-            ui.notify(f"IBKR: připojení k {values['host']}:{values['port']} selhalo – {exc!r}", type="negative",
-                      multi_line=True)
+            ui.notify(
+                tr("IBKR: připojení k {host}:{port} selhalo – {error}").format(
+                    host=values["host"], port=values["port"], error=repr(exc)
+                ),
+                type="negative",
+                multi_line=True,
+            )
             return
         ui.notify(message, type="positive")
 
@@ -1772,10 +1806,10 @@ async def _build_index(
         }
         if telegram != dict(zip(("bot_token", "chat_id"), telegram_settings(config))):
             update_config_section("telegram", telegram)
-            messages.append("Telegram uložen")
+            messages.append(tr("Telegram uložen"))
         if ibkr != connection_settings(config):
             update_config_section("ibkr", ibkr)
-            messages.append("IBKR uloženo a přepojeno")
+            messages.append(tr("IBKR uloženo a přepojeno"))
         alpaca_config = config.get("alpaca") or {}
         alpaca = {
             "endpoint": (settings_alpaca_endpoint.value or "").strip() or ALPACA_DEFAULT_ENDPOINT,
@@ -1786,16 +1820,16 @@ async def _build_index(
         saved_alpaca["endpoint"] = saved_alpaca["endpoint"] or ALPACA_DEFAULT_ENDPOINT
         if alpaca != saved_alpaca:
             update_config_section("alpaca", alpaca)
-            messages.append("Alpaca uložena – změna se projeví po restartu aplikace")
+            messages.append(tr("Alpaca uložena – změna se projeví po restartu aplikace"))
         if settings_replay_rewind.value != replay_rewind_mode():
             update_config_section("replay", {"rewind": settings_replay_rewind.value})
-            messages.append("Replay uložen")
+            messages.append(tr("Replay uložen"))
         if messages:
             # Zdroje si změněnou konfiguraci načtou samy (IBKR se přepojí bez restartu)
             for provider in PROVIDERS:
                 provider.reload_config()
         settings_dialog.close()
-        show_status((" · ".join(messages) + " (config.yaml).") if messages else "Nastavení beze změny.")
+        show_status((" · ".join(messages) + " (config.yaml).") if messages else tr("Nastavení beze změny."))
 
     def open_settings_dialog() -> None:
         # Vyplníme aktuální hodnoty z konfigurace pro kontrolu/přepis
@@ -1816,7 +1850,7 @@ async def _build_index(
         # Chat id z poslední zprávy botovi (uživatel mu musí nejdřív napsat)
         token = (settings_telegram_token.value or "").strip()
         if not token:
-            ui.notify("Nejdřív vložte token bota od @BotFather.", type="warning")
+            ui.notify(tr("Nejdřív vložte token bota od @BotFather."), type="warning")
             return
         try:
             async with httpx.AsyncClient() as client:
@@ -1825,25 +1859,25 @@ async def _build_index(
             ui.notify(f"Telegram: {exc}", type="negative")
             return
         if not chat_id:
-            ui.notify("Bot zatím nemá žádnou zprávu – napište mu (např. /start) a zkuste to znovu.", type="warning")
+            ui.notify(tr("Bot zatím nemá žádnou zprávu – napište mu (např. /start) a zkuste to znovu."), type="warning")
             return
         settings_telegram_chat.value = chat_id
-        ui.notify(f"Chat ID {chat_id} doplněno – nezapomeňte uložit.", type="positive")
+        ui.notify(tr("Chat ID {chat_id} doplněno – nezapomeňte uložit.").format(chat_id=chat_id), type="positive")
 
     async def test_telegram() -> None:
         # Testovací zpráva s hodnotami z dialogu (i neuloženými)
         token = (settings_telegram_token.value or "").strip()
         chat_id = (settings_telegram_chat.value or "").strip()
         if not token or not chat_id:
-            ui.notify("Vyplňte token bota i chat ID.", type="warning")
+            ui.notify(tr("Vyplňte token bota i chat ID."), type="warning")
             return
         try:
             async with httpx.AsyncClient() as client:
-                await send_telegram(client, token, chat_id, "✅ TickView: testovací zpráva alertů.")
+                await send_telegram(client, token, chat_id, tr("✅ TickView: testovací zpráva alertů."))
         except Exception as exc:
-            ui.notify(f"Odeslání selhalo: {exc}", type="negative")
+            ui.notify(tr("Odeslání selhalo: {error}").format(error=exc), type="negative")
             return
-        ui.notify("Testovací zpráva odeslána.", type="positive")
+        ui.notify(tr("Testovací zpráva odeslána."), type="positive")
 
     # ---------- indikátory ----------
 
@@ -1885,7 +1919,11 @@ async def _build_index(
             spec["color"] = color
         active().indicators.append(spec)
         await indicators_changed()
-        show_status(f"Přidán indikátor {indicator_title(spec)} – nastavení přes ozubené kolečko v legendě grafu.")
+        show_status(
+            tr("Přidán indikátor {indicator} – nastavení přes ozubené kolečko v legendě grafu.").format(
+                indicator=indicator_title(spec)
+            )
+        )
 
     async def remove_indicator(indicator_id) -> None:
         spec = find_indicator(indicator_id)
@@ -1893,7 +1931,7 @@ async def _build_index(
             return
         active().indicators = [item for item in active().indicators if item["id"] != indicator_id]
         await indicators_changed()
-        show_status(f"Indikátor {indicator_title(spec)} odebrán.")
+        show_status(tr("Indikátor {indicator} odebrán.").format(indicator=indicator_title(spec)))
 
     async def toggle_indicator(indicator_id) -> None:
         # Oko v legendě: skrytí/zobrazení čar indikátoru (zůstává v legendě)
@@ -1950,8 +1988,12 @@ async def _build_index(
         return _handler
 
     def indicator_matches(indicator, query: str) -> bool:
-        # Hledání v nabídce: zkratka, celý název i popis (bez ohledu na velikost)
-        haystack = " ".join((indicator.id, indicator.title, indicator.name, indicator.description)).lower()
+        # Hledání v nabídce: zkratka, celý název i popis (bez ohledu na velikost);
+        # název a popis česky i v jazyce rozhraní
+        haystack = " ".join((
+            indicator.id, indicator.title, indicator.name, indicator.description,
+            tr(indicator.name), tr(indicator.description),
+        )).lower()
         return all(word in haystack for word in query.lower().split())
 
     def render_indicator_menu() -> None:
@@ -1967,11 +2009,11 @@ async def _build_index(
             indicators = all_indicators()
             favorite_count = sum(1 for kind in state["favorite_indicators"] if kind in indicators)
             entries = [
-                ("all", "Všechny indikátory"),
-                ("favorites", f"Oblíbené ({favorite_count})"),
-                ("active", f"Aktivní ({len(active().indicators)})"),
+                ("all", tr("Všechny indikátory")),
+                ("favorites", tr("Oblíbené ({count})").format(count=favorite_count)),
+                ("active", tr("Aktivní ({count})").format(count=len(active().indicators))),
             ]
-            entries += list(CATEGORIES.items())
+            entries += [(key, tr(label)) for key, label in CATEGORIES.items()]
             for key, label in entries:
                 ui.label(label).classes("ind-cat" + (" active" if key == category and not query else "")).on(
                     "click", make_category_click(key)
@@ -1982,25 +2024,25 @@ async def _build_index(
             if category == "active" and not query:
                 # Aktivní instance s nastavením / skrytím / odebráním
                 if not active().indicators:
-                    ui.label("Žádný aktivní indikátor – vyberte ze seznamu.").classes("ind-empty")
+                    ui.label(tr("Žádný aktivní indikátor – vyberte ze seznamu.")).classes("ind-empty")
                 for spec in active().indicators:
                     indicator = get_indicator(spec["kind"])
                     with ui.row().classes("ind-item ind-item-active w-full"):
                         with ui.column().classes("ind-item-text"):
                             ui.label(indicator_title(spec)).classes("ind-item-title")
-                            ui.label(indicator.name if indicator else "Indikátor se nenačetl").classes("ind-item-desc")
+                            ui.label(tr(indicator.name) if indicator else tr("Indikátor se nenačetl")).classes("ind-item-desc")
                         ui.space()
                         visible = spec.get("visible", True)
                         ui.button(
                             icon="visibility" if visible else "visibility_off",
                             on_click=make_instance_action("toggle", spec["id"]),
-                        ).props("flat dense round size=sm").tooltip("Skrýt / zobrazit")
+                        ).props("flat dense round size=sm").tooltip(tr("Skrýt / zobrazit"))
                         ui.button(icon="settings", on_click=make_instance_action("settings", spec["id"])).props(
                             "flat dense round size=sm"
-                        ).tooltip("Nastavení")
+                        ).tooltip(tr("Nastavení"))
                         ui.button(icon="close", on_click=make_instance_action("remove", spec["id"])).props(
                             "flat dense round size=sm"
-                        ).tooltip("Odebrat")
+                        ).tooltip(tr("Odebrat"))
                 return
             # Seznam indikátorů registru: při hledání se prohledávají všechny,
             # jinak filtr kategorie, nebo oblíbené
@@ -2015,10 +2057,11 @@ async def _build_index(
                     else category in ("all", indicator.category) or (show_favorites and kind in favorites)
                 )
             ]
-            kinds.sort(key=lambda kind: indicators[kind].name.lower())
+            # Řazení podle názvu v jazyce rozhraní
+            kinds.sort(key=lambda kind: tr(indicators[kind].name).lower())
             if not kinds:
                 ui.label(
-                    "Žádný oblíbený indikátor – označte ho hvězdičkou vpravo." if show_favorites else "Nic nenalezeno."
+                    tr("Žádný oblíbený indikátor – označte ho hvězdičkou vpravo.") if show_favorites else tr("Nic nenalezeno.")
                 ).classes("ind-empty")
             # Vlastní indikátory, které se nenačetly (chyba v souboru), ukážeme v kategorii Vlastní
             if category == "custom" and not query:
@@ -2029,13 +2072,13 @@ async def _build_index(
                 with ui.row().classes("ind-item w-full").on("click", make_add_click(kind)):
                     with ui.column().classes("ind-item-text"):
                         with ui.row().classes("ind-item-head"):
-                            ui.label(indicator.name).classes("ind-item-title")
-                            ui.label(indicator.title).classes("ind-item-abbr")
-                        ui.label(indicator.description).classes("ind-item-desc")
+                            ui.label(tr(indicator.name)).classes("ind-item-title")
+                            ui.label(tr(indicator.title)).classes("ind-item-abbr")
+                        ui.label(tr(indicator.description)).classes("ind-item-desc")
                     ui.space()
-                    ui.label(CATEGORIES[indicator.category]).classes("ind-item-cat")
+                    ui.label(tr(CATEGORIES[indicator.category])).classes("ind-item-cat")
                     if counts.get(kind):
-                        ui.badge(str(counts[kind])).classes("ind-item-count").tooltip("Počet aktivních instancí")
+                        ui.badge(str(counts[kind])).classes("ind-item-count").tooltip(tr("Počet aktivních instancí"))
                     # Hvězdička oblíbeného (.stop – kliknutí na ni indikátor do grafu nepřidá)
                     favorite_star("favorite_indicators", kind, None, render_indicator_menu)
 
@@ -2098,14 +2141,15 @@ async def _build_index(
             return
         indicator = get_indicator(spec["kind"])
         if indicator is None:
-            show_status(f"Indikátor {spec['kind']} se nenačetl – zkontrolujte jeho soubor.", error=True)
+            show_status(tr("Indikátor {kind} se nenačetl – zkontrolujte jeho soubor.").format(kind=spec["kind"]), error=True)
             return
         settings_state["id"] = indicator_id
         settings_state["color"] = indicator_color(spec, active().indicators.index(spec))
         # Výstupy indikátoru pro záložku Style (výpočet nad umělými svíčkami mimo smyčku událostí)
         settings_state["lines"] = await asyncio.to_thread(sample_lines, indicator, spec["params"])
         # Titulek jako v TradingView: název, zkratka jen když se liší
-        settings_title.text = indicator.name if indicator.title == indicator.name else f"{indicator.name} ({indicator.title})"
+        name, title = tr(indicator.name), tr(indicator.title)
+        settings_title.text = name if indicator.title == indicator.name else f"{name} ({title})"
         settings_ind_tabs.value = inputs_tab
         fill_indicator_settings(spec["kind"], spec["params"], spec)
         await indicator_templates.refresh()
@@ -2163,7 +2207,7 @@ async def _build_index(
             spec["color"] = values["color"]
         indicator_settings_dialog.close()
         await indicators_changed()
-        show_status(f"Indikátor {indicator_title(spec)} upraven.")
+        show_status(tr("Indikátor {indicator} upraven.").format(indicator=indicator_title(spec)))
 
     # ---------- alerty (jako v TradingView; vyhodnocuje je AlertEngine na serveru) ----------
 
@@ -2192,7 +2236,9 @@ async def _build_index(
         return (alert_source.value or "price") != "price"
 
     def set_select_options(field, options: dict) -> None:
-        # Nové nabídky výběru; hodnota zůstane, pokud v nich je, jinak první nabídka
+        # Nové nabídky výběru (popisky v jazyce rozhraní); hodnota zůstane, pokud
+        # v nich je, jinak první nabídka
+        options = tr_options(options)
         field.set_options(options, value=field.value if field.value in options else next(iter(options)))
 
     def apply_alert_source() -> None:
@@ -2267,7 +2313,7 @@ async def _build_index(
         pane = active()
         if alert is None:
             if not pane.key:
-                ui.notify("Nejdřív zvolte symbol.", type="warning")
+                ui.notify(tr("Nejdřív zvolte symbol."), type="warning")
                 return
             if pane.replay_covers():
                 # Všechny cesty k novému alertu (lišta, graf, legenda) – graf v replayi ukazuje minulost
@@ -2283,7 +2329,7 @@ async def _build_index(
         # Cíle: cena a čáry kreseb symbolu a timeframu alertu
         drawings = [d for d in await cache.load_drawings(source, symbol) if d["kind"] in LINE_KINDS]
         alert_form["drawing_kinds"] = {d["id"]: d["kind"] for d in drawings}
-        options = {"value": "Cena (hodnota)"}
+        options = {"value": tr("Cena (hodnota)")}
         for drawing in drawings:
             label = DRAWING_LABELS.get(drawing["kind"], drawing["kind"])
             if drawing["kind"] in ("hline", "hray") and drawing["points"]:
@@ -2293,7 +2339,7 @@ async def _build_index(
         alert_target.update()
         # Zdroje podmínky: cena a indikátory se signály v grafu stejného symbolu
         # a timeframu; upravovaný alert na indikátor nabízí i své uložené nastavení
-        sources = {"price": f"{symbol} (cena)"}
+        sources = {"price": tr("{symbol} (cena)").format(symbol=symbol)}
         targets: dict = {}
         if pane.provider_id == source and pane.symbol == symbol and pane.timeframe == timeframe:
             for instance in pane.indicators:
@@ -2303,7 +2349,7 @@ async def _build_index(
                     targets[f"ind:{instance['id']}"] = {"kind": instance["kind"], "params": dict(instance["params"])}
         saved_target = alert["target"] if alert and alert["target"]["type"] == "indicator" else None
         if saved_target:
-            sources["ind:saved"] = f"{target_label(saved_target)} (nastavení alertu)"
+            sources["ind:saved"] = tr("{target} (nastavení alertu)").format(target=target_label(saved_target))
             targets["ind:saved"] = {"kind": saved_target["kind"], "params": saved_target["params"]}
         alert_form["indicator_targets"] = targets
         alert_source.options = sources
@@ -2325,7 +2371,9 @@ async def _build_index(
             # Klon prošlého alertu dostane novou výchozí expiraci
             if clone and spec.get("expires_at") and spec["expires_at"] <= utc_now_ms():
                 spec["expires_at"] = utc_now_ms() + DEFAULT_EXPIRATION_MS
-        alert_dialog_title.text = f"{'Upravit' if editing else 'Create'} alert on {symbol}, {timeframe}"
+        # Titulek „Create alert on …“ zůstává jako v TradingView, úprava se překládá
+        title = tr("Upravit alert on {symbol}, {timeframe}") if editing else "Create alert on {symbol}, {timeframe}"
+        alert_dialog_title.text = title.format(symbol=symbol, timeframe=timeframe)
         alert_submit.text = "Save" if editing else "Create"
         alert_form["filling"] = True
         try:
@@ -2375,10 +2423,10 @@ async def _build_index(
             try:
                 expires_at = int(datetime.fromisoformat(alert_expiration.value).timestamp() * 1000)
             except (TypeError, ValueError):
-                ui.notify("Zadejte platné datum a čas expirace.", type="warning")
+                ui.notify(tr("Zadejte platné datum a čas expirace."), type="warning")
                 return
             if expires_at <= utc_now_ms():
-                ui.notify("Expirace musí být v budoucnosti.", type="warning")
+                ui.notify(tr("Expirace musí být v budoucnosti."), type="warning")
                 return
         data = {
             "source": alert_form["source"],
@@ -2402,12 +2450,12 @@ async def _build_index(
             ui.notify(str(exc), type="warning")
             return
         if alert_notify_webhook.value and not spec["notify"]["webhook"]:
-            ui.notify("Zadejte Webhook URL, nebo webhook vypněte.", type="warning")
+            ui.notify(tr("Zadejte Webhook URL, nebo webhook vypněte."), type="warning")
             return
         alert_dialog.close()
         await cache.save_alert(spec, alert_form["id"])
         await alert_engine.reload()
-        show_status(f"Alert {'upraven' if alert_form['id'] else 'vytvořen'}: {spec['message']}")
+        show_status((tr("Alert upraven: {message}") if alert_form["id"] else tr("Alert vytvořen: {message}")).format(message=spec["message"]))
 
     async def set_alert_active(alert: dict, active: bool) -> None:
         # Pozastavení / obnovení alertu (obnovený začne vyhodnocovat od další ceny)
@@ -2457,7 +2505,7 @@ async def _build_index(
         # bez Telegramu i webhooku jen upozornění, že není co posílat ven
         with page_root:
             if not delivery:
-                ui.notify("Test alertu: Telegram ani webhook nejsou zapnuté.", type="info")
+                ui.notify(tr("Test alertu: Telegram ani webhook nejsou zapnuté."), type="info")
                 return
             all_ok = all(item["ok"] for item in delivery)
             parts = [
@@ -2465,7 +2513,7 @@ async def _build_index(
                 for item in delivery
             ]
             ui.notify(
-                "Test alertu: " + ", ".join(parts),
+                tr("Test alertu: {results}").format(results=", ".join(parts)),
                 type="positive" if all_ok else "negative",
                 multi_line=True,
                 timeout=5000 if all_ok else 15000,
@@ -2474,7 +2522,7 @@ async def _build_index(
     async def delete_alert(alert: dict) -> None:
         await cache.delete_alert(alert["id"])
         await alert_engine.reload()
-        show_status(f"Alert {alert['symbol']} smazán.")
+        show_status(tr("Alert {symbol} smazán.").format(symbol=alert["symbol"]))
 
     def alerts_visible() -> bool:
         # Seznam / log alertů je vidět jen při otevřeném panelu Alerty
@@ -2535,16 +2583,16 @@ async def _build_index(
 
     def alert_menu_items(alert: dict) -> None:
         # Položky nabídky alertu (⋯ i pravý klik) jako v TradingView
-        ui.menu_item("Upravit…", on_click=make_alert_action("edit", alert))
-        ui.menu_item("Klonovat…", on_click=make_alert_action("clone", alert))
+        ui.menu_item(tr("Upravit…"), on_click=make_alert_action("edit", alert))
+        ui.menu_item(tr("Klonovat…"), on_click=make_alert_action("clone", alert))
         if alert["active"]:
-            ui.menu_item("Pozastavit", on_click=make_alert_action("pause", alert))
+            ui.menu_item(tr("Pozastavit"), on_click=make_alert_action("pause", alert))
         else:
-            ui.menu_item("Spustit znovu", on_click=make_alert_action("resume", alert))
-        ui.menu_item("Zobrazit v grafu", on_click=make_alert_action("show", alert))
-        ui.menu_item("Test alertu", on_click=make_alert_action("test", alert))
+            ui.menu_item(tr("Spustit znovu"), on_click=make_alert_action("resume", alert))
+        ui.menu_item(tr("Zobrazit v grafu"), on_click=make_alert_action("show", alert))
+        ui.menu_item(tr("Test alertu"), on_click=make_alert_action("test", alert))
         ui.separator()
-        ui.menu_item("Smazat", on_click=make_alert_action("delete", alert)).classes("wl-danger")
+        ui.menu_item(tr("Smazat"), on_click=make_alert_action("delete", alert)).classes("wl-danger")
 
     def render_alerts_list() -> None:
         """Seznam alertů v pravém panelu ve stylu TradingView.
@@ -2562,9 +2610,9 @@ async def _build_index(
         alerts_list.clear()
         with alerts_list:
             if not alerts:
-                ui.label("Žádné alerty – vytvořte je tlačítkem + nebo pravým klikem do grafu.").classes("alert-empty")
+                ui.label(tr("Žádné alerty – vytvořte je tlačítkem + nebo pravým klikem do grafu.")).classes("alert-empty")
             elif not shown:
-                ui.label("Hledání neodpovídá žádný alert.").classes("alert-empty")
+                ui.label(tr("Hledání neodpovídá žádný alert.")).classes("alert-empty")
             for alert in shown:
                 status = alert["status"] if alert["status"] in STATUSES else "active"
                 code = provider_code(alert["source"])
@@ -2580,12 +2628,12 @@ async def _build_index(
                             ui.label(code).classes("watch-code").tooltip(alert["source"])
                             ui.label(f"{alert['symbol']}, {alert['timeframe']}").classes("alert-meta-symbol")
                             ui.label("·")
-                            ui.label(STATUSES[status]).classes(f"alert-status-text alert-status-{status}")
+                            ui.label(tr(STATUSES[status])).classes(f"alert-status-text alert-status-{status}")
                         details = []
                         if alert.get("expires_at"):
-                            details.append(f"vyprší {format_local_time(alert['expires_at'])}")
+                            details.append(tr("vyprší {time}").format(time=format_local_time(alert["expires_at"])))
                         if alert.get("fire_count"):
-                            details.append(f"spuštěno {alert['fire_count']}×")
+                            details.append(tr("spuštěno {count}×").format(count=alert["fire_count"]))
                         if details:
                             ui.label(" · ".join(details)).classes("alert-msg")
                     # Akce při najetí; nesmí zároveň přepnout graf ani alert otevřít
@@ -2594,9 +2642,9 @@ async def _build_index(
                         "click", js_handler="(e) => e.stopPropagation()"
                     ).on("dblclick", js_handler="(e) => e.stopPropagation()"):
                         toggle = (
-                            ("pause", "pause", "Pozastavit") if alert["active"] else ("resume", "play_arrow", "Spustit znovu")
+                            ("pause", "pause", tr("Pozastavit")) if alert["active"] else ("resume", "play_arrow", tr("Spustit znovu"))
                         )
-                        for action, icon, tooltip in (toggle, ("edit", "edit", "Upravit"), ("delete", "close", "Smazat")):
+                        for action, icon, tooltip in (toggle, ("edit", "edit", tr("Upravit")), ("delete", "close", tr("Smazat"))):
                             ui.button(
                                 icon=icon, color=None, on_click=make_alert_action(action, alert)
                             ).props("flat dense round size=sm").classes("alert-btn").tooltip(tooltip)
@@ -2640,7 +2688,7 @@ async def _build_index(
         alert_log_list.clear()
         with alert_log_list:
             if not entries:
-                ui.label("Zatím se žádný alert nespustil.").classes("alert-empty")
+                ui.label(tr("Zatím se žádný alert nespustil.")).classes("alert-empty")
             for entry in entries:
                 unread_class = "" if entry["seen"] else " alert-row-unread"
                 with ui.row().classes(f"alert-row w-full{unread_class}") as log_row:
@@ -2701,8 +2749,8 @@ async def _build_index(
 
     # Potvrzovací texty hromadných akcí nabídky ⋯ (mazání se nejdřív potvrdí)
     BULK_ALERT_CONFIRMS = {
-        "remove_inactive": "Smazat všechny neaktivní alerty",
-        "remove_all": "Smazat všechny alerty",
+        "remove_inactive": tr("Smazat všechny neaktivní alerty"),
+        "remove_all": tr("Smazat všechny alerty"),
     }
 
     def make_bulk_alerts(action: str):
@@ -2711,7 +2759,7 @@ async def _build_index(
             confirm_text = BULK_ALERT_CONFIRMS.get(action)
             if confirm_text:
                 state["alerts_bulk"] = action
-                alerts_confirm_text.text = f"{confirm_text}? Akci nelze vrátit."
+                alerts_confirm_text.text = tr("{action}? Akci nelze vrátit.").format(action=confirm_text)
                 alerts_confirm_dialog.open()
             else:
                 await run_bulk_alerts(action)
@@ -2722,7 +2770,7 @@ async def _build_index(
         """Provede hromadnou akci nad alerty (cache.bulk_alerts) a přenačte engine."""
         count = await cache.bulk_alerts(action)
         await alert_engine.reload()
-        show_status(f"Hromadná akce: {plural(count, 'alert', 'alerty', 'alertů')}.")
+        show_status(tr("Hromadná akce: {count}.").format(count=plural(count, N_("alert"), N_("alerty"), N_("alertů"))))
 
     async def submit_alerts_confirm() -> None:
         alerts_confirm_dialog.close()
@@ -2836,7 +2884,7 @@ async def _build_index(
         active().chart.set_active()
         refresh_active_ui()
         await save_layout()
-        show_status(f"Rozložení: {plural(count, 'graf', 'grafy', 'grafů')}.")
+        show_status(tr("Rozložení: {count}.").format(count=plural(count, N_("graf"), N_("grafy"), N_("grafů"))))
 
     def make_layout_click(layout_id: str):
         # Výběr rozložení zavře nabídku (jako v TradingView) a změní rozložení
@@ -2943,7 +2991,7 @@ async def _build_index(
         async def _handler(_event=None) -> None:
             await store_indicator_templates(delete_indicator_template(state["indicator_templates"], name))
             render_templates_dialog()
-            show_status(f"Šablona indikátorů „{name}“ smazána.")
+            show_status(tr("Šablona indikátorů „{name}“ smazána.").format(name=name))
 
         return _handler
 
@@ -2973,7 +3021,7 @@ async def _build_index(
             await indicators_changed()
         if indicator_dialog.value:
             render_indicator_menu()
-        show_status(f"Šablona indikátorů „{name}“: {describe_indicator_template(template)}.")
+        show_status(tr("Šablona indikátorů „{name}“: {description}.").format(name=name, description=describe_indicator_template(template)))
 
     def open_save_template_dialog() -> None:
         # Dialog „Save indicator template“: název a zapamatování symbolu / intervalu
@@ -2986,7 +3034,7 @@ async def _build_index(
         # Uloží aktuální indikátory aktivního grafu jako šablonu (stejný název přepíše)
         name = clean_name(template_name_input.value)
         if not name:
-            ui.notify(f"Zadejte název šablony (1–{MAX_NAME_LENGTH} znaků).", type="warning")
+            ui.notify(tr("Zadejte název šablony (1–{max_length} znaků).").format(max_length=MAX_NAME_LENGTH), type="warning")
             return
         pane = active()
         overwritten = find_indicator_template(state["indicator_templates"], name) is not None
@@ -3000,7 +3048,11 @@ async def _build_index(
         )
         save_template_dialog.close()
         await store_indicator_templates(templates)
-        show_status(f"Šablona indikátorů „{name}“ {'přepsána' if overwritten else 'uložena'} ({plural(len(pane.indicators), 'indikátor', 'indikátory', 'indikátorů')}).")
+        message = tr("Šablona indikátorů „{name}“ přepsána ({count}).") if overwritten else tr(
+            "Šablona indikátorů „{name}“ uložena ({count})."
+        )
+        count = plural(len(pane.indicators), N_("indikátor"), N_("indikátory"), N_("indikátorů"))
+        show_status(message.format(name=name, count=count))
 
     def render_templates_dialog() -> None:
         # Seznam všech šablon s hledáním: klik použije, hvězdička, křížek smaže
@@ -3009,7 +3061,7 @@ async def _build_index(
         with templates_list:
             shown = [t for t in state["indicator_templates"] if not query or query in t["name"].lower()]
             if not shown:
-                ui.label("Žádné šablony – uložte je přes „Save indicator template…“.").classes("ind-empty")
+                ui.label(tr("Žádné šablony – uložte je přes „Save indicator template…“.")).classes("ind-empty")
             for template in shown:
                 with ui.row().classes("ind-item w-full").on("click", make_template_apply(template["name"])):
                     with ui.column().classes("ind-item-text"):
@@ -3018,7 +3070,7 @@ async def _build_index(
                     ui.space()
                     template_star(template)
                     ui.button(icon="close", color=None).props("flat dense round size=sm").classes("tpl-delete-btn").tooltip(
-                        "Smazat šablonu"
+                        tr("Smazat šablonu")
                     ).on("click.stop", make_template_delete(template["name"]))
 
     def open_templates_dialog() -> None:
@@ -3032,7 +3084,7 @@ async def _build_index(
     reminders_dialog = RemindersDialog(reminders)
     # Dialog O aplikaci (klik na název vlevo nahoře a ikona dole v pravé liště)
     about_dialog = build_about_dialog()
-    about_tooltip = "O aplikaci TickView"
+    about_tooltip = tr("O aplikaci TickView")
 
     with ui.column().classes("page-root w-full") as page_root:
         with ui.row().classes("topbar w-full"):
@@ -3042,7 +3094,7 @@ async def _build_index(
                 ui.button(color=None, on_click=lambda: open_symbol_search())
                 .props("flat dense no-caps")
                 .classes("symbol-pill")
-                .tooltip("Hledat symbol (nebo začněte psát nad grafem)")
+                .tooltip(tr("Hledat symbol (nebo začněte psát nad grafem)"))
             ):
                 ui.icon("search").classes("symbol-pill-icon")
                 symbol_pill_label = ui.label("—").classes("symbol-pill-text")
@@ -3053,30 +3105,30 @@ async def _build_index(
             with ui.row().classes("tf-bar tf-bar-timeframes"):
                 timeframe_toggle = ui.toggle(options=[], value=None).classes("timeframes")
                 with ui.button(icon="expand_more", color=None).props("flat dense").classes("bar-arrow").tooltip(
-                    "Všechny timeframy"
+                    tr("Všechny timeframy")
                 ):
                     timeframe_menu = ui.menu().classes("tf-menu")
             # Typ grafu: tlačítka oblíbených typů a šipka s nabídkou všech typů
             with ui.row().classes("tf-bar"):
                 chart_type_bar = ui.row().classes("chart-type-bar")
                 with ui.button(icon="expand_more", color=None).props("flat dense").classes("bar-arrow").tooltip(
-                    "Typ grafu"
+                    tr("Typ grafu")
                 ):
                     chart_type_menu = ui.menu().classes("chart-type-menu")
             # Indikátory, šablony indikátorů (šipka) a tlačítka oblíbených šablon
             with ui.row().classes("tf-bar"):
-                ui.button("Indikátory", icon="add_chart", on_click=open_indicator_dialog, color=None).props(
+                ui.button(tr("Indikátory"), icon="add_chart", on_click=open_indicator_dialog, color=None).props(
                     "flat dense no-caps"
-                ).classes("topbar-btn indicator-add").tooltip("Indikátory (nabídka s hledáním a kategoriemi)")
+                ).classes("topbar-btn indicator-add").tooltip(tr("Indikátory (nabídka s hledáním a kategoriemi)"))
                 with ui.button(icon="expand_more", color=None).props("flat dense").classes("bar-arrow").tooltip(
-                    "Šablony indikátorů"
+                    tr("Šablony indikátorů")
                 ):
                     template_menu = ui.menu().classes("tpl-set-menu")
                 template_quick = ui.row().classes("tpl-quick")
             # Alert: vytvoření alertu pro graf (seznam alertů je v pravém panelu)
             ui.button("Alert", icon="alarm_add", color=None, on_click=open_alert_for_chart).props(
                 "flat dense no-caps"
-            ).classes("topbar-btn").tooltip("Vytvořit alert pro aktuální symbol")
+            ).classes("topbar-btn").tooltip(tr("Vytvořit alert pro aktuální symbol"))
             # Replay: sessions a nová session (backtest ručních obchodů)
             replay_ui.build_topbar_button()
             source_badge = ui.badge("—").classes("source-badge")
@@ -3093,7 +3145,7 @@ async def _build_index(
                                 # Piktogram = zmenšená mřížka stejného rozložení (CSS layout-<id>)
                                 with ui.element("div").classes("layout-option").on(
                                     "click", make_layout_click(layout_id)
-                                ).tooltip(layout_label) as option:
+                                ).tooltip(tr(layout_label)) as option:
                                     with ui.element("div").classes(f"layout-icon layout-{layout_id}"):
                                         for _ in range(LAYOUTS[layout_id]):
                                             ui.element("div").classes("layout-icon-cell")
@@ -3103,13 +3155,17 @@ async def _build_index(
                         ui.label("Sync in layout").classes("menu-section layout-sync-title")
                         for sync_key, (sync_label, sync_help) in SYNC_OPTIONS.items():
                             with ui.row().classes("layout-sync-row w-full"):
-                                ui.label(sync_label)
-                                ui.icon("info_outline").classes("layout-sync-info").tooltip(sync_help)
+                                ui.label(tr(sync_label))
+                                ui.icon("info_outline").classes("layout-sync-info").tooltip(tr(sync_help))
                                 ui.space()
                                 sync_switches[sync_key] = ui.switch(
                                     value=state["sync"][sync_key], on_change=make_sync_change(sync_key)
                                 ).props("dense size=sm")
-            theme_switch = ui.switch("Tmavý motiv", value=dark)
+            # Přepínač jazyka rozhraní (CS / EN); změna znovu načte stránku
+            ui.toggle({code: code.upper() for code in LANGUAGES}, value=language, on_change=lambda e: change_language(e.value)).props(
+                "dense no-caps unelevated"
+            ).classes("language-toggle").tooltip(tr("Jazyk rozhraní"))
+            theme_switch = ui.switch(tr("Tmavý motiv"), value=dark)
             ui.button(icon="settings", on_click=open_settings_dialog).props("flat dense").classes(
                 "settings-button"
             )
@@ -3135,12 +3191,12 @@ async def _build_index(
                         # Prvky s SVG ikonou akčních tlačítek (přepínání ikony)
                         action_icons = {}
                         for action, tooltip, icon in [
-                            ("magnet", "Magnet – přichytávání bodů kreseb k O/H/L/C (klik = výběr režimu)", "magnet"),
-                            ("pencil", "Režim kreslení (nástroj zůstává aktivní)", "pencil"),
-                            ("lock", "Zamknout kresby", "lock_open"),
-                            ("eye", "Skrýt/zobrazit kresby", "eye"),
-                            ("trash", "Smazat označenou / všechny kresby", "trash"),
-                            ("favorites", "Zobrazit / skrýt panel oblíbených nástrojů (hvězdička ve flyoutu)", "star"),
+                            ("magnet", tr("Magnet – přichytávání bodů kreseb k O/H/L/C (klik = výběr režimu)"), "magnet"),
+                            ("pencil", tr("Režim kreslení (nástroj zůstává aktivní)"), "pencil"),
+                            ("lock", tr("Zamknout kresby"), "lock_open"),
+                            ("eye", tr("Skrýt/zobrazit kresby"), "eye"),
+                            ("trash", tr("Smazat označenou / všechny kresby"), "trash"),
+                            ("favorites", tr("Zobrazit / skrýt panel oblíbených nástrojů (hvězdička ve flyoutu)"), "star"),
                         ]:
                             with (
                                 ui.button(color=None)
@@ -3174,12 +3230,12 @@ async def _build_index(
                         ui.label("").classes("tz-clock-text")
                         with ui.menu().props("max-height=70vh").classes("statusbar-menu"):
                             timezone_items = {}
-                            for tz_value, tz_label in [("UTC", "UTC"), ("exchange", "Exchange"), ("local", "Místní čas")]:
+                            for tz_value, tz_label in [("UTC", "UTC"), ("exchange", "Exchange"), ("local", tr("Místní čas"))]:
                                 timezone_items[tz_value] = ui.menu_item(tz_label, on_click=make_timezone_click(tz_value))
                             ui.separator()
                             for tz_value, tz_label in timezone_options():
-                                timezone_items[tz_value] = ui.menu_item(tz_label, on_click=make_timezone_click(tz_value))
-                    timezone_button.tooltip("Časové pásmo grafu")
+                                timezone_items[tz_value] = ui.menu_item(tr(tz_label), on_click=make_timezone_click(tz_value))
+                    timezone_button.tooltip(tr("Časové pásmo grafu"))
             # Pravý panel jako v TradingView: obsah podle tlačítka pravé lišty
             # (Watchlist / Alerty); opětovný klik na aktivní tlačítko panel skryje
             with ui.column().classes("right-panel") as right_panel:
@@ -3197,7 +3253,7 @@ async def _build_index(
                         ui.space()
                         ui.button(icon="playlist_add", on_click=watchlist_add_current).props(
                             "flat dense size=sm"
-                        ).classes("watch-add").tooltip("Přidat symbol grafu do seznamu")
+                        ).classes("watch-add").tooltip(tr("Přidat symbol grafu do seznamu"))
                     # Rychlé přepínání seznamů (kulatá tlačítka s iniciálou názvu)
                     watchlist_quick = ui.row().classes("wl-quick w-full")
                     # Záhlaví sloupce Symbol: klik přepíná řazení podle abecedy
@@ -3205,7 +3261,7 @@ async def _build_index(
                         with ui.button(color=None, on_click=toggle_watchlist_sort).props(
                             "flat dense no-caps"
                         ).classes("watch-sort").tooltip(
-                            "Řadit podle abecedy (A→Z, Z→A, pořadí přidání)"
+                            tr("Řadit podle abecedy (A→Z, Z→A, pořadí přidání)")
                         ) as watchlist_sort_button:
                             ui.label("Symbol")
                             watchlist_sort_icon = ui.icon(WATCHLIST_SORT_ICONS[state["watchlist_sort"]]).classes(
@@ -3216,7 +3272,7 @@ async def _build_index(
                     # Přepínač Alerts / Log (log s počtem záznamů) jako v TradingView
                     with ui.row().classes("alerts-switch w-full"):
                         alerts_tab_buttons = {
-                            "alerts": ui.button("Alerty", color=None, on_click=lambda: set_alerts_tab("alerts")).props(
+                            "alerts": ui.button(tr("Alerty"), color=None, on_click=lambda: set_alerts_tab("alerts")).props(
                                 "flat dense no-caps"
                             ).classes("alerts-switch-btn"),
                         }
@@ -3231,45 +3287,45 @@ async def _build_index(
                     with ui.row().classes("alerts-toolbar w-full") as alerts_toolbar:
                         ui.button(icon="add", color=None, on_click=open_alert_for_chart).props(
                             "flat dense round size=sm"
-                        ).classes("alert-btn").tooltip("Vytvořit alert pro aktuální symbol")
+                        ).classes("alert-btn").tooltip(tr("Vytvořit alert pro aktuální symbol"))
                         ui.space()
                         ui.button(icon="search", color=None, on_click=toggle_alert_search).props(
                             "flat dense round size=sm"
-                        ).classes("alert-btn").tooltip("Hledat v alertech")
+                        ).classes("alert-btn").tooltip(tr("Hledat v alertech"))
                         with ui.button(icon="sort", color=None).props("flat dense round size=sm").classes(
                             "alert-btn"
-                        ).tooltip("Řazení alertů"):
+                        ).tooltip(tr("Řazení alertů")):
                             with ui.menu().classes("alerts-menu"):
                                 alert_sort_items = {
-                                    sort_key: ui.menu_item(sort_label, on_click=make_alert_sort(sort_key))
+                                    sort_key: ui.menu_item(tr(sort_label), on_click=make_alert_sort(sort_key))
                                     for sort_key, sort_label in ALERT_SORTS.items()
                                 }
                         with ui.button(icon="more_horiz", color=None).props("flat dense round size=sm").classes(
                             "alert-btn"
-                        ).tooltip("Další akce"):
+                        ).tooltip(tr("Další akce")):
                             with ui.menu().classes("alerts-menu"):
-                                ui.menu_item("Spustit všechny neaktivní", on_click=make_bulk_alerts("restart_inactive"))
-                                ui.menu_item("Pozastavit všechny", on_click=make_bulk_alerts("stop_all"))
+                                ui.menu_item(tr("Spustit všechny neaktivní"), on_click=make_bulk_alerts("restart_inactive"))
+                                ui.menu_item(tr("Pozastavit všechny"), on_click=make_bulk_alerts("stop_all"))
                                 ui.separator()
                                 ui.menu_item(
-                                    "Smazat všechny neaktivní", on_click=make_bulk_alerts("remove_inactive")
+                                    tr("Smazat všechny neaktivní"), on_click=make_bulk_alerts("remove_inactive")
                                 ).classes("wl-danger")
-                                ui.menu_item("Smazat všechny", on_click=make_bulk_alerts("remove_all")).classes(
+                                ui.menu_item(tr("Smazat všechny"), on_click=make_bulk_alerts("remove_all")).classes(
                                     "wl-danger"
                                 )
                                 ui.separator()
-                                ui.menu_item("Časové připomínky…", on_click=reminders_dialog.open)
+                                ui.menu_item(tr("Časové připomínky…"), on_click=reminders_dialog.open)
                     # Lišta logu: vymazání logu
                     with ui.row().classes("alerts-toolbar w-full") as log_toolbar:
                         ui.space()
                         with ui.button(icon="more_horiz", color=None).props("flat dense round size=sm").classes(
                             "alert-btn"
-                        ).tooltip("Další akce"):
+                        ).tooltip(tr("Další akce")):
                             with ui.menu().classes("alerts-menu"):
                                 ui.menu_item(
-                                    "Vymazat log", on_click=alert_engine.clear_log
+                                    tr("Vymazat log"), on_click=alert_engine.clear_log
                                 ).classes("wl-danger")
-                    alert_search = ui.input(placeholder="Hledat").props(
+                    alert_search = ui.input(placeholder=tr("Hledat")).props(
                         "dense outlined clearable debounce=250"
                     ).classes("alert-search w-full")
                     alert_search.on_value_change(lambda _event: render_alerts_list())
@@ -3283,7 +3339,7 @@ async def _build_index(
                 right_buttons = {}
                 for panel, icon, tooltip in (
                     ("watchlist", "format_list_bulleted", "Watchlist"),
-                    ("alerts", "alarm", "Alerty"),
+                    ("alerts", "alarm", tr("Alerty")),
                     ("replay", "history", "Replay – sessions"),
                 ):
                     with ui.button(color=None, on_click=lambda panel=panel: toggle_right_panel(panel)).props(
@@ -3304,22 +3360,22 @@ async def _build_index(
 
     # Dialog názvu seznamu symbolů (nový / přejmenování / kopie)
     with ui.dialog() as watchlist_name_dialog, ui.card().classes("tpl-name-dialog"):
-        watchlist_name_title = settings_header(watchlist_name_dialog, "Nový seznam")
-        watchlist_name_input = ui.input("Název seznamu").props("outlined dense autofocus").classes("w-full")
+        watchlist_name_title = settings_header(watchlist_name_dialog, tr("Nový seznam"))
+        watchlist_name_input = ui.input(tr("Název seznamu")).props("outlined dense autofocus").classes("w-full")
         watchlist_name_input.on("keydown.enter", submit_watchlist_name)
         with ui.row().classes("tv-settings-actions w-full"):
             settings_buttons(watchlist_name_dialog, submit_watchlist_name, "Save")
 
     # Potvrzení vyprázdnění / smazání seznamu symbolů
     with ui.dialog() as watchlist_confirm_dialog, ui.card().classes("tpl-name-dialog"):
-        settings_header(watchlist_confirm_dialog, "Seznam symbolů")
+        settings_header(watchlist_confirm_dialog, tr("Seznam symbolů"))
         watchlist_confirm_text = ui.label("")
         with ui.row().classes("tv-settings-actions w-full"):
             settings_buttons(watchlist_confirm_dialog, submit_watchlist_confirm)
 
     # Potvrzení hromadného mazání alertů (nabídka ⋯ v panelu Alerty)
     with ui.dialog() as alerts_confirm_dialog, ui.card().classes("tpl-name-dialog"):
-        settings_header(alerts_confirm_dialog, "Alerty")
+        settings_header(alerts_confirm_dialog, tr("Alerty"))
         alerts_confirm_text = ui.label("")
         with ui.row().classes("tv-settings-actions w-full"):
             settings_buttons(alerts_confirm_dialog, submit_alerts_confirm)
@@ -3327,7 +3383,7 @@ async def _build_index(
     # Dialog pro výběr stickeru (emoji)
     with ui.dialog() as sticker_dialog, ui.card().classes("settings-dialog"):
         with ui.column().classes("indicator-dialog-body"):
-            ui.label("Vyberte sticker").classes("settings-note")
+            ui.label(tr("Vyberte sticker")).classes("settings-note")
             with ui.row().classes("emoji-row"):
                 for emoji in EMOJIS:
                     ui.button(emoji, on_click=lambda _, e=emoji: place_sticker(e)).props(
@@ -3341,17 +3397,17 @@ async def _build_index(
         if not pending or pending["pane"].closed:
             return
         await pending["pane"].chart.add_sticker(pending["time"], pending["price"], emoji)
-        show_status(f"Sticker {emoji} přidán a uložen.")
+        show_status(tr("Sticker {emoji} přidán a uložen.").format(emoji=emoji))
         state["sticker_pending"] = None
 
     # Nabídka indikátorů ve stylu TradingView: hledání, kategorie vlevo, seznam vpravo
     with ui.dialog() as indicator_dialog, ui.card().classes("ind-dialog"):
         with ui.row().classes("ind-dialog-header w-full"):
-            ui.label("Indikátory").classes("ind-dialog-title")
+            ui.label(tr("Indikátory")).classes("ind-dialog-title")
             ui.space()
             ui.button(icon="close", on_click=indicator_dialog.close).props("flat dense round")
         indicator_search = (
-            ui.input(placeholder="Hledat (např. RSI, průměr, objem)…", on_change=on_indicator_search)
+            ui.input(placeholder=tr("Hledat (např. RSI, průměr, objem)…"), on_change=on_indicator_search)
             .props("outlined dense clearable autofocus")
             .classes("ind-search w-full")
         )
@@ -3389,8 +3445,10 @@ async def _build_index(
                 # Viditelnost podle timeframu jako u kreseb
                 settings_visibility = VisibilityFields()
                 ui.label(
-                    "Indikátor se počítá a kreslí (včetně tabulky scanneru) jen na timeframech, které odpovídají "
-                    "zaškrtnutým jednotkám a rozsahům; v legendě zůstává."
+                    tr(
+                        "Indikátor se počítá a kreslí (včetně tabulky scanneru) jen na timeframech, které odpovídají "
+                        "zaškrtnutým jednotkám a rozsahům; v legendě zůstává."
+                    )
                 ).classes("settings-note")
         with ui.row().classes("tv-settings-actions w-full"):
             indicator_templates = TemplateMenu(
@@ -3416,54 +3474,54 @@ async def _build_index(
                 # Text: barva, velikost, tučné, kurzíva, obsah, pozadí, rámeček, zalomení
                 with ui.column().classes("text-fields w-full") as text_fields:
                     with ui.row().classes("text-toolbar"):
-                        text_color = ColorButton(DEFAULT_DRAWING_COLOR, title="Barva textu")
+                        text_color = ColorButton(DEFAULT_DRAWING_COLOR, title=tr("Barva textu"))
                         text_size = ui.select(TEXT_FONT_SIZES, value=DEFAULT_FONT_SIZE).props(
                             "outlined dense options-dense"
                         ).classes("text-size")
                         text_bold = ui.button("B", color=None, on_click=lambda: toggle_text_flag("bold")).props(
                             "outline no-caps"
-                        ).classes("text-flag text-flag-bold").tooltip("Tučné")
+                        ).classes("text-flag text-flag-bold").tooltip(tr("Tučné"))
                         text_italic = ui.button("I", color=None, on_click=lambda: toggle_text_flag("italic")).props(
                             "outline no-caps"
-                        ).classes("text-flag text-flag-italic").tooltip("Kurzíva")
+                        ).classes("text-flag text-flag-italic").tooltip(tr("Kurzíva"))
                     drawing_text = ui.textarea(placeholder="Text").props("outlined rows=5").classes("w-full text-area")
                     with ui.row().classes("tv-settings-row"):
                         text_background = ui.checkbox("Background").classes("tv-settings-check")
-                        text_background_color = ColorButton(DEFAULT_TEXT_BACKGROUND, title="Barva pozadí")
+                        text_background_color = ColorButton(DEFAULT_TEXT_BACKGROUND, title=tr("Barva pozadí"))
                     with ui.row().classes("tv-settings-row"):
                         text_border = ui.checkbox("Border").classes("tv-settings-check")
-                        text_border_color = ColorButton(DEFAULT_TEXT_BORDER, title="Barva rámečku")
+                        text_border_color = ColorButton(DEFAULT_TEXT_BORDER, title=tr("Barva rámečku"))
                     text_wrap = ui.checkbox("Text wrap")
                 # Čáry a tvary: barva, šířka a styl čáry
                 with ui.column().classes("line-fields w-full") as line_fields:
                     with ui.row().classes("tv-settings-row"):
-                        ui.label("Barva").classes("tv-settings-label")
-                        drawing_color = ColorButton(DEFAULT_DRAWING_COLOR, title="Barva kresby")
-                    drawing_width = ui.select(DRAWING_LINE_WIDTHS, value=DEFAULT_LINE_WIDTH, label="Šířka čáry").props(
+                        ui.label(tr("Barva")).classes("tv-settings-label")
+                        drawing_color = ColorButton(DEFAULT_DRAWING_COLOR, title=tr("Barva kresby"))
+                    drawing_width = ui.select(tr_options(DRAWING_LINE_WIDTHS), value=DEFAULT_LINE_WIDTH, label=tr("Šířka čáry")).props(
                         "outlined dense"
                     ).classes("w-full")
-                    drawing_style = ui.select(DRAWING_LINE_STYLES, value="solid", label="Styl čáry").props(
+                    drawing_style = ui.select(tr_options(DRAWING_LINE_STYLES), value="solid", label=tr("Styl čáry")).props(
                         "outlined dense"
                     ).classes("w-full")
                 sticker_note = ui.label(
-                    "Sticker nemá nastavitelný styl – na záložce Visibility zvolte, na kterých timeframech je vidět."
+                    tr("Sticker nemá nastavitelný styl – na záložce Visibility zvolte, na kterých timeframech je vidět.")
                 ).classes("settings-note")
                 # Pozice (Long / Short): parametry výpočtu množství a ceny úrovní
                 with ui.column().classes("position-fields w-full") as position_fields:
-                    position_account = ui.number("Velikost účtu", value=POSITION_DEFAULTS["accountSize"], min=0).props("outlined dense")
+                    position_account = ui.number(tr("Velikost účtu"), value=POSITION_DEFAULTS["accountSize"], min=0).props("outlined dense")
                     with ui.row().classes("position-row w-full"):
-                        position_risk = ui.number("Riziko", value=POSITION_DEFAULTS["risk"], min=0).props("outlined dense")
-                        position_risk_unit = ui.select(POSITION_RISK_UNITS, value=POSITION_DEFAULTS["riskUnit"]).props("outlined dense")
-                    position_lot = ui.number("Velikost lotu", value=POSITION_DEFAULTS["lotSize"], min=0).props("outlined dense")
-                    ui.label("Úrovně").classes("tv-settings-section")
-                    position_entry = ui.number("Vstup (cena)", format="%.2f").props("outlined dense")
-                    position_target = ui.number("Cíl – Profit level (cena)", format="%.2f").props("outlined dense")
-                    position_stop = ui.number("Stop level (cena)", format="%.2f").props("outlined dense")
+                        position_risk = ui.number(tr("Riziko"), value=POSITION_DEFAULTS["risk"], min=0).props("outlined dense")
+                        position_risk_unit = ui.select(tr_options(POSITION_RISK_UNITS), value=POSITION_DEFAULTS["riskUnit"]).props("outlined dense")
+                    position_lot = ui.number(tr("Velikost lotu"), value=POSITION_DEFAULTS["lotSize"], min=0).props("outlined dense")
+                    ui.label(tr("Úrovně")).classes("tv-settings-section")
+                    position_entry = ui.number(tr("Vstup (cena)"), format="%.2f").props("outlined dense")
+                    position_target = ui.number(tr("Cíl – Profit level (cena)"), format="%.2f").props("outlined dense")
+                    position_stop = ui.number(tr("Stop level (cena)"), format="%.2f").props("outlined dense")
             with ui.tab_panel(visibility_tab).classes("tv-tab-panel"):
                 # Viditelnost podle timeframu: jednotka, od, posuvník rozsahu, do
                 drawing_visibility = VisibilityFields()
                 ui.label(
-                    "Kresba patří k symbolu a je vidět na timeframech, které odpovídají zaškrtnutým jednotkám a rozsahům."
+                    tr("Kresba patří k symbolu a je vidět na timeframech, které odpovídají zaškrtnutým jednotkám a rozsahům.")
                 ).classes("settings-note")
         with ui.row().classes("tv-settings-actions w-full"):
             drawing_templates = TemplateMenu(
@@ -3480,7 +3538,7 @@ async def _build_index(
     # Uložení šablony indikátorů (Save indicator template) – aktuální indikátory aktivního grafu
     with ui.dialog() as save_template_dialog, ui.card().classes("tpl-name-dialog"):
         settings_header(save_template_dialog, "Save indicator template")
-        template_name_input = ui.input("Název šablony").props("outlined dense autofocus").classes("w-full")
+        template_name_input = ui.input(tr("Název šablony")).props("outlined dense autofocus").classes("w-full")
         template_name_input.on("keydown.enter", submit_save_template)
         template_remember_symbol = ui.checkbox("Remember symbol")
         template_remember_interval = ui.checkbox("Remember interval")
@@ -3494,7 +3552,7 @@ async def _build_index(
             ui.space()
             ui.button(icon="close", on_click=templates_dialog.close).props("flat dense round")
         templates_search = (
-            ui.input(placeholder="Hledat šablonu…", on_change=lambda _e: render_templates_dialog())
+            ui.input(placeholder=tr("Hledat šablonu…"), on_change=lambda _e: render_templates_dialog())
             .props("outlined dense clearable autofocus")
             .classes("ind-search w-full")
         )
@@ -3503,20 +3561,26 @@ async def _build_index(
     # Settings grafu (pravý klik do grafu → Settings…): styl svíček, objem, šablony
     with ui.dialog() as chart_settings_dialog, ui.card().classes("tv-settings"):
         settings_header(chart_settings_dialog, "Settings")
-        ui.label("Svíčky").classes("tv-settings-section")
+        ui.label(tr("Svíčky")).classes("tv-settings-section")
         chart_fields: dict = {
-            "color_by_prev_close": ui.checkbox("Obarvit svíčky podle předchozího závěru"),
+            "color_by_prev_close": ui.checkbox(tr("Obarvit svíčky podle předchozího závěru")),
         }
         # Řádky Tělo / Okraje / Knoty: přepínač + barva růstu a poklesu
-        for toggle_key, prefix, label in (("body", "body", "Tělo"), ("borders", "border", "Okraje"), ("wick", "wick", "Knoty")):
+        for toggle_key, prefix, label in (
+            ("body", "body", tr("Tělo")), ("borders", "border", tr("Okraje")), ("wick", "wick", tr("Knoty"))
+        ):
             with ui.row().classes("tv-settings-row"):
                 chart_fields[toggle_key] = ui.checkbox(label).classes("tv-settings-check")
-                chart_fields[f"{prefix}_up"] = ColorButton(CHART_DEFAULTS[f"{prefix}_up"], title=f"{label} – růst")
-                chart_fields[f"{prefix}_down"] = ColorButton(CHART_DEFAULTS[f"{prefix}_down"], title=f"{label} – pokles")
-        ui.label("Objem").classes("tv-settings-section")
-        volume_checkbox = ui.checkbox("Objem (Volume)")
+                chart_fields[f"{prefix}_up"] = ColorButton(
+                    CHART_DEFAULTS[f"{prefix}_up"], title=tr("{part} – růst").format(part=label)
+                )
+                chart_fields[f"{prefix}_down"] = ColorButton(
+                    CHART_DEFAULTS[f"{prefix}_down"], title=tr("{part} – pokles").format(part=label)
+                )
+        ui.label(tr("Objem")).classes("tv-settings-section")
+        volume_checkbox = ui.checkbox(tr("Objem (Volume)"))
         volume_note = ui.label(
-            "Zdroj u tohoto instrumentu objem neposílá (forex IBKR MIDPOINT, indexy) – objem se nezobrazí."
+            tr("Zdroj u tohoto instrumentu objem neposílá (forex IBKR MIDPOINT, indexy) – objem se nezobrazí.")
         ).classes("settings-note volume-note")
         with ui.row().classes("tv-settings-actions w-full"):
             chart_templates = TemplateMenu(
@@ -3541,7 +3605,7 @@ async def _build_index(
     with ui.dialog() as settings_dialog, ui.card().classes("tv-settings app-settings"):
         settings_header(settings_dialog, "Settings")
         ui.label(
-            "Ukládá se lokálně do config.yaml v kořenu projektu (necommituje se, komentáře zůstanou)."
+            tr("Ukládá se lokálně do config.yaml v kořenu projektu (necommituje se, komentáře zůstanou).")
         ).classes("settings-note")
         with ui.tabs().props("dense no-caps align=left indicator-color=primary").classes("tv-tabs w-full") as settings_tabs:
             tab_telegram = ui.tab("Telegram")
@@ -3551,44 +3615,52 @@ async def _build_index(
         with ui.tab_panels(settings_tabs, value=tab_telegram).classes("tv-tab-panels w-full"):
             with ui.tab_panel(tab_telegram).classes("tv-tab-panel"):
                 ui.label(
-                    "Notifikace alertů, scanneru a připomínek. Bota založíte u @BotFather (příkaz /newbot), "
-                    "token vložte sem. Pak botovi napište (např. /start) a tlačítkem Zjistit chat ID se chat "
-                    "doplní sám. Platí hned."
+                    tr(
+                        "Notifikace alertů, scanneru a připomínek. Bota založíte u @BotFather (příkaz /newbot), "
+                        "token vložte sem. Pak botovi napište (např. /start) a tlačítkem Zjistit chat ID se chat "
+                        "doplní sám. Platí hned."
+                    )
                 ).classes("settings-note")
                 settings_telegram_token = ui.input("Bot token").props("outlined dense type=password").classes("w-full")
                 settings_telegram_chat = ui.input("Chat ID").props("outlined dense").classes("w-full")
                 with ui.row().classes("dialog-actions"):
-                    ui.button("Zjistit chat ID", on_click=detect_telegram_chat, color=None).props("flat no-caps")
-                    ui.button("Odeslat test", on_click=test_telegram, color=None).props("flat no-caps")
+                    ui.button(tr("Zjistit chat ID"), on_click=detect_telegram_chat, color=None).props("flat no-caps")
+                    ui.button(tr("Odeslat test"), on_click=test_telegram, color=None).props("flat no-caps")
             with ui.tab_panel(tab_ibkr).classes("tv-tab-panel"):
                 ui.label(
-                    "TWS nebo IB Gateway musí běžet a mít povolené API (Configure → API → Settings). "
-                    "Porty: TWS paper 7497, TWS live 7496, IB Gateway paper 4002, live 4001. "
-                    "Při obsazeném client ID se zkusí další. Po uložení se zdroj hned přepojí."
+                    tr(
+                        "TWS nebo IB Gateway musí běžet a mít povolené API (Configure → API → Settings). "
+                        "Porty: TWS paper 7497, TWS live 7496, IB Gateway paper 4002, live 4001. "
+                        "Při obsazeném client ID se zkusí další. Po uložení se zdroj hned přepojí."
+                    )
                 ).classes("settings-note")
                 settings_ibkr_host = ui.input("Host").props("outlined dense").classes("w-full")
                 with ui.row().classes("tv-settings-row w-full"):
                     settings_ibkr_port = ui.number("Port", min=1, max=65535, step=1).props("outlined dense")
                     settings_ibkr_client = ui.number("Client ID", min=0, step=1).props("outlined dense")
                 with ui.row().classes("dialog-actions"):
-                    ui.button("Otestovat připojení", on_click=test_ibkr, color=None).props("flat no-caps")
+                    ui.button(tr("Otestovat připojení"), on_click=test_ibkr, color=None).props("flat no-caps")
                     # Popup s předplatnými dat IB (levná varianta a varianta s futures)
-                    ui.button("Jak na předplatné dat", icon="info", on_click=ibkr_data_dialog.open,
+                    ui.button(tr("Jak na předplatné dat"), icon="info", on_click=ibkr_data_dialog.open,
                               color=None).props("flat no-caps")
             with ui.tab_panel(tab_alpaca).classes("tv-tab-panel"):
                 ui.label(
-                    "Volitelný zdroj živých amerických akcií. Klíče z Paper Trading dashboardu; bez klíčů "
-                    "se zdroj nezapne. Změna se projeví po restartu aplikace."
+                    tr(
+                        "Volitelný zdroj živých amerických akcií. Klíče z Paper Trading dashboardu; bez klíčů "
+                        "se zdroj nezapne. Změna se projeví po restartu aplikace."
+                    )
                 ).classes("settings-note")
                 settings_alpaca_endpoint = ui.input("Endpoint (Trading API)").props("outlined dense").classes("w-full")
                 settings_key = ui.input("API key").props("outlined dense type=password").classes("w-full")
                 settings_secret = ui.input("Secret").props("outlined dense type=password").classes("w-full")
             with ui.tab_panel(tab_replay).classes("tv-tab-panel"):
                 ui.label(
-                    "Krok zpět v replayi (nůžky v liště replaye nebo skok na dřívější čas). Příkazy a obchody "
-                    "zadané po bodu návratu se smažou a stav účtu se přepočítá. Platí hned."
+                    tr(
+                        "Krok zpět v replayi (nůžky v liště replaye nebo skok na dřívější čas). Příkazy a obchody "
+                        "zadané po bodu návratu se smažou a stav účtu se přepočítá. Platí hned."
+                    )
                 ).classes("settings-note")
-                settings_replay_rewind = ui.select(REWIND_MODES, label="Krok zpět").props("outlined dense").classes(
+                settings_replay_rewind = ui.select(tr_options(REWIND_MODES), label=tr("Krok zpět")).props("outlined dense").classes(
                     "w-full"
                 )
         with ui.row().classes("tv-settings-actions w-full"):
@@ -3602,7 +3674,7 @@ async def _build_index(
     with ui.dialog().props("position=top") as symbol_search_dialog, ui.card().classes("sym-dialog"):
         with ui.row().classes("sym-search-row w-full"):
             symbol_search_input = (
-                ui.input(placeholder="Symbol, název nebo ISIN…", on_change=on_search_input)
+                ui.input(placeholder=tr("Symbol, název nebo ISIN…"), on_change=on_search_input)
                 .props("borderless dense autofocus clearable debounce=250")
                 .classes("sym-search-input")
             )
@@ -3616,7 +3688,7 @@ async def _build_index(
             }
             ui.space()
             ui.select(
-                {"all": "Všechny zdroje", **{provider.id: provider.name for provider in PROVIDERS}},
+                {"all": tr("Všechny zdroje"), **{provider.id: provider.name for provider in PROVIDERS}},
                 value="all",
                 on_change=set_search_source,
             ).props("dense borderless options-dense").classes("sym-source-select")
@@ -3632,35 +3704,37 @@ async def _build_index(
             ui.label("Condition").classes("alert-label")
             with ui.column().classes("alert-field"):
                 # Zdroj podmínky jako v TradingView: cena symbolu, nebo indikátor v grafu
-                alert_source = ui.select({"price": "Cena"}, value="price").props("outlined dense").classes("w-full")
-                alert_condition = ui.select(CONDITIONS, value="crossing").props("outlined dense").classes("w-full")
-                alert_target = ui.select({"value": "Cena (hodnota)"}, value="value").props("outlined dense").classes("w-full")
-                alert_price = ui.number("Cena").props("outlined dense").classes("w-full")
+                alert_source = ui.select({"price": tr("Cena")}, value="price").props("outlined dense").classes("w-full")
+                alert_condition = ui.select(tr_options(CONDITIONS), value="crossing").props("outlined dense").classes("w-full")
+                alert_target = ui.select({"value": tr("Cena (hodnota)")}, value="value").props("outlined dense").classes("w-full")
+                alert_price = ui.number(tr("Cena")).props("outlined dense").classes("w-full")
             ui.label("Trigger").classes("alert-label")
             with ui.column().classes("alert-field"):
-                alert_trigger = ui.select(TRIGGERS, value="once").props("outlined dense").classes("w-full")
-                alert_minutes = ui.number("Minut před zavřením svíčky", min=1, max=MAX_ALERT_MINUTES, step=1).props(
+                alert_trigger = ui.select(tr_options(TRIGGERS), value="once").props("outlined dense").classes("w-full")
+                alert_minutes = ui.number(tr("Minut před zavřením svíčky"), min=1, max=MAX_ALERT_MINUTES, step=1).props(
                     "outlined dense"
                 ).classes("w-full")
             ui.label("Expiration").classes("alert-label")
             with ui.column().classes("alert-field"):
                 alert_expiration = ui.input().props("outlined dense type=datetime-local").classes("w-full")
-                alert_open_ended = ui.checkbox("Bez expirace (open-ended)")
+                alert_open_ended = ui.checkbox(tr("Bez expirace (open-ended)"))
             ui.label("Message").classes("alert-label")
             with ui.column().classes("alert-field"):
                 alert_message = ui.textarea().props("outlined dense autogrow").classes("w-full")
                 ui.label(
-                    "Zástupné texty: {{ticker}} {{exchange}} {{interval}} {{close}} {{time}}, u indikátoru {{signal}}, "
-                    "u alertu scanneru {{message}}"
+                    tr(
+                        "Zástupné texty: {{ticker}} {{exchange}} {{interval}} {{close}} {{time}}, u indikátoru {{signal}}, "
+                        "u alertu scanneru {{message}}"
+                    )
                 ).classes("settings-note")
             ui.label("Notifications").classes("alert-label")
             with ui.column().classes("alert-field"):
                 alert_notify_telegram = ui.checkbox("Telegram")
-                alert_telegram_note = ui.label("Telegram není nastavený – ozubené kolečko v horní liště → Telegram.").classes(
+                alert_telegram_note = ui.label(tr("Telegram není nastavený – ozubené kolečko v horní liště → Telegram.")).classes(
                     "settings-note"
                 )
-                alert_notify_toast = ui.checkbox("Toast v aplikaci")
-                alert_notify_sound = ui.checkbox("Přehrát zvuk")
+                alert_notify_toast = ui.checkbox(tr("Toast v aplikaci"))
+                alert_notify_sound = ui.checkbox(tr("Přehrát zvuk"))
                 alert_notify_webhook = ui.checkbox("Webhook URL")
                 alert_webhook_url = ui.input(placeholder="https://…").props("outlined dense").classes("w-full")
         with ui.row().classes("tv-settings-actions w-full"):

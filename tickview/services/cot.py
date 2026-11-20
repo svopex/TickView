@@ -14,6 +14,7 @@ import httpx
 import pandas as pd
 
 from tickview.config import load_config
+from tickview.i18n import tr
 from tickview.logic.cot import API_FIELDS, API_URL, MARKET_CODE_RE, needs_refresh, parse_rows
 from tickview.providers.base import utc_now_ms
 
@@ -97,7 +98,7 @@ async def fetch_market_rows(code: str) -> list[dict]:
     Kód trhu musí projít MARKET_CODE_RE (vkládá se do podmínky dotazu).
     """
     if not MARKET_CODE_RE.match(code):
-        raise ValueError(f"neplatný kód trhu {code!r}")
+        raise ValueError(tr("neplatný kód trhu {code}").format(code=repr(code)))
     token = str((load_config().get("cot") or {}).get("app_token") or "").strip()
     headers = {"X-App-Token": token} if token else {}
     # Dotaz SoQL: vybrané sloupce jednoho trhu seřazené podle data reportu
@@ -112,5 +113,5 @@ async def fetch_market_rows(code: str) -> list[dict]:
         response.raise_for_status()
         rows = response.json()
     if not isinstance(rows, list):
-        raise ValueError("neočekávaná odpověď API")
+        raise ValueError(tr("neočekávaná odpověď API"))
     return [row for row in rows if isinstance(row, dict)]

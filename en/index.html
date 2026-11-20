@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TickView – stock and crypto charts</title>
+  <meta name="description" content="TickView is an open-source stock and crypto charting app written in Python. It runs locally on Windows, macOS and Linux, uses free data sources and comes with indicators, drawing tools, alerts, a scanner and bar replay.">
+  <meta name="theme-color" content="#0b0e14">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="TickView – stock and crypto charts">
+  <meta property="og:description" content="Open-source charting app for stocks, forex, futures and crypto. Local, free and read-only.">
+  <!-- Jazykové verze pro vyhledávače: čeština (výchozí) a angličtina v en/ -->
+  <link rel="canonical" href="https://svopex.github.io/TickView/en/">
+  <link rel="alternate" hreflang="cs" href="https://svopex.github.io/TickView/">
+  <link rel="alternate" hreflang="en" href="https://svopex.github.io/TickView/en/">
+  <link rel="alternate" hreflang="x-default" href="https://svopex.github.io/TickView/">
+  <link rel="icon" href="../site/favicon.svg" type="image/svg+xml">
+  <!-- ?v= obchází cache prohlížeče (GitHub Pages: max-age 10 min) – při změně souborů v site/ zvýšit v obou HTML -->
+  <script src="../site/theme.js?v=7"></script>
+  <link rel="stylesheet" href="../site/style.css?v=7">
+  <script src="../site/script.js?v=7" defer></script>
+</head>
+<body>
+
+  <!-- Horní navigace -->
+  <header class="site-header">
+    <div class="container header-inner">
+      <a class="brand" href="#top" aria-label="TickView – back to top">
+        <img src="../site/favicon.svg" alt="" width="28" height="28">
+        <span>TickView</span>
+      </a>
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Open menu">
+        <span></span><span></span><span></span>
+      </button>
+      <nav id="site-nav" class="site-nav">
+        <a href="#features">Features</a>
+        <a href="#sources">Data sources</a>
+        <a href="#indicators">Custom indicators</a>
+        <a href="#install">Install</a>
+        <a href="#contact">Contact</a>
+        <a class="nav-github" href="https://github.com/svopex/TickView" target="_blank" rel="noopener">GitHub</a>
+        <!-- Přepínač jazyka: odkaz na českou verzi -->
+        <a class="nav-lang" href="../" hreflang="cs" lang="cs" aria-label="Česká verze" title="Česká verze">CS</a>
+      </nav>
+      <!-- Přepínač motivu: podle prohlížeče / světlý / tmavý (site/theme.js) -->
+      <button class="theme-toggle" type="button" data-mode="auto" aria-label="Theme: system (click to switch)" title="Theme: system (click to switch)">
+        <svg class="theme-icon theme-icon-auto" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
+        <svg class="theme-icon theme-icon-light" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <svg class="theme-icon theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main id="top">
+
+    <!-- Úvodní sekce s ukázkovým grafem -->
+    <section class="hero">
+      <div class="container hero-inner">
+        <div class="hero-copy">
+          <p class="eyebrow">Free · Open source · Apache 2.0 · Python</p>
+          <h1>Stock and crypto charts that run <span class="accent">on&nbsp;your&nbsp;machine</span></h1>
+          <p class="lead">
+            TickView is <strong class="accent">completely free</strong> – an open-source desktop
+            and web app for candlestick charts of stocks, ETFs, forex, futures and crypto.
+            It pulls data from free sources, stores everything locally and never places
+            a trade – it's strictly read-only.
+          </p>
+          <!-- Zdůraznění, že aplikace nic nestojí -->
+          <ul class="check-list free-list" aria-label="What TickView doesn't require">
+            <li>No subscription</li>
+            <li>No sign-up</li>
+            <li>No ads</li>
+            <li>Free data</li>
+          </ul>
+          <div class="hero-actions">
+            <a class="btn btn-primary" href="https://github.com/svopex/TickView" target="_blank" rel="noopener">Source code on GitHub</a>
+            <a class="btn btn-ghost" href="#install">How to run it</a>
+          </div>
+          <ul class="pill-list" aria-label="Supported platforms">
+            <li>Windows</li>
+            <li>macOS</li>
+            <li>Linux</li>
+            <li>Python 3.12–3.13</li>
+          </ul>
+        </div>
+
+        <figure class="hero-window">
+          <div class="window-bar">
+            <span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span>
+            <span class="window-title">TickView</span>
+          </div>
+          <div class="window-toolbar">
+            <span class="symbol-pill">BTCUSDT</span>
+            <span class="tf-list"><span class="tf">1m</span><span class="tf">5m</span><span class="tf tf-active">15m</span><span class="tf">1h</span><span class="tf">4h</span><span class="tf">1D</span></span>
+            <span class="live-tag">live</span>
+          </div>
+          <div class="chart-legend">
+            <strong>BTCUSDT · 15m · Binance</strong>
+            <span class="legend-values" id="legend-values">O <span data-field="open"></span> H <span data-field="high"></span> L <span data-field="low"></span> C <span data-field="close"></span> <span data-field="change"></span></span>
+            <span><span class="ma-fast">EMA 20</span> <span class="ma-slow">SMA 50</span></span>
+          </div>
+          <div class="hero-chart" id="hero-chart"></div>
+          <figcaption>Illustrative chart with generated data – hover over it to see the crosshair.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <!-- Pás s klíčovými čísly -->
+    <section class="stats" aria-label="TickView by the numbers">
+      <div class="container stats-grid">
+        <div class="stat"><strong class="accent">$0</strong><span>for the app and for data from Binance, Yahoo and the CFTC</span></div>
+        <div class="stat"><strong>28</strong><span>built-in indicators, plus your own in Python</span></div>
+        <div class="stat"><strong>1–16</strong><span>synced charts at once</span></div>
+        <div class="stat"><strong>4 + COT</strong><span>data sources, most without an API key</span></div>
+      </div>
+    </section>
+
+    <!-- Přehled funkcí -->
+    <section id="features" class="section">
+      <div class="container">
+        <header class="section-head">
+          <h2>Everything you expect from a chart</h2>
+          <p>The controls follow what traders are used to from web-based platforms. It just runs on your own computer.</p>
+        </header>
+
+        <div class="feature-grid">
+          <article class="feature">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3v18M12 2v20M18 5v14"/><rect x="4" y="7" width="4" height="8" rx="1"/><rect x="10" y="5" width="4" height="11" rx="1"/><rect x="16" y="8" width="4" height="6" rx="1"/></svg>
+            <h3>Charts and timeframes</h3>
+            <p>Candles, bars, Heikin Ashi, line, area, baseline and more. Timeframes from 1m to 1W, live updates and older history loaded automatically as you scroll left.</p>
+          </article>
+          <article class="feature">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19 20 5"/><circle cx="4" cy="19" r="2"/><circle cx="20" cy="5" r="2"/><path d="M4 9h7M14 19h6"/></svg>
+            <h3>Drawing tools</h3>
+            <p>Trend lines, channels, Fibonacci, pitchfork, rectangles, text, Long/Short Position with risk calculation, and a measure tool. Drawings are saved per symbol and show up on every timeframe.</p>
+          </article>
+          <article class="feature">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 15c3 0 3-8 6-8s3 10 6 10 3-7 8-7"/></svg>
+            <h3>Indicators</h3>
+            <p>SMA, EMA, VWAP, Bollinger Bands, Ichimoku, Supertrend, RSI, MACD, Stochastic, ATR, OBV and more. Configurable inputs, templates, favorites, and panes you can resize and rearrange by dragging.</p>
+          </article>
+          <article class="feature">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/></svg>
+            <h3>Multi-chart layouts</h3>
+            <p>Layouts with up to 16 charts, each with its own symbol, timeframe and indicators. Sync the symbol, interval, crosshair and time range across charts.</p>
+          </article>
+          <article class="feature">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h12M9 12h12M9 18h12"/><circle cx="4.5" cy="6" r="1.5"/><circle cx="4.5" cy="12" r="1.5"/><circle cx="4.5" cy="18" r="1.5"/></svg>
+            <h3>Watchlists</h3>
+            <p>As many symbol lists as you like, with last price and daily change. Click a symbol to switch the chart, reorder symbols freely and keep the same symbol in several lists.</p>
+          </article>
+          <article class="feature">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 21h4"/></svg>
+            <h3>Alerts and notifications</h3>
+            <p>Alerts on price, on a drawn line or on an indicator signal. The server checks them in the background, even with the page closed, and notifies you via Telegram, webhook, toast or sound.</p>
+          </article>
+          <article class="feature">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/><path d="M8 11h6M11 8v6"/></svg>
+            <h3>Scanner</h3>
+            <p>Run a signal-based indicator across up to 40 symbols from any source on the timeframe you choose and see the results in a table on the chart. Optionally get notified before the bar closes.</p>
+          </article>
+          <article class="feature">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="m10 9 5 3-5 3z"/></svg>
+            <h3>Bar replay and backtesting</h3>
+            <p>Replay history bar by bar and trade manually on a simulated account with spread, slippage and commission. Run as many sessions as you like, each with its own trades and drawings.</p>
+          </article>
+          <article class="feature">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20V10M11 20V4M17 20v-7M2 20h20"/></svg>
+            <h3>CFTC COT report</h3>
+            <p>Positions of commercials, large speculators and small traders, plus the COT Index, using free data from the CFTC API. The market is derived from the symbol – futures, forex, metals, indices and crypto.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- Zdroje dat -->
+    <section id="sources" class="section section-alt">
+      <div class="container">
+        <header class="section-head">
+          <h2>Free data sources</h2>
+          <p>Each source is a separate module behind a common interface. For every symbol you can see where the data comes from and whether it's live or delayed.</p>
+        </header>
+
+        <div class="source-grid">
+          <article class="source">
+            <header><h3>Binance</h3><span class="tag tag-live">live</span></header>
+            <p>Crypto. History via the public REST API, live candles over a WebSocket with automatic reconnect.</p>
+            <p class="source-meta">No API key</p>
+          </article>
+          <article class="source">
+            <header><h3>Yahoo Finance</h3><span class="tag tag-delay">delayed</span></header>
+            <p>Stocks, ETFs, mutual funds, indices, forex and futures. History plus ongoing updates via polling, with market-closed notices.</p>
+            <p class="source-meta">No API key</p>
+          </article>
+          <article class="source">
+            <header><h3>Alpaca</h3><span class="tag tag-live">live</span></header>
+            <p>US stocks. One-minute bars over the IEX WebSocket, higher timeframes via polling. Turns on once you enter your keys.</p>
+            <p class="source-meta">Free key (Basic plan)</p>
+          </article>
+          <article class="source">
+            <header><h3>Interactive Brokers</h3><span class="tag tag-mixed">per subscription</span></header>
+            <p>Through TWS or IB Gateway: stocks, forex, spot metals, index CFDs and continuous futures with automatic rollover.</p>
+            <p class="source-meta">IB account (paper works too)</p>
+          </article>
+          <article class="source">
+            <header><h3>CFTC</h3><span class="tag tag-delay">weekly</span></header>
+            <p>Commitments of Traders from the public API. Data takes effect from its Friday release, following the CFTC schedule.</p>
+            <p class="source-meta">No API key</p>
+          </article>
+        </div>
+
+        <p class="note">
+          History is kept in a local SQLite cache and only the missing range is downloaded.
+          Each source has its own rate limiter and backs off exponentially on HTTP 429 errors.
+        </p>
+      </div>
+    </section>
+
+    <!-- Vlastní indikátory s ukázkou kódu -->
+    <section id="indicators" class="section">
+      <div class="container split">
+        <div class="split-copy">
+          <h2>Custom indicators in Python</h2>
+          <p>
+            An indicator is a single class in its own folder. It receives candles as a pandas
+            DataFrame, its inputs and the instrument context, and returns lines, levels, segments,
+            markers, tables, background colors or signals.
+          </p>
+          <ul class="check-list">
+            <li>The inputs form, with value validation, is generated automatically from the schema.</li>
+            <li>Indicator signals work in both alerts and the scanner.</li>
+            <li>An indicator can request external data, such as the COT report.</li>
+            <li>Indicator tests live right next to it and <code>python -m unittest</code> picks them up.</li>
+          </ul>
+        </div>
+        <div class="code-card">
+          <div class="code-head">
+            <span>tickview/indicators/custom/ema_cross/indicator.py</span>
+          </div>
+<pre><code><span class="tok-k">from</span> tickview.indicators.api <span class="tok-k">import</span> Indicator, Line, Param, Result
+
+
+<span class="tok-k">class</span> <span class="tok-f">EmaCross</span>(Indicator):
+    id = <span class="tok-s">"ema_cross"</span>
+    title = <span class="tok-s">"EMA×"</span>
+    name = <span class="tok-s">"EMA crossover"</span>
+    params = [
+        Param.int(<span class="tok-s">"fast"</span>, <span class="tok-n">9</span>, <span class="tok-s">"Fast"</span>),
+        Param.int(<span class="tok-s">"slow"</span>, <span class="tok-n">21</span>, <span class="tok-s">"Slow"</span>),
+    ]
+
+    <span class="tok-k">def</span> <span class="tok-f">compute</span>(self, df, params, ctx):
+        close = df[<span class="tok-s">"close"</span>]
+        fast = close.ewm(span=params[<span class="tok-s">"fast"</span>]).mean()
+        slow = close.ewm(span=params[<span class="tok-s">"slow"</span>]).mean()
+        <span class="tok-k">return</span> Result(lines=[
+            Line(<span class="tok-s">"Fast"</span>, fast),
+            Line(<span class="tok-s">"Slow"</span>, slow),
+        ])
+
+
+INDICATOR = EmaCross()</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- Instalace a spuštění -->
+    <section id="install" class="section section-alt">
+      <div class="container">
+        <header class="section-head">
+          <h2>Installation</h2>
+          <p>All you need is Python 3.12 or 3.13 – the script picks the right version on its own and, on Windows, installs it for you if needed. The app opens in your browser at <code>http://localhost:8095</code>, or optionally in a native window.</p>
+        </header>
+
+        <div class="tabs">
+          <div class="tab-list" role="tablist" aria-label="Operating system">
+            <button class="tab" type="button" role="tab" id="tab-unix" aria-controls="panel-unix" aria-selected="true">macOS / Linux</button>
+            <button class="tab" type="button" role="tab" id="tab-windows" aria-controls="panel-windows" aria-selected="false" tabindex="-1">Windows</button>
+          </div>
+
+          <!-- macOS / Linux: stažení přes curl + tar (oba jsou v systému, tar zachová spustitelný run.sh) -->
+          <div class="tab-panel" role="tabpanel" id="panel-unix" aria-labelledby="tab-unix">
+            <div class="terminal">
+<pre id="cmd-unix"><code>curl -L https://github.com/svopex/TickView/archive/refs/heads/main.tar.gz | tar xz
+cd TickView-main
+./run.sh --open</code></pre>
+              <button class="copy-btn" type="button" data-copy-target="cmd-unix">Copy</button>
+            </div>
+            <p class="hint">
+              Downloads the latest version into a <code>TickView-main</code> folder – all it takes is <code>curl</code>
+              and <code>tar</code>, which both macOS and Linux ship with. The <code>run.sh</code> script creates
+              a <code>.venv</code>, installs the dependencies and starts the app.
+            </p>
+          </div>
+
+          <!-- Windows: curl.exe a tar.exe jsou součástí Windows 10 (1803+) a 11; curl.exe kvůli aliasu curl
+               v PowerShellu 5.1, .\ kvůli spuštění skriptu z aktuální složky v PowerShellu;
+               --open stejně jako u run.sh, aby byl postup na obou platformách stejný -->
+          <div class="tab-panel" role="tabpanel" id="panel-windows" aria-labelledby="tab-windows" hidden>
+            <div class="terminal">
+<pre id="cmd-windows"><code>curl.exe -L -o TickView.zip https://github.com/svopex/TickView/archive/refs/heads/main.zip
+tar -xf TickView.zip
+cd TickView-main
+.\run-windows.bat --open</code></pre>
+              <button class="copy-btn" type="button" data-copy-target="cmd-windows">Copy</button>
+            </div>
+            <p class="hint">
+              Works in both Command Prompt and PowerShell on Windows 10 and 11; <code>curl</code> and <code>tar</code>
+              come with the system. The script finds Python (if it's missing, it installs it just for your user,
+              no admin rights required), sets up a <code>.venv</code>, installs the dependencies and opens your browser.
+            </p>
+          </div>
+        </div>
+
+        <div class="option-grid">
+          <div class="option"><code>--port 8090</code><span>use a different port</span></div>
+          <div class="option"><code>--open</code><span>open the browser</span></div>
+          <div class="option"><code>--native</code><span>native window instead of the browser</span></div>
+          <div class="option"><code>TICKVIEW_DATA_DIR</code><span>different folder for cache and settings</span></div>
+        </div>
+
+        <p class="note">
+          Updating: run the same commands again in the same folder and the new version replaces the old one.
+          The <code>data/</code> folder (cache, settings, drawings) and <code>config.yaml</code> (API keys)
+          aren't part of the archive, so they stay put.
+        </p>
+
+        <p class="note">
+          API keys (Alpaca, Telegram, IB) are entered in the app settings and stored only in your local
+          <code>config.yaml</code>, never in the code. Use <code>config.example.yaml</code> as a template.
+        </p>
+      </div>
+    </section>
+
+    <!-- Technologie pod kapotou -->
+    <section class="section">
+      <div class="container">
+        <header class="section-head">
+          <h2>Under the hood</h2>
+          <p>Fully asynchronous on a single asyncio event loop, with separate data, logic and UI layers.</p>
+        </header>
+        <ul class="stack-list">
+          <li><strong>Python 3.12–3.13</strong><span>asyncio, httpx, websockets</span></li>
+          <li><strong>NiceGUI</strong><span>UI in the browser or a native window</span></li>
+          <li><strong>Lightweight Charts™</strong><span>chart rendering</span></li>
+          <li><strong>pandas</strong><span>indicator calculations</span></li>
+          <li><strong>SQLite</strong><span>candle cache and settings</span></li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Kontakt: e-mail je v data-email obrácený a v base64, aby ho nenašli roboti;
+         site/script.js ho složí až po kliknutí a rovnou otevře poštovního klienta.
+         Stejný řetězec je v index.html a tickview/ui/about_dialog.py (při změně upravit všude). -->
+    <section id="contact" class="section section-alt">
+      <div class="container">
+        <header class="section-head">
+          <h2>Contact</h2>
+          <p>Bugs and feature requests are best filed as GitHub issues; for anything else, send an e-mail.</p>
+        </header>
+        <div class="contact-actions">
+          <a class="btn btn-primary" href="https://github.com/svopex/TickView/issues" target="_blank" rel="noopener">Report a bug on GitHub</a>
+          <button class="btn btn-ghost email-btn" type="button" data-email="dWUueGVwb3ZzQHdlaXZrY2l0">Send e-mail</button>
+        </div>
+        <noscript><p class="note">The e-mail button requires JavaScript.</p></noscript>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Patička s licencí a upozorněním -->
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <div>
+        <a class="brand" href="#top">
+          <img src="../site/favicon.svg" alt="" width="24" height="24">
+          <span>TickView</span>
+        </a>
+        <p>© 2026 Svopex · <a href="https://github.com/svopex/TickView/blob/main/LICENSE" target="_blank" rel="noopener">Apache License 2.0</a></p>
+        <p>Author: <a href="https://svopex.eu" target="_blank" rel="noopener">Svopex – svopex.eu</a></p>
+      </div>
+      <p class="disclaimer">
+        TickView is read-only – it doesn't place any trades and nothing here is investment advice.
+        The project is not affiliated with TradingView, Inc.; charts are rendered by the open-source
+        <a href="https://www.tradingview.com/lightweight-charts/" target="_blank" rel="noopener">Lightweight Charts™</a> library by TradingView (Apache 2.0).
+      </p>
+    </div>
+  </footer>
+
+</body>
+</html>

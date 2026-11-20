@@ -6,11 +6,13 @@ Ceny platí pro neprofesionálního uživatele (NP), stav k listopadu 2026.
 
 from nicegui import ui
 
+from tickview.i18n import N_, tr
 from tickview.ui.templates import settings_header
 
 # Společný postup pro obě varianty: oprávnění, předplatné Index CFDs,
-# sdílení s demo účtem a kontrola, že data chodí živě
-SETUP_TEXT = """
+# sdílení s demo účtem a kontrola, že data chodí živě; texty se přeloží
+# až při zobrazení (označené N_)
+SETUP_TEXT = N_("""
 Bez předplatného posílá TWS zpožděná data (10–15 minut). Aplikace si říká
 o typ dat 3 (`reqMarketDataType(3)`): když předplatné máte, TWS posílá živá
 data, bez něj zpožděná. Štítek **živě / zpožděno** v grafu ukazuje, co
@@ -34,10 +36,10 @@ skutečně chodí. V aplikaci se nic nenastavuje.
 - Porovnejte poslední svíčku s aktuální cenou jinde (např. TradingView).
 - Když demo účet (7497) ukazuje zpožděná data a ostrý účet (7496) živá,
   chybí sdílení dat s demo účtem.
-"""
+""")
 
 # Varianta 1: placená jen tři L1 předplatná US burz (akcie a ETF), futures zpožděné
-CHEAP_TEXT = """
+CHEAP_TEXT = N_("""
 **4,50 USD měsíčně** (3 × 1,50 USD). Ostatní předplatná jsou zdarma
 (Fee Waived).
 
@@ -68,10 +70,10 @@ CHEAP_TEXT = """
 **Pro koho:** obchodování přes CFD (`IBUS500` místo `ES1!`, `XAUUSD`
 místo `GC1!`), akcie a forex. Futures se hodí jen na historii a delší
 timeframy.
-"""
+""")
 
 # Varianta 2: bundle s futures CME Group + streaming US akcií a opcí
-FUTURES_TEXT = """
+FUTURES_TEXT = N_("""
 **14,50 USD měsíčně** (10 USD + 4,50 USD).
 
 | Předplatné | Cena | Živě |
@@ -96,10 +98,10 @@ a odpuštění poplatku ověřte v Client Portalu (ikona ⓘ).
 (data MIDPOINT), futures ano (data TRADES). Hodí se pro indikátory
 založené na objemu, přesné časy otevření a rollu nebo obchodování přímo
 futures.
-"""
+""")
 
 # Souhrnné srovnání obou variant v jedné tabulce
-COMPARISON_TEXT = """
+COMPARISON_TEXT = N_("""
 | | Levná | S futures |
 |---|---|---|
 | Měsíčně | 4,50 USD | 14,50 USD |
@@ -109,14 +111,15 @@ COMPARISON_TEXT = """
 | Futures CME Group | **zpožděně** | **živě** |
 | Futures EUREX, CFE | zpožděně | zpožděně |
 | Objem u indexů | jen přes ETF (`SPY`, `QQQ`) | i přes futures (`ES1!`, `NQ1!`) |
-"""
+""")
 
-# Záložky dialogu: titulek → obsah v Markdownu
+# Záložky dialogu: titulek → obsah v Markdownu; český titulek je zároveň
+# jméno záložky (identifikátor), přeložený se jen zobrazí jako popisek
 TABS = {
-    "Postup": SETUP_TEXT,
-    "Levná varianta": CHEAP_TEXT,
-    "Varianta s futures": FUTURES_TEXT,
-    "Srovnání": COMPARISON_TEXT,
+    N_("Postup"): SETUP_TEXT,
+    N_("Levná varianta"): CHEAP_TEXT,
+    N_("Varianta s futures"): FUTURES_TEXT,
+    N_("Srovnání"): COMPARISON_TEXT,
 }
 
 
@@ -126,19 +129,19 @@ def build_ibkr_data_dialog() -> ui.dialog:
     Vrací dialog; otevírá se tlačítkem v záložce Interactive Brokers v Settings.
     """
     with ui.dialog() as dialog, ui.card().classes("tv-settings ibkr-data-dialog"):
-        settings_header(dialog, "Předplatná dat Interactive Brokers")
+        settings_header(dialog, tr("Předplatná dat Interactive Brokers"))
         ui.label(
-            "Co si u IB předplatit pro živá data. Ceny pro neprofesionálního uživatele (NP), stav k listopadu 2026."
+            tr("Co si u IB předplatit pro živá data. Ceny pro neprofesionálního uživatele (NP), stav k listopadu 2026.")
         ).classes("settings-note ibkr-data-note")
         # Každá varianta na vlastní záložce, aby se nepletly
         with ui.tabs().props("dense no-caps align=left indicator-color=primary").classes("tv-tabs w-full") as tabs:
             for title in TABS:
-                ui.tab(title)
+                ui.tab(title, label=tr(title))
         with ui.tab_panels(tabs, value=next(iter(TABS))).classes("tv-tab-panels w-full"):
             for title, text in TABS.items():
                 with ui.tab_panel(title).classes("tv-tab-panel ibkr-data-panel"):
-                    ui.markdown(text).classes("tv-markdown")
+                    ui.markdown(tr(text)).classes("tv-markdown")
         with ui.row().classes("tv-settings-actions w-full"):
             ui.space()
-            ui.button("Zavřít", color=None, on_click=dialog.close).props("flat no-caps").classes("tv-btn-cancel")
+            ui.button(tr("Zavřít"), color=None, on_click=dialog.close).props("flat no-caps").classes("tv-btn-cancel")
     return dialog

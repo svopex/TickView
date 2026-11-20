@@ -7,6 +7,7 @@ Alpaca je volitelný – přidá se jen tehdy, když jsou v lokální konfigurac
 
 from typing import Optional
 
+from tickview.i18n import tr
 from tickview.providers.alpaca import AlpacaProvider
 from tickview.providers.base import DataProvider, split_symbol
 from tickview.providers.binance import BinanceProvider
@@ -38,7 +39,7 @@ def get_provider(provider_id: str) -> DataProvider:
     for provider in PROVIDERS:
         if provider.id == provider_id:
             return provider
-    raise KeyError(f"Neznámý zdroj dat: {provider_id}")
+    raise KeyError(tr("Neznámý zdroj dat: {provider}").format(provider=provider_id))
 
 
 def provider_symbol(text: str) -> Optional[tuple[DataProvider, str]]:

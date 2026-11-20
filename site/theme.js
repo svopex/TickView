@@ -8,7 +8,14 @@
 (function () {
   const STORAGE_KEY = "tickview-theme";
   const MODES = ["auto", "light", "dark"];
-  const LABELS = { auto: "podle prohlížeče", light: "světlý", dark: "tmavý" };
+  // Popisky přepínače podle jazyka stránky (<html lang>; "en" = anglická verze)
+  const IS_ENGLISH = (document.documentElement.lang || "").toLowerCase().startsWith("en");
+  const LABELS = IS_ENGLISH
+    ? { auto: "system", light: "light", dark: "dark" }
+    : { auto: "podle prohlížeče", light: "světlý", dark: "tmavý" };
+  const formatLabel = IS_ENGLISH
+    ? (name) => `Theme: ${name} (click to switch)`
+    : (name) => `Motiv: ${name} (klik přepne)`;
 
   // Uložená volba; localStorage může být nedostupné (soukromé okno, blokovaná data)
   function readMode() {
@@ -44,7 +51,7 @@
     if (!button) return;
 
     const updateButton = () => {
-      const label = `Motiv: ${LABELS[currentMode]} (klik přepne)`;
+      const label = formatLabel(LABELS[currentMode]);
       button.dataset.mode = currentMode;
       button.setAttribute("aria-label", label);
       button.title = label;
