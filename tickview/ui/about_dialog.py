@@ -85,7 +85,7 @@ def build_about_dialog() -> ui.dialog:
 
         # Autor a licence
         ui.label("Autor a licence").classes("tv-settings-section")
-        info_table([("Autor", "© 2026 Petr Svoboda"), ("Licence", "Apache License 2.0", LICENSE_URL)])
+        info_table([("Autor", "© 2026 Svopex"), ("Licence", "Apache License 2.0", LICENSE_URL)])
 
         # Systém a prostředí, ve kterém aplikace běží (pro hlášení chyb)
         ui.label("Systém").classes("tv-settings-section")

@@ -900,7 +900,7 @@ na CSS a JS, jinak prohlížeče až 10 minut drží starou verzi z cache.
 
 ## Licence
 
-Copyright 2026 Petr Svoboda
+Copyright 2026 Svopex
 
 Projekt je licencovaný pod [Apache License 2.0](LICENSE). Vendored knihovna
 TradingView Lightweight Charts (`tickview/ui/static/lightweight-charts.standalone.production.js`)
