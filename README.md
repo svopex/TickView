@@ -223,7 +223,23 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   hlavičkou jsou kulatá tlačítka s iniciálou každého seznamu pro rychlé
   přepnutí (aktivní seznam je plný, tooltip ukazuje celý název). Klik na
   záhlaví sloupce „Symbol“ řadí symboly podle abecedy (A→Z, Z→A, zpět
-  pořadí přidání); řazení platí pro všechny seznamy a pamatuje se.
+  vlastní pořadí); řazení platí uvnitř každé sekce, pro všechny seznamy
+  a pamatuje se.
+- Sekce ve watchlistu jako v TradingView: „Přidat sekci…“ v nabídce seznamu
+  (nebo ikona složky v hlavičce) vytvoří pojmenovanou sekci na konci seznamu.
+  Klik na záhlaví sekce ji sbalí / rozbalí (pamatuje se), tlačítko ⋯ nebo
+  pravé tlačítko myši na záhlaví otevře nabídku „Přejmenovat…“, „Odebrat
+  sekci“ (symboly zůstanou v seznamu a připadnou skupině nad ní, u první
+  sekce symbolům bez sekce) a „Přidat symbol…“ (hledání; vybraný symbol
+  přijde na konec sekce). Symboly i celé sekce se přesouvají tažením myši:
+  puštění do horní / dolní poloviny řádku vloží symbol před / za něj, do
+  dolní poloviny záhlaví sekce na její začátek, na prázdné místo pod
+  seznamem na konec. Symboly bez sekce tvoří vlastní skupinu, která může
+  stát kdekoli mezi sekcemi: nahoře je bez záhlaví, jinde má záhlaví „Bez
+  sekce“, za které jde skupinu přetáhnout. Sekce puštěná do horní poloviny
+  prvního symbolu skupiny skončí před ní – tak jde sekce i úplně na začátek
+  seznamu nad symboly bez sekce. Kopie seznamu převezme i sekce,
+  „Vyprázdnit seznam“ odebere symboly i sekce.
 - Typ grafu jako v TradingView: Bars, Candles, Hollow candles, Line, Line
   with markers, Step line, Area, Baseline (základna v polovině rozpětí dat),
   Columns, High-low a Heikin Ashi; barvy růstu / poklesu bere ze Settings
@@ -855,7 +871,7 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   časových pásem pro nabídku
 - `tickview/logic/layouts.py` – rozložení více grafů (Layout setup), volby
   synchronizace, kontrola uložené konfigurace a změna počtu grafů
-- `tickview/logic/watchlists.py` – řazení symbolů watchlistu podle abecedy
+- `tickview/logic/watchlists.py` – řazení symbolů watchlistu podle abecedy a sekce (skupiny, přesuny myší, odebrání sekce)
 - `tickview/logic/indicator_templates.py` – šablony indikátorů (uložení,
   přepsání, oblíbené, naposledy použité, popis)
 - `tickview/ui/chart_pane.py` – jeden graf rozložení (ChartPane): symbol,
@@ -914,6 +930,8 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   při přepínání záložek
 - `tickview/ui/static/resizers.js` – posuvné hrany panelů (šířka pravého
   panelu, výška panelu obchodů replaye) s uložením velikosti v prohlížeči
+- `tickview/ui/static/watchlist_dnd.js` – přesun symbolů a sekcí watchlistu
+  tažením myši (událost `watchlist_drop` do Pythonu)
 - `tickview/ui/static/style.css` – styly UI
 - `tickview/ui/static/lightweight-charts.standalone.production.js` – vendored
   knihovna TradingView Lightweight Charts 4.2.3 (licence Apache-2.0)

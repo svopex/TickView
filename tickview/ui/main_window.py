@@ -75,7 +75,16 @@ from tickview.logic.layouts import (
     load_layout,
     resize_panes,
 )
-from tickview.logic.watchlists import WATCHLIST_SORTS, sort_watchlist
+from tickview.logic.watchlists import (
+    WATCHLIST_SORTS,
+    build_groups,
+    item_key,
+    move_section,
+    move_symbol,
+    parse_entry,
+    remove_section,
+    sort_watchlist,
+)
 from tickview.logic.styles import (
     CHART_DEFAULTS,
     CHART_TYPE_SECTIONS,
@@ -157,6 +166,7 @@ STATIC_SCRIPTS = (
     "color_picker.js",
     "dialog_tabs.js",
     "resizers.js",
+    "watchlist_dnd.js",
     "lightweight_chart.js",
 )
 
@@ -270,7 +280,7 @@ async def _build_index(
     saved_alerts_sort = await cache.get_setting("alerts_sort", "newest")
     if saved_alerts_sort not in ALERT_SORTS:
         saved_alerts_sort = "newest"
-    # Řazení watchlistu z minula ("" = pořadí přidání, asc / desc podle abecedy)
+    # Řazení watchlistu z minula ("" = vlastní pořadí, asc / desc podle abecedy)
     saved_watchlist_sort = await cache.get_setting("watchlist_sort", "")
     if saved_watchlist_sort not in WATCHLIST_SORTS:
         saved_watchlist_sort = ""
@@ -307,7 +317,12 @@ async def _build_index(
         "alerts_tab": "alerts",
         "alerts_sort": saved_alerts_sort,
         "watchlist_sort": saved_watchlist_sort,
-        "watchlist_items": [],
+        # Aktivní seznam: symboly (klíč -> položka), sekce (id -> sekce) a skupiny
+        # [(id sekce / None, [klíče])] pro přeskládání bez načítání; příslušnost
+        # symbolu k sekci po přesunu drží jen skupiny (section_id položek se neaktualizuje)
+        "watchlist_items": {},
+        "watchlist_sections": {},
+        "watchlist_groups": [],
         "alert_search_open": False,
         # Naposledy načtené alerty (hledání a řazení filtrují v paměti)
         "alerts": [],
@@ -618,14 +633,22 @@ async def _build_index(
         if text is None:
             symbol_search_input.run_method("select")
 
-    async def add_key_to_watchlist(key: str) -> None:
-        # Přidá symbol "zdroj:symbol" do watchlistu, jen když tam ještě není
+    async def add_key_to_watchlist(key: str, section_id: int | None = None) -> None:
+        """Přidá symbol "zdroj:symbol" do aktivního seznamu, jen když tam ještě není.
+
+        Parametry:
+            key: symbol grafu "zdroj:SYMBOL".
+            section_id: sekce, na jejíž konec symbol přijde (None = bez sekce);
+                sbalená sekce se rozbalí, aby byl nový symbol vidět.
+        """
         provider_id, _, symbol = key.partition(":")
         list_name = state.get("watchlist_name", "")
         if key in watch_rows:
             show_status(tr("{symbol} už v seznamu {name} je ({source}).").format(symbol=symbol, name=list_name, source=provider_id))
             return
-        await cache.watchlist_add(state["watchlist_id"], provider_id, symbol)
+        await cache.watchlist_add(state["watchlist_id"], provider_id, symbol, section_id)
+        if section_id is not None and state["watchlist_sections"].get(section_id, {}).get("collapsed"):
+            await cache.watchlist_section_collapse(section_id, False)
         await rebuild_watchlist()
         show_status(tr("{symbol} přidán do seznamu {name} ({source}).").format(symbol=symbol, name=list_name, source=provider_id))
 
@@ -1528,8 +1551,9 @@ async def _build_index(
 
     # ---------- watchlist ----------
 
-    # Řádky watchlistu: key -> elementy pro aktualizaci cen
+    # Řádky watchlistu: key -> elementy pro aktualizaci cen; záhlaví sekcí: id -> elementy
     watch_rows: dict = {}
+    section_heads: dict = {}
 
     def _format_price(price: float) -> str:
         # Formát ceny podle řádu hodnoty
@@ -1615,9 +1639,11 @@ async def _build_index(
                     ui.space()
                     ui.label(str(item["count"])).classes("wl-count")
             ui.separator()
-            ui.menu_item(tr("Nový seznam…"), on_click=lambda: open_watchlist_name("create")).classes("wl-item")
-            ui.menu_item(tr("Přejmenovat…"), on_click=lambda: open_watchlist_name("rename")).classes("wl-item")
-            ui.menu_item(tr("Vytvořit kopii…"), on_click=lambda: open_watchlist_name("copy")).classes("wl-item")
+            ui.menu_item(tr("Přidat sekci…"), on_click=lambda: open_section_name()).classes("wl-item")
+            ui.separator()
+            ui.menu_item(tr("Nový seznam…"), on_click=lambda: open_list_name("create")).classes("wl-item")
+            ui.menu_item(tr("Přejmenovat…"), on_click=lambda: open_list_name("rename")).classes("wl-item")
+            ui.menu_item(tr("Vytvořit kopii…"), on_click=lambda: open_list_name("copy")).classes("wl-item")
             ui.menu_item(tr("Vyprázdnit seznam"), on_click=lambda: confirm_watchlist("clear")).classes("wl-item")
             # Poslední seznam smazat nejde – vždy musí existovat aspoň jeden
             if len(lists) > 1:
@@ -1630,32 +1656,69 @@ async def _build_index(
 
         return _handler
 
-    def open_watchlist_name(mode: str) -> None:
-        # Dialog názvu seznamu: nový / přejmenování / kopie aktivního seznamu
-        state["watchlist_name_mode"] = mode
-        titles = {"create": tr("Nový seznam"), "rename": tr("Přejmenovat seznam"), "copy": tr("Kopie seznamu")}
-        watchlist_name_title.text = titles[mode]
-        current = state["watchlist_name"]
-        watchlist_name_input.value = {"create": "", "rename": current, "copy": tr("{name} (kopie)").format(name=current)}[mode]
+    def open_name_dialog(title: str, label: str, initial: str, warning: str, on_submit) -> None:
+        """Dialog názvu (seznamu i sekce).
+
+        Parametry:
+            title: nadpis dialogu.
+            label: popisek pole.
+            initial: předvyplněný název.
+            warning: hláška prázdného názvu se zástupným symbolem {max_length}.
+            on_submit: async funkce, která dostane očištěný název.
+        """
+        state["name_dialog"] = {"warning": warning, "on_submit": on_submit}
+        watchlist_name_title.text = title
+        watchlist_name_input.props(f'label="{label}"')
+        watchlist_name_input.value = initial
         watchlist_name_dialog.open()
 
     async def submit_watchlist_name() -> None:
-        # Uloží název podle režimu dialogu; nový seznam i kopie se rovnou zobrazí
+        # Ověří název a předá ho akci, se kterou byl dialog otevřen
+        dialog = state["name_dialog"]
         name = clean_name(watchlist_name_input.value)
         if not name:
-            ui.notify(tr("Zadejte název seznamu (1–{max_length} znaků).").format(max_length=MAX_NAME_LENGTH), type="warning")
+            ui.notify(dialog["warning"].format(max_length=MAX_NAME_LENGTH), type="warning")
             return
-        mode = state.get("watchlist_name_mode")
         watchlist_name_dialog.close()
-        if mode == "rename":
-            # Přejmenování mění jen nabídku – řádky ani ceny se nepřestavují
-            await cache.watchlist_rename(state["watchlist_id"], name)
-            state["watchlist_name"] = name
-            render_watchlist_menu(await cache.watchlists())
-            show_status(tr("Seznam přejmenován na {name}.").format(name=name))
-            return
-        copy_from = state["watchlist_id"] if mode == "copy" else None
-        list_id = await cache.watchlist_create(name, copy_from=copy_from)
+        await dialog["on_submit"](name)
+
+    def open_list_name(mode: str) -> None:
+        # Dialog názvu aktivního seznamu: create = nový, rename = přejmenování, copy = kopie
+        current = state["watchlist_name"]
+        title, initial = {
+            "create": (tr("Nový seznam"), ""),
+            "rename": (tr("Přejmenovat seznam"), current),
+            "copy": (tr("Kopie seznamu"), tr("{name} (kopie)").format(name=current)),
+        }[mode]
+
+        async def on_submit(name: str) -> None:
+            await (rename_watchlist(name) if mode == "rename" else create_watchlist(name, copy=mode == "copy"))
+
+        open_name_dialog(title, tr("Název seznamu"), initial, tr("Zadejte název seznamu (1–{max_length} znaků)."), on_submit)
+
+    def open_section_name(section_id: int | None = None) -> None:
+        # Dialog názvu sekce: bez section_id nová sekce, jinak přejmenování
+        if section_id is None:
+            title, initial, on_submit = tr("Nová sekce"), "", create_watchlist_section
+        else:
+            title = tr("Přejmenovat sekci")
+            initial = state["watchlist_sections"][section_id]["name"]
+
+            async def on_submit(name: str) -> None:
+                await rename_watchlist_section(section_id, name)
+
+        open_name_dialog(title, tr("Název sekce"), initial, tr("Zadejte název sekce (1–{max_length} znaků)."), on_submit)
+
+    async def rename_watchlist(name: str) -> None:
+        # Přejmenování mění jen nabídku – řádky ani ceny se nepřestavují
+        await cache.watchlist_rename(state["watchlist_id"], name)
+        state["watchlist_name"] = name
+        render_watchlist_menu(await cache.watchlists())
+        show_status(tr("Seznam přejmenován na {name}.").format(name=name))
+
+    async def create_watchlist(name: str, copy: bool) -> None:
+        # Nový seznam (s copy kopie aktivního) se rovnou zobrazí
+        list_id = await cache.watchlist_create(name, copy_from=state["watchlist_id"] if copy else None)
         await cache.set_setting("active_watchlist", str(list_id))
         show_status(tr("Seznam {name} vytvořen.").format(name=name))
         await rebuild_watchlist()
@@ -1665,7 +1728,7 @@ async def _build_index(
         state["watchlist_confirm"] = action
         name = state["watchlist_name"]
         watchlist_confirm_text.text = (
-            tr("Odebrat ze seznamu {name} všechny symboly?") if action == "clear" else tr("Smazat seznam {name}?")
+            tr("Odebrat ze seznamu {name} všechny symboly a sekce?") if action == "clear" else tr("Smazat seznam {name}?")
         ).format(name=name)
         watchlist_confirm_dialog.open()
 
@@ -1682,45 +1745,193 @@ async def _build_index(
         await rebuild_watchlist()
 
     async def rebuild_watchlist() -> None:
-        # Přestaví nabídku seznamů a řádky aktivního seznamu podle databáze
+        # Přestaví nabídku seznamů, záhlaví sekcí a řádky aktivního seznamu podle databáze
         lists = await cache.watchlists()
         active = await select_active_watchlist(lists)
         state["watchlist_id"] = active["id"]
         state["watchlist_name"] = active["name"]
         render_watchlist_menu(lists)
         watch_rows.clear()
+        section_heads.clear()
         watchlist_body.clear()
-        # Symboly v pořadí přidání si pamatujeme pro přeřazení bez načítání (záhlaví Symbol)
-        state["watchlist_items"] = await cache.watchlist_list(active["id"])
+        # Symboly a sekce si pamatujeme pro přeřazení bez načítání (záhlaví Symbol, přesun myší)
+        items = await cache.watchlist_list(active["id"])
+        sections = await cache.watchlist_sections(active["id"])
+        state["watchlist_items"] = {item_key(item): item for item in items}
+        state["watchlist_sections"] = {section["id"]: section for section in sections}
+        state["watchlist_groups"] = build_groups(items, sections, active["free_position"])
         paint_watchlist_sort()
+        # Řádky rovnou ve správném pořadí; symboly sbalené sekce skryté
         with watchlist_body:
-            for item in sort_watchlist(state["watchlist_items"], state["watchlist_sort"]):
-                key = f"{item['source']}:{item['symbol']}"
-                code = provider_code(item["source"])
-                # Klik kamkoli do řádku (symbol, cena, změna) přepne graf
-                with ui.row().classes("watch-row w-full").on("click", make_watch_click(key)) as watch_row_element:
-                    ui.label(code).classes("watch-code").tooltip(item["source"])
-                    ui.label(item["symbol"]).classes("watch-symbol")
-                    price_label = ui.label("—").classes("watch-price")
-                    change_label = ui.label("—").classes("watch-change")
-                    # Odebrání nesmí zároveň přepnout graf (.stop zastaví klik řádku)
-                    ui.button(icon="close").props("flat dense size=sm").classes("watch-remove").on(
-                        "click.stop", make_watch_remove(key)
-                    )
-                watch_rows[key] = {"row": watch_row_element, "price": price_label, "change": change_label}
+            for kind, value, visible in watchlist_order():
+                if kind == "symbol":
+                    render_watch_row(state["watchlist_items"][value], visible)
+                elif value is None:
+                    render_free_head(visible)
+                else:
+                    render_section_head(state["watchlist_sections"][value])
         refresh_watchlist_active()
         await refresh_watchlist_prices()
 
+    def render_watch_row(item: dict, visible: bool) -> None:
+        # Řádek symbolu: klik kamkoli (symbol, cena, změna) přepne graf, řádek
+        # jde táhnout myší do jiné sekce / na jiné místo (static/watchlist_dnd.js);
+        # visible=False = symbol sbalené sekce
+        key = item_key(item)
+        with ui.row().classes("watch-row w-full").on("click", make_watch_click(key)) as watch_row_element:
+            ui.label(provider_code(item["source"])).classes("watch-code").tooltip(item["source"])
+            ui.label(item["symbol"]).classes("watch-symbol")
+            price_label = ui.label("—").classes("watch-price")
+            change_label = ui.label("—").classes("watch-change")
+            # Odebrání nesmí zároveň přepnout graf (.stop zastaví klik řádku)
+            ui.button(icon="close").props("flat dense size=sm").classes("watch-remove").on(
+                "click.stop", make_watch_remove(key)
+            )
+        watch_row_element.props.update({"draggable": "true", "data-wl-entry": f"symbol:{key}"})
+        watch_row_element.set_visibility(visible)
+        watch_rows[key] = {"row": watch_row_element, "price": price_label, "change": change_label}
+
+    def render_section_head(section: dict) -> None:
+        # Záhlaví sekce (jako v TradingView): klik sbalí / rozbalí, ⋯ i pravé tlačítko
+        # myši otevřou nabídku sekce; záhlaví jde táhnout myší (pořadí sekcí)
+        section_id = section["id"]
+        with ui.row().classes("wl-section-head w-full").on("click", make_section_toggle(section_id)) as head:
+            chevron = ui.icon("chevron_right" if section["collapsed"] else "expand_more").classes("wl-section-chevron")
+            label = ui.label(section["name"]).classes("wl-section-name")
+            # Klik na ⋯ nesmí sekci zároveň sbalit (.stop zastaví klik záhlaví)
+            with ui.button(icon="more_horiz", color=None).props("flat dense round size=sm").classes(
+                "wl-section-more"
+            ).on("click.stop", lambda: None):
+                with ui.menu().classes("wl-menu"):
+                    fill_section_menu(section_id)
+            with ui.context_menu().classes("wl-menu"):
+                fill_section_menu(section_id)
+        head.props.update({"draggable": "true", "data-wl-entry": f"section:{section_id}"})
+        section_heads[section_id] = {"row": head, "label": label, "chevron": chevron}
+
+    def render_free_head(visible: bool) -> None:
+        # Záhlaví skupiny symbolů bez sekce: vidět jen mezi sekcemi (nahoře je
+        # skupina bez záhlaví jako v TradingView); jde za něj táhnout celou skupinu
+        with ui.row().classes("wl-section-head wl-free-head w-full") as head:
+            ui.label(tr("Bez sekce")).classes("wl-section-name")
+        head.props.update({"draggable": "true", "data-wl-entry": "section:none"})
+        head.set_visibility(visible)
+        section_heads[None] = {"row": head}
+
+    def fill_section_menu(section_id: int) -> None:
+        # Položky nabídky sekce (tlačítko ⋯ i pravé tlačítko myši)
+        ui.menu_item(tr("Přejmenovat…"), on_click=lambda: open_section_name(section_id)).classes("wl-item")
+        ui.menu_item(tr("Odebrat sekci"), on_click=lambda: remove_watchlist_section(section_id)).classes(
+            "wl-item wl-danger"
+        )
+        ui.separator()
+        ui.menu_item(
+            tr("Přidat symbol…"),
+            on_click=lambda: show_symbol_search(
+                None, lambda key: background_tasks.create(add_key_to_watchlist(key, section_id))
+            ),
+        ).classes("wl-item")
+
+    def watchlist_order():
+        # Pořadí řádků: skupiny (záhlaví, pak symboly skupiny), symboly uvnitř
+        # skupiny podle řazení záhlaví Symbol; prvky (druh, id / klíč, viditelnost):
+        # symboly sbalené sekce jsou skryté, záhlaví Bez sekce jen mimo začátek
+        for index, (section_id, keys) in enumerate(state["watchlist_groups"]):
+            section = state["watchlist_sections"].get(section_id)
+            yield "section", section_id, section is not None or index > 0
+            visible = not (section and section["collapsed"])
+            items = [state["watchlist_items"][key] for key in keys]
+            for item in sort_watchlist(items, state["watchlist_sort"]):
+                yield "symbol", item_key(item), visible
+
+    def layout_watchlist_rows() -> None:
+        # Přeskládá existující řádky podle skupin a řazení (ceny zůstanou, nic se
+        # nenačítá) a nastaví viditelnost (sbalené sekce, záhlaví Bez sekce)
+        for index, (kind, value, visible) in enumerate(watchlist_order()):
+            element = (watch_rows if kind == "symbol" else section_heads)[value]["row"]
+            element.set_visibility(visible)
+            element.move(target_index=index)
+
+    async def save_watchlist_groups(groups: list, delete_section: int | None = None) -> None:
+        # Uloží nové skupiny (pořadí a sekce symbolů) a přeskládá řádky; sbalená
+        # sekce, která získala symboly (přesun, odebrání sekce pod ní), se rozbalí,
+        # aby symboly nezmizely z očí
+        previous = dict(state["watchlist_groups"])
+        for section_id, keys in groups:
+            section = state["watchlist_sections"].get(section_id)
+            if section and section["collapsed"] and set(keys) - set(previous.get(section_id, [])):
+                await store_section_collapsed(section_id, False)
+        await cache.watchlist_save_layout(state["watchlist_id"], groups, delete_section)
+        state["watchlist_groups"] = groups
+        layout_watchlist_rows()
+
+    async def create_watchlist_section(name: str) -> None:
+        # Nová prázdná sekce na konci seznamu (symboly se do ní přetáhnou myší)
+        section_id = await cache.watchlist_section_create(state["watchlist_id"], name)
+        section = {"id": section_id, "name": name, "collapsed": False}
+        state["watchlist_sections"][section_id] = section
+        state["watchlist_groups"].append((section_id, []))
+        # Prázdná sekce na konci = poslední prvek seznamu, přeskládání není potřeba
+        with watchlist_body:
+            render_section_head(section)
+        show_status(tr("Sekce {name} vytvořena – symboly do ní přetáhněte myší.").format(name=name))
+
+    async def rename_watchlist_section(section_id: int, name: str) -> None:
+        # Přejmenování mění jen popisek záhlaví
+        await cache.watchlist_section_rename(section_id, name)
+        state["watchlist_sections"][section_id]["name"] = name
+        section_heads[section_id]["label"].text = name
+        show_status(tr("Sekce přejmenována na {name}.").format(name=name))
+
+    async def remove_watchlist_section(section_id: int) -> None:
+        # Odebere záhlaví sekce; symboly zůstanou v seznamu a připadnou skupině
+        # nad ní (jako v TradingView, logic.watchlists.remove_section)
+        name = state["watchlist_sections"].pop(section_id)["name"]
+        section_heads.pop(section_id)["row"].delete()
+        await save_watchlist_groups(remove_section(state["watchlist_groups"], section_id), delete_section=section_id)
+        show_status(tr("Sekce {name} odebrána, její symboly zůstaly v seznamu.").format(name=name))
+
+    async def store_section_collapsed(section_id: int, collapsed: bool) -> None:
+        # Stav sbalení sekce: šipka záhlaví a uložení (viditelnost řádků řeší layout_watchlist_rows)
+        state["watchlist_sections"][section_id]["collapsed"] = collapsed
+        section_heads[section_id]["chevron"].name = "chevron_right" if collapsed else "expand_more"
+        await cache.watchlist_section_collapse(section_id, collapsed)
+
+    def make_section_toggle(section_id: int):
+        # Klik na záhlaví sekce: sbalení / rozbalení
+        async def _handler(_event=None) -> None:
+            await store_section_collapsed(section_id, not state["watchlist_sections"][section_id]["collapsed"])
+            layout_watchlist_rows()
+
+        return _handler
+
+    async def on_watchlist_drop(event) -> None:
+        # Puštění taženého symbolu nebo sekce (static/watchlist_dnd.js): spočítá
+        # nové skupiny, uloží je a přeskládá řádky bez načítání cen
+        args = event.args if isinstance(event.args, dict) else {}
+        dragged = parse_entry(args.get("dragged"))
+        target = parse_entry(args.get("target"))
+        after = bool(args.get("after"))
+        groups = state.get("watchlist_groups", [])
+        if dragged is None:
+            return
+        if dragged[0] == "symbol":
+            if dragged[1] not in state["watchlist_items"]:
+                return
+            new_groups = move_symbol(groups, dragged[1], target, after)
+        else:
+            # Neznámou sekci move_section vrátí beze změny
+            new_groups = move_section(groups, dragged[1], target, after)
+        if new_groups != groups:
+            await save_watchlist_groups(new_groups)
+
     async def toggle_watchlist_sort() -> None:
-        # Klik na záhlaví Symbol (jako v TradingView): A→Z, Z→A, pořadí přidání;
-        # řazení platí pro všechny seznamy a přetrvá restart. Existující řádky
-        # se jen přeskládají (ceny zůstanou, nic se nenačítá znovu)
+        # Klik na záhlaví Symbol (jako v TradingView): A→Z, Z→A, vlastní pořadí;
+        # řazení platí uvnitř každé sekce, pro všechny seznamy a přetrvá restart.
+        # Existující řádky se jen přeskládají (ceny zůstanou, nic se nenačítá znovu)
         state["watchlist_sort"] = WATCHLIST_SORT_NEXT[state["watchlist_sort"]]
         paint_watchlist_sort()
-        for index, item in enumerate(sort_watchlist(state["watchlist_items"], state["watchlist_sort"])):
-            row = watch_rows.get(f"{item['source']}:{item['symbol']}")
-            if row:
-                row["row"].move(target_index=index)
+        layout_watchlist_rows()
         await cache.set_setting("watchlist_sort", state["watchlist_sort"])
 
     def paint_watchlist_sort() -> None:
@@ -3251,6 +3462,9 @@ async def _build_index(
                         ).classes("watchlist-title") as watchlist_button:
                             watchlist_menu = ui.menu().classes("wl-menu")
                         ui.space()
+                        ui.button(
+                            icon="create_new_folder", on_click=lambda: open_section_name()
+                        ).props("flat dense size=sm").classes("watch-add").tooltip(tr("Přidat sekci"))
                         ui.button(icon="playlist_add", on_click=watchlist_add_current).props(
                             "flat dense size=sm"
                         ).classes("watch-add").tooltip(tr("Přidat symbol grafu do seznamu"))
@@ -3261,7 +3475,7 @@ async def _build_index(
                         with ui.button(color=None, on_click=toggle_watchlist_sort).props(
                             "flat dense no-caps"
                         ).classes("watch-sort").tooltip(
-                            tr("Řadit podle abecedy (A→Z, Z→A, pořadí přidání)")
+                            tr("Řadit podle abecedy (A→Z, Z→A, vlastní pořadí)")
                         ) as watchlist_sort_button:
                             ui.label("Symbol")
                             watchlist_sort_icon = ui.icon(WATCHLIST_SORT_ICONS[state["watchlist_sort"]]).classes(
@@ -3772,6 +3986,8 @@ async def _build_index(
     # Aktualizace cen watchlistu (Binance 5 s, Yahoo throttlováno na zdroji)
     ui.timer(5.0, refresh_watchlist_prices)
 
+    # Přesun symbolů a sekcí watchlistu myší (static/watchlist_dnd.js)
+    ui.on("watchlist_drop", on_watchlist_drop)
     # Naplnění watchlistu z databáze po načtení stránky
     ui.timer(0.2, rebuild_watchlist, once=True)
 

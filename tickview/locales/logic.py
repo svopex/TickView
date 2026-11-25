@@ -115,7 +115,7 @@ EN = {
     "{start}–{end} po {interval} min · {days} · {timezone}": "{start}–{end} every {interval} min · {days} · {timezone}",
     "připomínka": "reminder",
     # Watchlist a šablony indikátorů (logic/watchlists.py, logic/indicator_templates.py)
-    "Pořadí přidání": "Order added",
+    "Vlastní pořadí": "Custom order",
     "Neplatný název šablony.": "Invalid template name.",
     "Bez indikátorů": "No indicators",
     # Scanner (logic/scanner.py, services/scanner.py)

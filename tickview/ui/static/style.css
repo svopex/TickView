@@ -604,6 +604,8 @@
 
 .watchlist-body {
   gap: 2px !important;
+  flex: 1 0 auto;
+  min-height: 40px;
 }
 
 .watch-row {
@@ -614,7 +616,8 @@
   border-radius: 4px;
 }
 
-.watch-row:hover {
+.watch-row:hover,
+.wl-section-head:hover {
   background: rgba(128, 128, 128, 0.15);
 }
 
@@ -662,6 +665,67 @@
 
 .watch-remove {
   color: #808080;
+}
+
+/* Záhlaví sekce watchlistu (jako v TradingView): šipka sbalení, název, nabídka ⋯ */
+.wl-section-head {
+  cursor: pointer;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 4px !important;
+  margin-top: 6px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  color: #808080;
+}
+
+.wl-section-chevron {
+  font-size: 16px;
+}
+
+.wl-section-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* Záhlaví skupiny bez sekce (jen mezi sekcemi): bez šipky, název zarovnaný se sekcemi */
+.wl-free-head {
+  padding-left: 24px;
+  min-height: 28px;
+}
+
+/* Nabídka sekce se ukáže až při najetí na záhlaví */
+.wl-section-more {
+  color: #808080;
+  opacity: 0;
+}
+
+.wl-section-head:hover .wl-section-more {
+  opacity: 1;
+}
+
+/* Přesun myší (static/watchlist_dnd.js): tažený řádek a čára místa puštění */
+.wl-dragging {
+  opacity: 0.4;
+}
+
+.wl-drop-before {
+  box-shadow: inset 0 2px 0 #2962ff;
+}
+
+.wl-drop-after {
+  box-shadow: inset 0 -2px 0 #2962ff;
+}
+
+.watchlist-body.wl-drop-end {
+  box-shadow: 0 2px 0 #2962ff;
 }
 
 /* Záhlaví watchlistu: sloupec Symbol s řazením podle abecedy (jako v TradingView) */

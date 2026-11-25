@@ -27,7 +27,14 @@ from tickview.indicators.compute import (
     normalize_params,
 )
 from tickview.logic.sessions import filter_session, timezone_options, utc_offset_label
-from tickview.logic.watchlists import sort_watchlist
+from tickview.logic.watchlists import (
+    build_groups,
+    move_section,
+    move_symbol,
+    parse_entry,
+    remove_section,
+    sort_watchlist,
+)
 from tickview.logic.styles import (
     CHART_DEFAULTS,
     clean_name,
@@ -777,7 +784,8 @@ class WatchlistsTest(unittest.IsolatedAsyncioTestCase):
                 first = lists[0]["id"]
                 self.assertEqual(
                     await cache.watchlist_list(first),
-                    [{"source": "binance", "symbol": "BTCUSDT"}, {"source": "ibkr", "symbol": "MSFT"}],
+                    [{"source": "binance", "symbol": "BTCUSDT", "section_id": None},
+                     {"source": "ibkr", "symbol": "MSFT", "section_id": None}],
                 )
                 # Kopie seznamu, stejný symbol ve dvou seznamech, přejmenování
                 copy = await cache.watchlist_create("Forex", copy_from=first)
@@ -792,6 +800,128 @@ class WatchlistsTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(await cache.watchlist_list(first), [])
                 await cache.watchlist_delete(copy)
                 self.assertEqual([item["id"] for item in await cache.watchlists()], [first])
+            finally:
+                await cache.close()
+
+
+class WatchlistSectionsLogicTest(unittest.TestCase):
+    """Sekce watchlistu: skupiny, přesuny myší a odebrání sekce."""
+
+    # Symboly bez sekce A, B; sekce 1 s C; sekce 2 s D, E
+    GROUPS = [(None, ["x:A", "x:B"]), (1, ["x:C"]), (2, ["x:D", "x:E"])]
+    # Sekce 1 nahoře, pak symboly bez sekce, pak sekce 2
+    MIDDLE = [(1, ["x:C"]), (None, ["x:A", "x:B"]), (2, ["x:D", "x:E"])]
+
+    def test_build_groups(self) -> None:
+        items = [{"source": "x", "symbol": "C", "section_id": 1}, {"source": "x", "symbol": "A", "section_id": None},
+                 {"source": "x", "symbol": "Z", "section_id": 99}]
+        sections = [{"id": 1, "position": 0}, {"id": 2, "position": 2}]
+        # Neznámá (smazaná) sekce = bez sekce; prázdná sekce zůstane; skupina bez sekce na své pozici
+        self.assertEqual(build_groups(items, sections, 1), [(1, ["x:C"]), (None, ["x:A", "x:Z"]), (2, [])])
+        # Při shodě pozic je skupina bez sekce první; prázdná skupina bez sekce se drží na začátku
+        self.assertEqual(build_groups(items, sections, 0)[0][0], None)
+        self.assertEqual(build_groups(items[:1], sections, 5), [(None, []), (1, ["x:C"]), (2, [])])
+
+    def test_move_symbol(self) -> None:
+        # Za záhlaví = začátek sekce, před záhlaví = konec předchozí skupiny
+        self.assertEqual(move_symbol(self.GROUPS, "x:A", ("section", 2), True),
+                         [(None, ["x:B"]), (1, ["x:C"]), (2, ["x:A", "x:D", "x:E"])])
+        self.assertEqual(move_symbol(self.GROUPS, "x:D", ("section", 1), False),
+                         [(None, ["x:A", "x:B", "x:D"]), (1, ["x:C"]), (2, ["x:E"])])
+        # Před / za symbol jiné sekce, bez cíle = konec seznamu
+        self.assertEqual(move_symbol(self.GROUPS, "x:E", ("symbol", "x:C"), False),
+                         [(None, ["x:A", "x:B"]), (1, ["x:E", "x:C"]), (2, ["x:D"])])
+        self.assertEqual(move_symbol(self.GROUPS, "x:A", None, True),
+                         [(None, ["x:B"]), (1, ["x:C"]), (2, ["x:D", "x:E", "x:A"])])
+        # Vstup se nemění
+        self.assertEqual(self.GROUPS[0], (None, ["x:A", "x:B"]))
+        # Nad první sekci, když symboly bez sekce stojí jinde = začátek první sekce
+        self.assertEqual(move_symbol(self.MIDDLE, "x:D", ("section", 1), False),
+                         [(1, ["x:D", "x:C"]), (None, ["x:A", "x:B"]), (2, ["x:E"])])
+        # Poslední symbol bez sekce odejde – prázdná skupina se přesune na začátek
+        self.assertEqual(move_symbol([(1, []), (None, ["x:A"])], "x:A", ("section", 1), True),
+                         [(None, []), (1, ["x:A"])])
+
+    def test_move_section(self) -> None:
+        swapped = [(None, ["x:A", "x:B"]), (2, ["x:D", "x:E"]), (1, ["x:C"])]
+        self.assertEqual(move_section(self.GROUPS, 2, ("section", 1), False), swapped)
+        self.assertEqual(move_section(self.GROUPS, 1, ("section", 2), True), swapped)
+        # Na symbol = za jeho skupinu, vlastní sekce nebo její symbol nic nezmění
+        self.assertEqual(move_section(self.GROUPS, 1, ("symbol", "x:E"), False), swapped)
+        self.assertEqual(move_section(self.GROUPS, 2, ("symbol", "x:D"), False), self.GROUPS)
+        # Horní polovina prvního symbolu skupiny = před skupinu (sekce nad symboly bez sekce)
+        self.assertEqual(move_section(self.GROUPS, 1, ("symbol", "x:A"), False), self.MIDDLE)
+        self.assertEqual(move_section(self.GROUPS, 1, ("symbol", "x:B"), False), self.GROUPS)
+        # Skupina bez sekce (záhlaví Bez sekce) jde přesunout zpět na začátek i na konec
+        self.assertEqual(move_section(self.MIDDLE, None, ("section", 1), False), self.GROUPS)
+        self.assertEqual(move_section(self.MIDDLE, None, ("section", 2), True),
+                         [(1, ["x:C"]), (2, ["x:D", "x:E"]), (None, ["x:A", "x:B"])])
+
+    def test_remove_section(self) -> None:
+        # Symboly odebrané sekce připadnou skupině nad ní
+        self.assertEqual(remove_section(self.GROUPS, 2), [(None, ["x:A", "x:B"]), (1, ["x:C", "x:D", "x:E"])])
+        self.assertEqual(remove_section(self.GROUPS, 1), [(None, ["x:A", "x:B", "x:C"]), (2, ["x:D", "x:E"])])
+        # První sekce: symboly přejdou mezi symboly bez sekce (na jejich začátek)
+        self.assertEqual(remove_section(self.MIDDLE, 1), [(None, ["x:C", "x:A", "x:B"]), (2, ["x:D", "x:E"])])
+
+    def test_parse_entry(self) -> None:
+        self.assertEqual(parse_entry("symbol:ibkr:EUR.USD"), ("symbol", "ibkr:EUR.USD"))
+        self.assertEqual(parse_entry("section:12"), ("section", 12))
+        self.assertEqual(parse_entry("section:none"), ("section", None))
+        for invalid in (None, "", "section:x", "symbol:", "foo:1"):
+            self.assertIsNone(parse_entry(invalid), invalid)
+
+
+class WatchlistSectionsTest(unittest.IsolatedAsyncioTestCase):
+    """Sekce seznamu symbolů v databázi: vytvoření, uložení přesunu, kopie, smazání."""
+
+    async def test_sections(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = KlineCache(Path(tmp) / "test.db")
+            await cache.init()
+            try:
+                list_id = (await cache.watchlists())[0]["id"]
+                for symbol in ("A", "B", "C"):
+                    await cache.watchlist_add(list_id, "x", symbol)
+                tech = await cache.watchlist_section_create(list_id, "Tech")
+                fx = await cache.watchlist_section_create(list_id, "FX")
+                await cache.watchlist_add(list_id, "x", "D", fx)
+                await cache.watchlist_section_rename(tech, "Akcie")
+                await cache.watchlist_section_collapse(tech, True)
+                self.assertEqual(await cache.watchlist_sections(list_id), [
+                    {"id": tech, "name": "Akcie", "position": 1, "collapsed": True},
+                {"id": fx, "name": "FX", "position": 2, "collapsed": False}])
+                # Přesun: FX nahoru, pak symboly bez sekce, pak Akcie; C do FX za D, A do Akcie
+                layout = [(fx, ["x:D", "x:C"]), (None, ["x:B"]), (tech, ["x:A"])]
+                await cache.watchlist_save_layout(list_id, layout)
+
+                async def groups_of(target_list: int) -> list:
+                    # Skupiny seznamu načtené z databáze
+                    free_position = next(
+                        item["free_position"] for item in await cache.watchlists() if item["id"] == target_list
+                    )
+                    return build_groups(
+                        await cache.watchlist_list(target_list), await cache.watchlist_sections(target_list), free_position
+                    )
+
+                self.assertEqual(await groups_of(list_id), layout)
+                # Kopie seznamu převezme sekce, rozřazení symbolů i pozici skupiny bez sekce
+                copy = await cache.watchlist_create("Kopie", copy_from=list_id)
+                copy_sections = await cache.watchlist_sections(copy)
+                self.assertEqual([section["name"] for section in copy_sections], ["FX", "Akcie"])
+                self.assertEqual(
+                    await groups_of(copy),
+                    [(copy_sections[0]["id"], ["x:D", "x:C"]), (None, ["x:B"]), (copy_sections[1]["id"], ["x:A"])],
+                )
+                # Nová sekce přijde na konec (za skupinu bez sekce i při shodě pozic)
+                last = await cache.watchlist_section_create(list_id, "Nová")
+                self.assertEqual((await groups_of(list_id))[-1], (last, []))
+                # Odebrání sekce s přeřazením symbolů, vyprázdnění smaže i sekce
+                await cache.watchlist_save_layout(list_id, [(None, ["x:B"]), (fx, ["x:D", "x:C", "x:A"]), (last, [])], tech)
+                self.assertEqual([section["id"] for section in await cache.watchlist_sections(list_id)], [fx, last])
+                await cache.watchlist_clear(list_id)
+                self.assertEqual(await cache.watchlist_sections(list_id), [])
+                self.assertEqual(len(await cache.watchlist_sections(copy)), 2)
             finally:
                 await cache.close()
 

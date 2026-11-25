@@ -67,6 +67,14 @@ CREATE TABLE IF NOT EXISTS watchlist_items (
     symbol   TEXT    NOT NULL,
     UNIQUE (list_id, source, symbol)
 );
+-- Sekce seznamu symbolů (skupiny se záhlavím, sbalitelné jako v TradingView)
+CREATE TABLE IF NOT EXISTS watchlist_sections (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    list_id    INTEGER NOT NULL,
+    name       TEXT    NOT NULL,
+    position   INTEGER NOT NULL DEFAULT 0,
+    collapsed  INTEGER NOT NULL DEFAULT 0
+);
 -- Intervaly (UTC ms), které už byly stažené ze sítě a jsou v cache kompletní;
 -- mezery mezi svíčkami uvnitř nich jsou skutečné (noc, víkend), ne díry
 CREATE TABLE IF NOT EXISTS fetched_ranges (
@@ -140,13 +148,18 @@ CREATE TABLE IF NOT EXISTS cot_reports (
 DEFAULT_WATCHLIST_NAME = "Watchlist"
 
 # Migrace pro starší databáze: sloupce color, text a options (JSON se šířkou
-# a stylem čáry) v tabulce drawings a indicators v replay_sessions – přidané
+# a stylem čáry) v tabulce drawings, indicators v replay_sessions a sekce
+# s vlastním pořadím (section_id, position ve watchlist_items, free_position
+# = pořadí skupiny symbolů bez sekce ve watchlists) – přidané
 # dodatečně, CREATE TABLE IF NOT EXISTS je do existující tabulky nepřidá
 _MIGRATIONS = """
 ALTER TABLE drawings ADD COLUMN color TEXT;
 ALTER TABLE drawings ADD COLUMN text TEXT;
 ALTER TABLE drawings ADD COLUMN options TEXT;
 ALTER TABLE replay_sessions ADD COLUMN indicators TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE watchlist_items ADD COLUMN section_id INTEGER;
+ALTER TABLE watchlist_items ADD COLUMN position INTEGER;
+ALTER TABLE watchlists ADD COLUMN free_position INTEGER NOT NULL DEFAULT 0;
 """
 
 
@@ -219,6 +232,8 @@ class KlineCache:
                 "SELECT ?, source, symbol FROM watchlist ORDER BY id",
                 (cur.lastrowid,),
             )
+        # Symboly bez vlastního pořadí (ze starší verze) seřadíme podle přidání
+        self._conn.execute("UPDATE watchlist_items SET position = id WHERE position IS NULL")
         self._conn.commit()
 
     async def load(
@@ -587,15 +602,18 @@ class KlineCache:
             return await asyncio.to_thread(func, *args)
 
     async def watchlists(self) -> list[dict]:
-        """Vrátí seznamy symbolů [{"id", "name", "count"}] v pořadí vytvoření."""
+        """Vrátí seznamy symbolů [{"id", "name", "count", "free_position"}] v pořadí vytvoření.
+
+        free_position = pořadí skupiny symbolů bez sekce mezi sekcemi.
+        """
         rows = await self._run(self._watchlists_sync)
-        return [{"id": row[0], "name": row[1], "count": row[2]} for row in rows]
+        return [{"id": row[0], "name": row[1], "count": row[2], "free_position": row[3]} for row in rows]
 
     def _watchlists_sync(self):
         # Počet symbolů každého seznamu jedním dotazem (LEFT JOIN – i prázdné seznamy)
         return self._conn.execute(
             """
-            SELECT w.id, w.name, COUNT(i.id)
+            SELECT w.id, w.name, COUNT(i.id), w.free_position
             FROM watchlists w LEFT JOIN watchlist_items i ON i.list_id = w.id
             GROUP BY w.id ORDER BY w.id
             """
@@ -609,11 +627,29 @@ class KlineCache:
         cur = self._conn.execute("INSERT INTO watchlists (name) VALUES (?)", (name,))
         list_id = int(cur.lastrowid)
         if copy_from is not None:
-            # Kopie zachová pořadí symbolů původního seznamu
             self._conn.execute(
-                "INSERT INTO watchlist_items (list_id, source, symbol) "
-                "SELECT ?, source, symbol FROM watchlist_items WHERE list_id = ? ORDER BY id",
-                (list_id, copy_from),
+                "UPDATE watchlists SET free_position = (SELECT free_position FROM watchlists WHERE id = ?) WHERE id = ?",
+                (copy_from, list_id),
+            )
+            # Kopie převezme sekce (nová id) a symboly i s jejich sekcí a pořadím
+            section_map = {}
+            for section_id, section_name, position, collapsed in self._conn.execute(
+                "SELECT id, name, position, collapsed FROM watchlist_sections WHERE list_id = ?",
+                (copy_from,),
+            ).fetchall():
+                section_map[section_id] = self._conn.execute(
+                    "INSERT INTO watchlist_sections (list_id, name, position, collapsed) VALUES (?, ?, ?, ?)",
+                    (list_id, section_name, position, collapsed),
+                ).lastrowid
+            self._conn.executemany(
+                "INSERT INTO watchlist_items (list_id, source, symbol, section_id, position) VALUES (?, ?, ?, ?, ?)",
+                [
+                    (list_id, source, symbol, section_map.get(section_id), position)
+                    for source, symbol, section_id, position in self._conn.execute(
+                        "SELECT source, symbol, section_id, position FROM watchlist_items WHERE list_id = ?",
+                        (copy_from,),
+                    ).fetchall()
+                ],
             )
         self._conn.commit()
         return list_id
@@ -623,16 +659,19 @@ class KlineCache:
         await self._run(self._execute_sync, "UPDATE watchlists SET name = ? WHERE id = ?", (name, list_id))
 
     async def watchlist_clear(self, list_id: int) -> None:
-        """Odebere ze seznamu všechny symboly."""
-        await self._run(self._execute_sync, "DELETE FROM watchlist_items WHERE list_id = ?", (list_id,))
+        """Odebere ze seznamu všechny symboly i sekce."""
+        await self._run(self._watchlist_delete_sync, list_id, False)
 
     async def watchlist_delete(self, list_id: int) -> None:
-        """Smaže seznam i s jeho symboly."""
-        await self._run(self._watchlist_delete_sync, list_id)
+        """Smaže seznam i s jeho symboly a sekcemi."""
+        await self._run(self._watchlist_delete_sync, list_id, True)
 
-    def _watchlist_delete_sync(self, list_id: int) -> None:
+    def _watchlist_delete_sync(self, list_id: int, delete_list: bool) -> None:
+        # Obsah seznamu (symboly a sekce), s delete_list i seznam samotný
         self._conn.execute("DELETE FROM watchlist_items WHERE list_id = ?", (list_id,))
-        self._conn.execute("DELETE FROM watchlists WHERE id = ?", (list_id,))
+        self._conn.execute("DELETE FROM watchlist_sections WHERE list_id = ?", (list_id,))
+        if delete_list:
+            self._conn.execute("DELETE FROM watchlists WHERE id = ?", (list_id,))
         self._conn.commit()
 
     def _execute_sync(self, sql: str, params: tuple) -> None:
@@ -641,21 +680,24 @@ class KlineCache:
         self._conn.commit()
 
     async def watchlist_list(self, list_id: int) -> list[dict]:
-        """Vrátí symboly seznamu v pořadí přidání."""
+        """Vrátí symboly seznamu [{"source", "symbol", "section_id"}] ve vlastním pořadí."""
         rows = await self._run(self._watchlist_list_sync, list_id)
-        return [{"source": row[0], "symbol": row[1]} for row in rows]
+        return [{"source": row[0], "symbol": row[1], "section_id": row[2]} for row in rows]
 
     def _watchlist_list_sync(self, list_id: int):
         return self._conn.execute(
-            "SELECT source, symbol FROM watchlist_items WHERE list_id = ? ORDER BY id", (list_id,)
+            "SELECT source, symbol, section_id FROM watchlist_items WHERE list_id = ? ORDER BY position, id",
+            (list_id,),
         ).fetchall()
 
-    async def watchlist_add(self, list_id: int, source: str, symbol: str) -> None:
-        """Přidá symbol do seznamu (duplicita se ignoruje)."""
+    async def watchlist_add(self, list_id: int, source: str, symbol: str, section_id: Optional[int] = None) -> None:
+        """Přidá symbol na konec sekce (None = bez sekce); duplicita v seznamu se ignoruje."""
+        # Pořadí za všemi symboly seznamu – v rámci sekce tedy na konec
         await self._run(
             self._execute_sync,
-            "INSERT OR IGNORE INTO watchlist_items (list_id, source, symbol) VALUES (?, ?, ?)",
-            (list_id, source, symbol),
+            "INSERT OR IGNORE INTO watchlist_items (list_id, source, symbol, section_id, position) "
+            "SELECT ?, ?, ?, ?, COALESCE(MAX(position), 0) + 1 FROM watchlist_items WHERE list_id = ?",
+            (list_id, source, symbol, section_id, list_id),
         )
 
     async def watchlist_remove(self, list_id: int, source: str, symbol: str) -> None:
@@ -665,6 +707,77 @@ class KlineCache:
             "DELETE FROM watchlist_items WHERE list_id = ? AND source = ? AND symbol = ?",
             (list_id, source, symbol),
         )
+
+    # ---------- sekce seznamů symbolů ----------
+
+    async def watchlist_sections(self, list_id: int) -> list[dict]:
+        """Vrátí sekce seznamu [{"id", "name", "position", "collapsed"}] v pořadí zobrazení."""
+        rows = await self._run(
+            lambda: self._conn.execute(
+                "SELECT id, name, position, collapsed FROM watchlist_sections WHERE list_id = ? ORDER BY position, id",
+                (list_id,),
+            ).fetchall()
+        )
+        return [{"id": row[0], "name": row[1], "position": row[2], "collapsed": bool(row[3])} for row in rows]
+
+    async def watchlist_section_create(self, list_id: int, name: str) -> int:
+        """Vytvoří sekci na konci seznamu a vrátí její id."""
+        return await self._run(self._watchlist_section_create_sync, list_id, name)
+
+    def _watchlist_section_create_sync(self, list_id: int, name: str) -> int:
+        cur = self._conn.execute(
+            "INSERT INTO watchlist_sections (list_id, name, position) "
+            "SELECT ?, ?, COALESCE(MAX(position), 0) + 1 FROM watchlist_sections WHERE list_id = ?",
+            (list_id, name, list_id),
+        )
+        self._conn.commit()
+        return int(cur.lastrowid)
+
+    async def watchlist_section_rename(self, section_id: int, name: str) -> None:
+        """Přejmenuje sekci."""
+        await self._run(self._execute_sync, "UPDATE watchlist_sections SET name = ? WHERE id = ?", (name, section_id))
+
+    async def watchlist_section_collapse(self, section_id: int, collapsed: bool) -> None:
+        """Uloží sbalení / rozbalení sekce."""
+        await self._run(
+            self._execute_sync, "UPDATE watchlist_sections SET collapsed = ? WHERE id = ?", (int(collapsed), section_id)
+        )
+
+    async def watchlist_save_layout(
+        self, list_id: int, groups: list[tuple[Optional[int], list[str]]], delete_section: Optional[int] = None
+    ) -> None:
+        """Uloží pořadí sekcí a symbolů a příslušnost symbolů k sekcím (po přesunu myší).
+
+        Parametry:
+            list_id: seznam symbolů.
+            groups: skupiny [(id sekce nebo None = bez sekce, [klíče "zdroj:SYMBOL"])]
+                v pořadí zobrazení (tickview.logic.watchlists.build_groups).
+            delete_section: sekce, která se zároveň smaže (její symboly už jsou
+                v groups přeřazené jinam).
+        """
+        await self._run(self._watchlist_save_layout_sync, list_id, groups, delete_section)
+
+    def _watchlist_save_layout_sync(self, list_id, groups, delete_section) -> None:
+        # Pořadí skupin (sekcí i skupiny bez sekce) a symbolů = index v rámci
+        # celého seznamu; vše v jedné transakci
+        positions = {section_id: position for position, (section_id, _keys) in enumerate(groups)}
+        self._conn.execute("UPDATE watchlists SET free_position = ? WHERE id = ?", (positions.pop(None, 0), list_id))
+        self._conn.executemany(
+            "UPDATE watchlist_sections SET position = ? WHERE id = ?",
+            [(position, section_id) for section_id, position in positions.items()],
+        )
+        items = []
+        for section_id, keys in groups:
+            for key in keys:
+                source, _, symbol = key.partition(":")
+                items.append((section_id, len(items), list_id, source, symbol))
+        self._conn.executemany(
+            "UPDATE watchlist_items SET section_id = ?, position = ? WHERE list_id = ? AND source = ? AND symbol = ?",
+            items,
+        )
+        if delete_section is not None:
+            self._conn.execute("DELETE FROM watchlist_sections WHERE id = ?", (delete_section,))
+        self._conn.commit()
 
     # ---------- alerty ----------
 
