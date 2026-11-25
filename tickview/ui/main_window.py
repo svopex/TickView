@@ -3529,20 +3529,20 @@ async def _build_index(
                     # Rychlé přepínání seznamů (kulatá tlačítka s iniciálou názvu)
                     watchlist_quick = ui.row().classes("wl-quick w-full")
                     # Záhlaví: vlaječka přepíná řazení podle vlaječek, sloupec Symbol
-                    # řazení podle abecedy
+                    # řazení podle abecedy (nápovědy nad tlačítky, aby nezakrývaly
+                    # první řádky seznamu)
+                    above = "anchor='top middle' self='bottom middle'"
                     with ui.row().classes("watch-head w-full"):
                         with ui.button(color=None, on_click=lambda: toggle_watchlist_sort("flag")).props(
                             "flat dense no-caps"
-                        ).classes("watch-sort watch-flag-sort").tooltip(
-                            tr("Řadit podle vlaječek (barvy, obráceně, vlastní pořadí)")
-                        ) as watchlist_flag_sort_button:
+                        ).classes("watch-sort watch-flag-sort") as watchlist_flag_sort_button:
+                            ui.tooltip(tr("Řadit podle vlaječek (barvy, obráceně, vlastní pořadí)")).props(above)
                             ui.element("div").classes("wl-flag wl-flag-head")
                             watchlist_flag_sort_icon = ui.icon("arrow_upward").classes("watch-sort-icon")
                         with ui.button(color=None, on_click=lambda: toggle_watchlist_sort("symbol")).props(
                             "flat dense no-caps"
-                        ).classes("watch-sort").tooltip(
-                            tr("Řadit podle abecedy (A→Z, Z→A, vlastní pořadí)")
-                        ) as watchlist_sort_button:
+                        ).classes("watch-sort") as watchlist_sort_button:
+                            ui.tooltip(tr("Řadit podle abecedy (A→Z, Z→A, vlastní pořadí)")).props(above)
                             ui.label("Symbol")
                             watchlist_sort_icon = ui.icon("unfold_more").classes("watch-sort-icon")
                     # Barvy palety vlaječek pro static/watchlist_flags.js (pořadí FLAG_COLORS)
