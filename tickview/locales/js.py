@@ -17,6 +17,7 @@ EN = {
     "Zadat obchod…": "Place order…",
     "Přidat alert…": "Add alert…",
     "Smazat objekt": "Delete object",
+    "Smazat šablonu": "Delete template",
     "Upravit alert…": "Edit alert…",
     "Smazat alert": "Delete alert",
     "Odebrat indikátor": "Remove indicator",

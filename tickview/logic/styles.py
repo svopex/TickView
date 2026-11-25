@@ -95,6 +95,13 @@ def normalize_position_options(options) -> dict:
 
 # Velikosti písma textové kresby v nabídce dialogu (jako v TradingView)
 TEXT_FONT_SIZES = [10, 11, 12, 13, 14, 16, 20, 24, 28, 32, 40]
+# Kresby s volitelným textovým popiskem (záložka Text v Settings jako
+# v TradingView): čáry kreslí popisek podél čáry, obdélník uvnitř
+LABEL_KINDS = ("hline", "hray", "vline", "trend", "ray", "extended", "arrow", "rect")
+# Svislé zarovnání popisku (nad čárou / na čáře / pod čárou, u obdélníku
+# nahoře / uprostřed / dole uvnitř) a vodorovné (začátek / střed / konec)
+LABEL_V_ALIGNS = {"top": "Top", "middle": "Middle", "bottom": "Bottom"}
+LABEL_H_ALIGNS = {"left": "Left", "center": "Center", "right": "Right"}
 # Výchozí barvy pozadí a rámečku textové kresby (zapínají se v dialogu)
 DEFAULT_TEXT_BACKGROUND = "rgba(41, 98, 255, 0.25)"
 DEFAULT_TEXT_BORDER = "#787b86"
@@ -116,6 +123,25 @@ def normalize_text_options(options) -> dict:
         "border": bool(source.get("border")),
         "borderColor": normalize_color(source.get("borderColor")) or DEFAULT_TEXT_BORDER,
         "wrap": bool(source.get("wrap")),
+    }
+
+
+def normalize_label_options(options, line_color: str) -> dict:
+    """Vzhled textového popisku čáry nebo obdélníku: barva, tučné, kurzíva a zarovnání.
+
+    Parametry:
+        options: {"textColor", "bold", "italic", "textVAlign", "textHAlign"} – může být neúplný.
+        line_color: barva kresby – výchozí barva popisku.
+    """
+    source = options if isinstance(options, dict) else {}
+    v_align = source.get("textVAlign")
+    h_align = source.get("textHAlign")
+    return {
+        "textColor": normalize_color(source.get("textColor")) or line_color,
+        "bold": bool(source.get("bold")),
+        "italic": bool(source.get("italic")),
+        "textVAlign": v_align if v_align in LABEL_V_ALIGNS else "top",
+        "textHAlign": h_align if h_align in LABEL_H_ALIGNS else "center",
     }
 
 
@@ -301,7 +327,8 @@ def normalize_drawing_style(values, kind: str | None = None) -> dict:
             – může být neúplný.
         kind: druh kresby; pozice (POSITION_KINDS) mají v options navíc
             parametry výpočtu (velikost účtu, riziko, lot), text vzhled písma,
-            pozadí a rámečku, obdélník prodloužení doleva / doprava.
+            pozadí a rámečku, čáry a obdélník vzhled popisku (LABEL_KINDS),
+            obdélník prodloužení doleva / doprava.
 
     Vrací {"color", "options"} s platnou barvou, šířkou, stylem čáry, písmem
     a viditelností podle timeframu.
@@ -323,6 +350,8 @@ def normalize_drawing_style(values, kind: str | None = None) -> dict:
         style["options"].update(normalize_position_options(options))
     if kind == "text":
         style["options"].update(normalize_text_options(options))
+    if kind in LABEL_KINDS:
+        style["options"].update(normalize_label_options(options, style["color"]))
     # Obdélník: prodloužení doleva / doprava až k okraji grafu (Extend left / right)
     if kind == "rect":
         style["options"]["extendLeft"] = bool(options.get("extendLeft"))

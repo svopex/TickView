@@ -102,6 +102,9 @@ from tickview.logic.styles import (
     DEFAULT_TEXT_BORDER,
     DRAWING_LINE_STYLES,
     DRAWING_LINE_WIDTHS,
+    LABEL_H_ALIGNS,
+    LABEL_KINDS,
+    LABEL_V_ALIGNS,
     MAX_NAME_LENGTH,
     POSITION_DEFAULTS,
     POSITION_KINDS,
@@ -123,6 +126,7 @@ from tickview.logic.styles import (
     normalize_panel_position,
     normalize_position_points,
     normalize_indicator_style,
+    normalize_label_options,
     normalize_text_options,
     templates_key,
 )
@@ -152,6 +156,7 @@ from tickview.ui.reminders_dialog import RemindersDialog
 from tickview.ui.replay_panel import ReplayUI
 from tickview.ui.templates import (
     TemplateMenu,
+    delete_named_template,
     load_default_template,
     load_named_templates,
     settings_buttons,
@@ -997,25 +1002,33 @@ async def _build_index(
         for pane in panes:
             pane.chart.set_drawing_defaults(state["drawing_defaults"])
 
-    async def load_drawing_templates() -> dict:
-        # Uložené šablony kreseb pro graf: {"kinds": druhy se stylem, "templates":
-        # {druh: {název: styl}}} – podmenu Template v pravém kliku kresby
-        # a výběr šablony nového objektu u aktivního nástroje; všechny typy
-        # jedním dotazem do databáze
+    async def load_drawing_config() -> dict:
+        # Konfigurace kreslení pro graf (lišta vybrané kresby, podmenu Template,
+        # výběr šablony u aktivního nástroje): druhy se stylem, s čárou a s popiskem,
+        # šířky a styly čar s popisky a uložené šablony {druh: {název: styl}};
+        # šablony všech typů jedním dotazem do databáze
         saved = await cache.get_settings_prefix(templates_key(drawing_scope("")))
         templates = {}
         for kind in DRAWING_KINDS_STYLED:
             named = load_templates(saved.get(templates_key(drawing_scope(kind))))
             if named:
                 templates[kind] = {name: normalize_drawing_style(values, kind) for name, values in named.items()}
-        return {"kinds": DRAWING_KINDS_STYLED, "templates": templates}
+        return {
+            "kinds": DRAWING_KINDS_STYLED,
+            # Kresby s čárou (barva, šířka a styl čáry v liště kresby)
+            "lineKinds": [kind for kind in DRAWING_KINDS_STYLED if kind not in NO_LINE_KINDS and kind not in POSITION_KINDS],
+            "labelKinds": list(LABEL_KINDS),
+            "widths": [[width, tr(label)] for width, label in DRAWING_LINE_WIDTHS.items()],
+            "lineStyles": [[style, tr(label)] for style, label in DRAWING_LINE_STYLES.items()],
+            "templates": templates,
+        }
 
-    async def push_drawing_templates() -> None:
-        # Po změně šablon kreseb pošle nové názvy do grafů (drží se i ve state
-        # pro grafy přidané později)
-        state["drawing_templates"] = await load_drawing_templates()
+    async def push_drawing_config() -> None:
+        # Po změně šablon kreseb pošle novou konfiguraci do grafů (drží se
+        # i ve state pro grafy přidané později)
+        state["drawing_config"] = await load_drawing_config()
         for pane in panes:
-            pane.chart.set_drawing_templates(state["drawing_templates"])
+            pane.chart.set_drawing_config(state["drawing_config"])
 
     async def save_drawing_template(payload: dict) -> None:
         # Template → Save as… v pravém kliku kresby: styl kresby (bez textu
@@ -1025,11 +1038,33 @@ async def _build_index(
 
         async def on_submit(name: str) -> None:
             show_status(await store_named_template(cache, drawing_scope(kind), name, style))
-            await push_drawing_templates()
+            await push_drawing_config()
 
         open_name_dialog(
             tr("Uložit šablonu"), tr("Název šablony"), "", tr("Zadejte název šablony (1–{max_length} znaků)."), on_submit
         )
+
+    async def remove_drawing_template(payload: dict) -> None:
+        # Koš u šablony v podmenu Template / v nabídce šablon lišty kresby
+        name = str(payload.get("name") or "")
+        if name:
+            show_status(await delete_named_template(cache, drawing_scope(payload["kind"]), name))
+            await push_drawing_config()
+
+    async def store_drawing_style(pane: ChartPane, payload: dict, values: dict, skip: ChartPane | None = None) -> None:
+        """Uloží styl kresby payload (id, druh, text) z hodnot values a obnoví grafy se symbolem kresby.
+
+        Parametry:
+            pane: graf, ve kterém se styl změnil.
+            payload: událost grafu s id, druhem a textem kresby.
+            values: styl {"color", "options"} – normalizuje se podle druhu kresby.
+            skip: graf, který změnu už zobrazuje (nenačítá se znovu).
+        """
+        style = normalize_drawing_style(values, payload["kind"])
+        await cache.update_drawing_style(
+            *pane.drawing_owner, int(payload["id"]), style["color"], payload.get("text"), style["options"]
+        )
+        await refresh_symbol_drawings(pane, skip=skip)
 
     async def apply_template_to_drawing(payload: dict, pane: ChartPane) -> None:
         # Template → Apply default / uložená šablona v pravém kliku kresby:
@@ -1046,15 +1081,11 @@ async def _build_index(
             values = (await load_named_templates(cache, drawing_scope(kind))).get(name)
             if values is None:
                 # Šablonu mezitím smazal jiný dialog – menu v grafu obnovíme
-                await push_drawing_templates()
+                await push_drawing_config()
                 ui.notify(tr("Šablona „{name}“ neexistuje.").format(name=name), type="warning")
                 return
             message = tr("{drawing}: použita šablona „{name}“.").format(drawing=label, name=name)
-        style = normalize_drawing_style(values, kind)
-        await cache.update_drawing_style(
-            *pane.drawing_owner, int(payload["id"]), style["color"], payload.get("text"), style["options"]
-        )
-        await refresh_symbol_drawings(pane)
+        await store_drawing_style(pane, payload, values)
         show_status(message)
 
     # ---------- oblíbené nástroje (plovoucí panel) ----------
@@ -1157,9 +1188,9 @@ async def _build_index(
         if "drawing_defaults" not in state:
             state["drawing_defaults"] = await load_drawing_defaults()
         chart.set_drawing_defaults(state["drawing_defaults"])
-        if "drawing_templates" not in state:
-            state["drawing_templates"] = await load_drawing_templates()
-        chart.set_drawing_templates(state["drawing_templates"])
+        if "drawing_config" not in state:
+            state["drawing_config"] = await load_drawing_config()
+        chart.set_drawing_config(state["drawing_config"])
         await chart.set_drawing_mode(None if state["drawing_mode"] in (None, "cursor") else state["drawing_mode"])
         await chart.set_magnet(state["magnet"])
         await chart.set_keep_tool(state.get("keep_tool", False))
@@ -1172,12 +1203,14 @@ async def _build_index(
 
     # Kresby bez čáry (šířka a styl nemají smysl)
     NO_LINE_KINDS = {"text", "sticker"}
-    # Stav přepínačů tučného písma a kurzívy v dialogu Text
-    text_flags: dict = {"bold": False, "italic": False}
+    # Stav přepínačů tučného písma a kurzívy v dialogu Text a v záložce
+    # Text popisku čáry (label_*)
+    text_flags: dict = {"bold": False, "italic": False, "label_bold": False, "label_italic": False}
 
     def paint_text_flags() -> None:
-        # Tlačítka B / I v dialogu Text: zvýrazněné = zapnuté
-        for key, button in (("bold", text_bold), ("italic", text_italic)):
+        # Tlačítka B / I: zvýrazněné = zapnuté
+        buttons = {"bold": text_bold, "italic": text_italic, "label_bold": label_bold, "label_italic": label_italic}
+        for key, button in buttons.items():
             on = text_flags[key]
             button.classes(add="active" if on else "", remove="" if on else "active")
 
@@ -1202,6 +1235,14 @@ async def _build_index(
         text_options = normalize_text_options(options)
         text_flags["bold"] = text_options["bold"]
         text_flags["italic"] = text_options["italic"]
+        # Popisek čáry / obdélníku (u ostatních kreseb výchozí hodnoty)
+        label_options = normalize_label_options(options, style["color"])
+        label_color.value = label_options["textColor"]
+        label_size.value = text_size.value
+        text_flags["label_bold"] = label_options["bold"]
+        text_flags["label_italic"] = label_options["italic"]
+        label_v_align.value = label_options["textVAlign"]
+        label_h_align.value = label_options["textHAlign"]
         paint_text_flags()
         text_background.value = text_options["background"]
         text_background_color.value = text_options["backgroundColor"]
@@ -1227,17 +1268,22 @@ async def _build_index(
         if not current:
             return None
         is_text = current["kind"] == "text"
+        # Písmo z dialogu Text, u čar a obdélníku ze záložky Text popisku
+        is_label = current["kind"] in LABEL_KINDS
         return normalize_drawing_style(
             {
                 "color": text_color.value if is_text else drawing_color.value,
                 "options": {
                     "width": drawing_width.value,
                     "lineStyle": drawing_style.value,
-                    "fontSize": text_size.value,
+                    "fontSize": label_size.value if is_label else text_size.value,
                     "visibility": drawing_visibility.values(),
-                    # Vzhled textu (u ostatních kreseb ho normalizace zahodí)
-                    "bold": text_flags["bold"],
-                    "italic": text_flags["italic"],
+                    # Vzhled textu a popisku (u ostatních kreseb ho normalizace zahodí)
+                    "bold": text_flags["label_bold" if is_label else "bold"],
+                    "italic": text_flags["label_italic" if is_label else "italic"],
+                    "textColor": label_color.value,
+                    "textVAlign": label_v_align.value,
+                    "textHAlign": label_h_align.value,
                     "background": text_background.value,
                     "backgroundColor": text_background_color.value,
                     "border": text_border.value,
@@ -1276,6 +1322,7 @@ async def _build_index(
         drawing_settings_title.text = title
         style_tab.props(f'label="{"Text" if is_text else "Inputs" if is_position else "Style"}"')
         drawing_tabs.value = style_tab
+        label_tab.set_visibility(kind in LABEL_KINDS)
         text_fields.set_visibility(is_text)
         line_fields.set_visibility(kind not in NO_LINE_KINDS and not is_position)
         rect_fields.set_visibility(kind == "rect")
@@ -1315,6 +1362,7 @@ async def _build_index(
             position_target.value = round(points[1]["price"], digits)
             position_stop.value = round(points[2]["price"], digits)
         drawing_text.value = payload.get("text") or ""
+        label_text.value = payload.get("text") or ""
         await show_drawing_dialog(kind, DRAWING_LABELS.get(kind, kind))
 
     async def refresh_symbol_drawings(pane: ChartPane, skip: ChartPane | None = None) -> None:
@@ -1348,7 +1396,8 @@ async def _build_index(
             drawing_settings_dialog.close()
             return
         kind = current["kind"]
-        text = None
+        # Popisek čáry / obdélníku je volitelný (prázdný = bez popisku)
+        text = ((label_text.value or "").strip() or None) if kind in LABEL_KINDS else None
         if kind == "text":
             text = (drawing_text.value or "").strip()
             if not text:
@@ -1603,12 +1652,21 @@ async def _build_index(
             await open_text_dialog(pane, payload.get("time"), payload.get("price"), payload.get("style"))
         elif event_type == "drawing_settings" and payload.get("id"):
             await open_drawing_settings(payload, pane)
-        elif event_type == "drawing_template" and payload.get("id") and payload.get("kind") in DRAWING_KINDS_STYLED:
-            # Podmenu Template v pravém kliku kresby
-            if payload.get("action") == "save":
+        elif event_type == "drawing_template" and payload.get("kind") in DRAWING_KINDS_STYLED:
+            # Šablony z podmenu Template a z lišty kresby; smazání šablony jde
+            # i z lišty aktivního nástroje (bez kresby), ostatní akce míří na kresbu
+            action = payload.get("action")
+            if action == "delete":
+                await remove_drawing_template(payload)
+            elif not payload.get("id"):
+                return
+            elif action == "save":
                 await save_drawing_template(payload)
-            elif payload.get("action") in ("default", "apply"):
+            elif action in ("default", "apply"):
                 await apply_template_to_drawing(payload, pane)
+        elif event_type == "drawing_style" and payload.get("id") and payload.get("kind") in DRAWING_KINDS_STYLED:
+            # Rychlá změna stylu v liště vybrané kresby – graf ji už zobrazuje
+            await store_drawing_style(pane, payload, payload, skip=pane)
         elif event_type == "chart_settings":
             await open_chart_settings()
         elif event_type == "volume":
@@ -3838,6 +3896,7 @@ async def _build_index(
         drawing_settings_title = settings_header(drawing_settings_dialog, "Settings")
         with ui.tabs().props("dense no-caps align=left indicator-color=primary").classes("tv-tabs w-full") as drawing_tabs:
             style_tab = ui.tab("style", label="Style")
+            label_tab = ui.tab("label", label="Text")
             visibility_tab = ui.tab("visibility", label="Visibility")
         with ui.tab_panels(drawing_tabs, value=style_tab).props("animated=false").classes("tv-tab-panels w-full"):
             with ui.tab_panel(style_tab).classes("tv-tab-panel"):
@@ -3891,6 +3950,29 @@ async def _build_index(
                     position_entry = ui.number(tr("Vstup (cena)"), format="%.2f").props("outlined dense")
                     position_target = ui.number(tr("Cíl – Profit level (cena)"), format="%.2f").props("outlined dense")
                     position_stop = ui.number(tr("Stop level (cena)"), format="%.2f").props("outlined dense")
+            with ui.tab_panel(label_tab).classes("tv-tab-panel"):
+                # Popisek čáry / obdélníku (jako v TradingView): barva, velikost,
+                # tučné, kurzíva, obsah a zarovnání vůči čáře
+                with ui.row().classes("text-toolbar"):
+                    label_color = ColorButton(DEFAULT_DRAWING_COLOR, title=tr("Barva textu"))
+                    label_size = ui.select(TEXT_FONT_SIZES, value=DEFAULT_FONT_SIZE).props(
+                        "outlined dense options-dense"
+                    ).classes("text-size")
+                    label_bold = ui.button("B", color=None, on_click=lambda: toggle_text_flag("label_bold")).props(
+                        "outline no-caps"
+                    ).classes("text-flag text-flag-bold").tooltip(tr("Tučné"))
+                    label_italic = ui.button("I", color=None, on_click=lambda: toggle_text_flag("label_italic")).props(
+                        "outline no-caps"
+                    ).classes("text-flag text-flag-italic").tooltip(tr("Kurzíva"))
+                label_text = ui.textarea(placeholder="Add text").props("outlined rows=4").classes("w-full text-area")
+                with ui.row().classes("tv-settings-row label-align-row"):
+                    ui.label("Text alignment").classes("tv-settings-label")
+                    label_v_align = ui.select(LABEL_V_ALIGNS, value="top").props("outlined dense options-dense").classes(
+                        "label-align"
+                    )
+                    label_h_align = ui.select(LABEL_H_ALIGNS, value="center").props("outlined dense options-dense").classes(
+                        "label-align"
+                    )
             with ui.tab_panel(visibility_tab).classes("tv-tab-panel"):
                 # Viditelnost podle timeframu: jednotka, od, posuvník rozsahu, do
                 drawing_visibility = VisibilityFields()
@@ -3906,7 +3988,7 @@ async def _build_index(
                 apply_drawing_factory,
                 allow_default=True,
                 on_default_change=push_drawing_defaults,
-                on_templates_change=push_drawing_templates,
+                on_templates_change=push_drawing_config,
             )
             settings_buttons(drawing_settings_dialog, submit_drawing_settings)
 

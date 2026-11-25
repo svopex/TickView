@@ -3341,3 +3341,64 @@
   overflow-wrap: anywhere;
   user-select: text;
 }
+
+/* ---------- Lišta kresby (vybraná kresba / aktivní nástroj) ---------- */
+
+/* Ikona s barevným proužkem pod ní (barva čáry a textu jako v TradingView) */
+.drawing-bar-color {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
+
+.drawing-bar-color .tv-icon-wrap {
+  width: 22px;
+  height: 22px;
+}
+
+.drawing-bar-colorbar {
+  width: 18px;
+  height: 3px;
+  border-radius: 2px;
+}
+
+/* Tlačítko šířky čáry: náhled čáry a hodnota v px */
+.fav-tool.drawing-bar-width {
+  width: auto;
+  gap: 2px;
+  padding: 0 6px 0 2px;
+}
+
+.drawing-bar-label {
+  font-size: 13px;
+}
+
+/* Koš u uložené šablony v nabídce: vpravo, viditelný při najetí na řádek */
+.drawing-contextmenu-action {
+  width: 20px;
+  height: 20px;
+  margin-left: 12px;
+  color: #808080;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.drawing-contextmenu-item:hover > .drawing-contextmenu-action {
+  opacity: 0.8;
+}
+
+.drawing-contextmenu-action:hover {
+  opacity: 1 !important;
+  color: #f23645;
+}
+
+/* Záložka Text popisku čáry: zarovnání svisle a vodorovně vedle sebe */
+.label-align-row {
+  flex-wrap: nowrap;
+  gap: 8px !important;
+}
+
+.label-align {
+  min-width: 110px;
+}

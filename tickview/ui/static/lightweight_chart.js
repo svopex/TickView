@@ -58,14 +58,15 @@ window.TickViewChart = (function () {
   let toolIcons = {};
   // Druhy kreseb, na které lze nastavit alert (posílá Python z logic/alerts.py)
   let alertLineKinds = [];
-  // Druhy kreseb se stylem a šablonami a uložené šablony {druh: {název: styl}}
-  // (podmenu Template v pravém kliku, výběr šablony u aktivního nástroje)
-  let styledKinds = [];
-  let drawingTemplates = {};
+  // Konfigurace kreslení z Pythonu (setDrawingConfig): druhy se stylem
+  // a s popiskem, šířky a styly čar s popisky, šablony {druh: {název: styl}}
+  let drawingConfig = { kinds: [], lineKinds: [], labelKinds: [], widths: [], lineStyles: [], templates: {} };
   // Šablona zvolená u nástroje pro nové objekty {druh: název} (bez položky =
-  // výchozí šablona typu) a lištička jejího výběru pod panelem oblíbených
+  // výchozí šablona typu)
   const toolTemplate = {};
-  let templateBar = null;
+  // Plovoucí lišta kresby: prvek, klíč a kresba posledního vykreslení
+  // (přestaví se jen při změně)
+  const drawingBar = { el: null, key: '', drawing: null };
 
   // Neviditelná barva (vypnuté tělo svíčky)
   const TRANSPARENT = 'rgba(0, 0, 0, 0)';
@@ -1266,8 +1267,10 @@ window.TickViewChart = (function () {
     activeId = id;
     for (const [key, s] of state) s.container.classList.toggle('chart-active', key === id);
     if (changed) {
-      // Panel oblíbených zvýrazní nástroj nového aktivního grafu
+      // Panel oblíbených zvýrazní nástroj nového aktivního grafu, lišta
+      // kresby ukáže jeho výběr
       renderFavorites();
+      syncDrawingBar();
       updateClock(activeState());
     }
   }
@@ -1357,18 +1360,30 @@ window.TickViewChart = (function () {
   }
 
   // Naplní kontextové menu (i podmenu) položkami [popisek, handler, ikona,
-  // třída, podmenu]; null = oddělovač, položka s podmenu ho ukáže při najetí
+  // třída, podmenu, akce]; null = oddělovač, položka s podmenu ho ukáže při
+  // najetí, akce [ikona, tooltip, handler] je ikona vpravo (koš u šablony)
   function fillContextMenu(menu, items) {
     for (const entry of items) {
       if (!entry) {
         menu.appendChild(el('div', 'drawing-contextmenu-separator'));
         continue;
       }
-      const [label, handler, icon, extraClass, submenu] = entry;
+      const [label, handler, icon, extraClass, submenu, action] = entry;
       const item = el('div', 'drawing-contextmenu-item' + (extraClass ? ' ' + extraClass : ''));
       item.appendChild(el('span', 'material-icons drawing-contextmenu-icon', icon || ''));
       item.appendChild(el('span', 'drawing-contextmenu-label', label));
       menu.appendChild(item);
+      if (action) {
+        const [actionIcon, actionTitle, actionHandler] = action;
+        const button = toolIcon(actionIcon, 'drawing-contextmenu-action');
+        button.title = actionTitle;
+        button.addEventListener('click', (event) => {
+          event.stopPropagation();
+          closeContextMenu();
+          actionHandler();
+        });
+        item.appendChild(button);
+      }
       if (submenu) {
         item.classList.add('has-submenu');
         item.appendChild(el('span', 'material-icons drawing-contextmenu-arrow', 'chevron_right'));
@@ -1425,28 +1440,35 @@ window.TickViewChart = (function () {
   }
 
 
+  // Požádá Python o dialog alertu na čáře kresby
+  function requestDrawingAlert(s, drawing) {
+    s.finishedQueue.push({ type: 'alert_request', drawingId: drawing.id, kind: drawing.kind });
+  }
+
+  // Smaže vybranou kresbu a překreslí graf
+  function deleteSelectedDrawing(s) {
+    deleteSelected(s);
+    redrawOverlay(s);
+  }
+
   // Požádá Python o dialog příkazu replaye z úrovní kresby pozice (vstup, cíl, stop)
   function requestPositionOrder(s, drawing) {
     s.finishedQueue.push({ type: 'replay_position_order', id: drawing.id, kind: drawing.kind, points: drawing.points });
   }
 
   // Podmenu Template kresby (jako v TradingView): uložení stylu jako šablony,
-  // výchozí šablona typu a uložené šablony typu; vše vyřídí Python
-  function drawingTemplateItems(s, drawing) {
-    const send = (action, name) => () => s.finishedQueue.push({
-      type: 'drawing_template',
-      action: action,
-      name: name || null,
-      id: drawing.id,
-      kind: drawing.kind,
-      color: drawing.color,
-      text: drawing.text || null,
-      options: drawing.options || {},
-    });
-    const items = [['Save as…', send('save')], ['Apply default', send('default')]];
-    const names = Object.keys(drawingTemplates[drawing.kind] || {});
+  // výchozí šablona typu a uložené šablony typu s košem; vše vyřídí Python.
+  // long = delší popisky nabídky šablon v liště kresby
+  function drawingTemplateItems(s, drawing, long) {
+    const send = (action, name) => () =>
+      s.finishedQueue.push(drawingPayload(drawing, { type: 'drawing_template', action: action, name: name || null }));
+    const items = [
+      [long ? 'Save Drawing Template As…' : 'Save as…', send('save')],
+      [long ? 'Apply Default Drawing Template' : 'Apply default', send('default')],
+    ];
+    const names = Object.keys(templatesOf(drawing.kind));
     if (names.length) items.push(null);
-    for (const name of names) items.push([name, send('apply', name)]);
+    for (const name of names) items.push([name, send('apply', name), '', '', null, deleteTemplateAction(s, drawing.kind, name)]);
     return items;
   }
 
@@ -1459,13 +1481,13 @@ window.TickViewChart = (function () {
     }
     items.push(['Settings…', () => requestDrawingSettings(s, drawing), 'settings']);
     if (alertLineKinds.includes(drawing.kind) && drawing.id) {
-      items.push([tvTr('Přidat alert…'), () => s.finishedQueue.push({ type: 'alert_request', drawingId: drawing.id, kind: drawing.kind }), 'alarm_add']);
+      items.push([tvTr('Přidat alert…'), () => requestDrawingAlert(s, drawing), 'alarm_add']);
     }
     // Šablony stylu jen u uložených kreseb se stylem (sticker je emoji)
-    if (drawing.id && styledKinds.includes(drawing.kind)) {
+    if (drawing.id && drawingConfig.kinds.includes(drawing.kind)) {
       items.push(['Template', null, 'style', '', drawingTemplateItems(s, drawing)]);
     }
-    items.push([tvTr('Smazat objekt'), () => { deleteSelected(s); redrawOverlay(s); }, 'delete', 'danger']);
+    items.push([tvTr('Smazat objekt'), () => deleteSelectedDrawing(s), 'delete', 'danger']);
     return items;
   }
 
@@ -1788,7 +1810,7 @@ window.TickViewChart = (function () {
     let panel = fav.el;
     if (!tools.length || !fav.visible || !state.size) {
       if (panel) panel.classList.add('hidden');
-      positionTemplateBar();
+      positionDrawingBar();
       return;
     }
     if (!panel) {
@@ -1848,7 +1870,7 @@ window.TickViewChart = (function () {
   function positionFavorites() {
     const panel = fav.el;
     if (!panel || panel.classList.contains('hidden')) {
-      positionTemplateBar();
+      positionDrawingBar();
       return;
     }
     // Pozice v px vůči oknu; bez uložené pozice nahoře uprostřed plochy grafů
@@ -1858,8 +1880,8 @@ window.TickViewChart = (function () {
     const pos = fav.pos || { left: rect.left + (rect.width - panel.offsetWidth) / 2, top: rect.top + 6 };
     panel.style.left = Math.round(Math.min(maxLeft, Math.max(0, pos.left))) + 'px';
     panel.style.top = Math.round(Math.min(maxTop, Math.max(0, pos.top))) + 'px';
-    // Lištička šablon aktivního nástroje se drží pod panelem
-    positionTemplateBar();
+    // Lišta kresby se drží pod panelem
+    positionDrawingBar();
   }
 
   // Tažení panelu oblíbených za úchop; konečná pozice se uloží v Pythonu
@@ -1899,75 +1921,245 @@ window.TickViewChart = (function () {
     return node;
   }
 
-  // Šablony kreseb {kinds, templates: {druh: {název: styl}}} (posílá Python
-  // po načtení a po každé změně šablon; společné všem grafům). Zvolená
-  // šablona nástroje, která mezitím zmizela, se vrátí na výchozí
-  function setDrawingTemplates(id, payload) {
+  // Konfigurace kreslení z Pythonu {kinds, lineKinds, labelKinds, widths, lineStyles,
+  // templates: {druh: {název: styl}}} (po načtení a po každé změně šablon;
+  // společná všem grafům). Zvolená šablona nástroje, která mezitím zmizela,
+  // se vrátí na výchozí
+  function setDrawingConfig(id, payload) {
     const data = payload && typeof payload === 'object' ? payload : {};
-    styledKinds = Array.isArray(data.kinds) ? data.kinds : [];
-    drawingTemplates = data.templates && typeof data.templates === 'object' ? data.templates : {};
+    const list = (value) => (Array.isArray(value) ? value : []);
+    drawingConfig = {
+      kinds: list(data.kinds),
+      lineKinds: list(data.lineKinds),
+      labelKinds: list(data.labelKinds),
+      widths: list(data.widths),
+      lineStyles: list(data.lineStyles),
+      templates: data.templates && typeof data.templates === 'object' ? data.templates : {},
+    };
     for (const kind of Object.keys(toolTemplate)) {
-      if (!(drawingTemplates[kind] || {})[toolTemplate[kind]]) delete toolTemplate[kind];
+      if (!templatesOf(kind)[toolTemplate[kind]]) delete toolTemplate[kind];
     }
-    syncTemplateBar();
+    syncDrawingBar(true);
   }
 
-  // Lištička výběru šablony nového objektu (jako v TradingView): ukáže se pod
-  // panelem oblíbených, když je aktivní kreslicí nástroj se stylem
-  function syncTemplateBar() {
+  // Uložené šablony druhu kresby {název: styl}
+  function templatesOf(kind) {
+    return drawingConfig.templates[kind] || {};
+  }
+
+  // Akce koše u uložené šablony v nabídce (smazání vyřídí Python)
+  function deleteTemplateAction(s, kind, name) {
+    return ['trash', tvTr('Smazat šablonu'), () => s.finishedQueue.push({ type: 'drawing_template', action: 'delete', kind: kind, name: name })];
+  }
+
+  // Cíl lišty kresby v aktivním grafu: aktivní kreslicí nástroj se stylem
+  // (výběr šablony nového objektu), jinak vybraná uložená kresba; jinak null
+  function drawingBarTarget(s) {
+    if (!s) return null;
+    const mode = s.overlay.mode;
+    if (mode) return drawingConfig.kinds.includes(mode) ? { kind: mode, drawing: null } : null;
+    const drawing = !s.overlay.hidden && s.overlay.selected >= 0 ? s.overlay.drawings[s.overlay.selected] : null;
+    return drawing && drawing.id ? { kind: drawing.kind, drawing: drawing } : null;
+  }
+
+  // Plovoucí lišta kresby pod panelem oblíbených (jako v TradingView): při
+  // aktivním nástroji výběr šablony nového objektu, u vybrané kresby rychlé
+  // změny stylu. Volá se při každém překreslení aktivního grafu – lištu
+  // přestaví jen změna cíle (force = vždy, např. po změně šířky v liště)
+  function syncDrawingBar(force) {
     const s = activeState();
-    const mode = s && s.overlay.mode;
-    if (!mode || !styledKinds.includes(mode)) {
-      if (templateBar) templateBar.classList.add('hidden');
+    const target = drawingBarTarget(s);
+    const key = target ? [activeId, target.kind, toolTemplate[target.kind] || ''].join('|') : '';
+    const drawing = target ? target.drawing : null;
+    if (!force && key === drawingBar.key && drawing === drawingBar.drawing) return;
+    drawingBar.key = key;
+    drawingBar.drawing = drawing;
+    if (!target) {
+      if (drawingBar.el) drawingBar.el.classList.add('hidden');
       return;
     }
-    if (!templateBar) {
-      templateBar = el('div', 'fav-toolbar template-bar');
-      const button = el('button', 'fav-tool template-bar-button');
-      button.type = 'button';
-      button.appendChild(toolIcon('templates'));
-      // stopPropagation: globální klik by nově otevřenou nabídku hned zavřel
-      button.addEventListener('click', (event) => {
-        event.stopPropagation();
-        openToolTemplateMenu(button);
-      });
-      templateBar.appendChild(button);
-      document.body.appendChild(templateBar);
+    if (!drawingBar.el) {
+      drawingBar.el = el('div', 'fav-toolbar drawing-bar');
+      document.body.appendChild(drawingBar.el);
     }
-    // Zvolená (ne výchozí) šablona je na tlačítku zvýrazněná a v tooltipu
-    const chosen = toolTemplate[mode];
-    const button = templateBar.querySelector('.template-bar-button');
-    button.classList.toggle('active', !!chosen);
-    button.title = chosen ? 'Templates: ' + chosen : 'Templates';
-    templateBar.classList.remove('hidden');
-    positionTemplateBar();
+    const bar = drawingBar.el;
+    bar.replaceChildren();
+    if (drawing) fillSelectionBar(bar, s, drawing);
+    else fillToolBar(bar, s, target.kind);
+    bar.classList.remove('hidden');
+    positionDrawingBar();
   }
 
-  // Nabídka šablon aktivního nástroje: výchozí šablona typu a uložené šablony
-  // (zvolená má fajfku); volba platí pro další nové objekty nástroje
-  function openToolTemplateMenu(button) {
-    const s = activeState();
-    const mode = s && s.overlay.mode;
-    if (!mode) return;
-    const choose = (name) => () => {
-      if (name) toolTemplate[mode] = name;
-      else delete toolTemplate[mode];
-      syncTemplateBar();
-      // Rozepsaná kresba se hned překreslí v novém stylu
-      redrawOverlay(s);
-    };
-    const items = [['Apply Default Drawing Template', choose(null)]];
-    const names = Object.keys(drawingTemplates[mode] || {});
-    if (names.length) items.push(null);
-    for (const name of names) items.push([name, choose(name), toolTemplate[mode] === name ? 'check' : '']);
+  // Tlačítko lišty kresby (ikona, tooltip); handler dostane tlačítko jako
+  // kotvu nabídky. stopPropagation: globální klik by nabídku hned zavřel
+  function barButton(bar, icon, title, onClick) {
+    const button = el('button', 'fav-tool drawing-bar-button');
+    button.type = 'button';
+    button.title = title;
+    button.appendChild(icon);
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      onClick(button);
+    });
+    bar.appendChild(button);
+    return button;
+  }
+
+  // Ikona s barevným proužkem pod ní (barva čáry / textu jako v TradingView)
+  function colorIcon(iconName, color) {
+    const node = el('span', 'drawing-bar-color');
+    node.appendChild(toolIcon(iconName));
+    const strip = el('span', 'drawing-bar-colorbar');
+    strip.style.background = color;
+    node.appendChild(strip);
+    return node;
+  }
+
+  // SVG náhled čáry dané šířky a stylu (tlačítka šířky a stylu čáry)
+  function linePreview(width, lineStyle) {
+    const node = el('span', 'tv-icon-wrap');
+    const dash = (LINE_DASHES[lineStyle] || []).join(' ');
+    node.innerHTML = '<svg viewBox="0 0 28 28" fill="none" stroke="currentColor"><path d="M4 14h20" stroke-width="' +
+      (Number(width) || 1) + '"' + (dash ? ' stroke-dasharray="' + dash + '"' : '') + '/></svg>';
+    return node;
+  }
+
+  // Nabídka pod tlačítkem lišty (položky viz fillContextMenu)
+  function showMenuBelow(button, items) {
     const rect = button.getBoundingClientRect();
     showContextMenu(rect.left, rect.bottom + 4, items);
   }
 
-  // Umístí lištičku šablon pod panel oblíbených (bez něj nahoře uprostřed
+  // Událost pro Python s identitou a stylem kresby (extra = typ a akce)
+  function drawingPayload(drawing, extra) {
+    return Object.assign({
+      id: drawing.id,
+      kind: drawing.kind,
+      color: drawing.color,
+      text: drawing.text || null,
+      options: drawing.options || {},
+    }, extra);
+  }
+
+  // Uloží styl vybrané kresby změněný v liště (graf ho už zobrazuje)
+  function queueDrawingStyle(s, drawing) {
+    s.finishedQueue.push(drawingPayload(drawing, { type: 'drawing_style' }));
+  }
+
+  // Změní jednu volbu stylu vybrané kresby (šířka, styl čáry) a uloží ji
+  function setDrawingOption(s, drawing, key, value) {
+    drawing.options = Object.assign({}, drawing.options, { [key]: value });
+    redrawOverlay(s);
+    queueDrawingStyle(s, drawing);
+    syncDrawingBar(true);
+  }
+
+  // Výběr barvy z lišty: náhled hned v grafu i v proužku tlačítka, uložení
+  // po zavření panelu (jen při změně); druhý klik na tlačítko panel zavře
+  function pickDrawingColor(s, drawing, anchor, read, write) {
+    const picker = window.TickViewColorPicker;
+    if (!picker) return;
+    if (picker.isOpenFor(anchor)) {
+      picker.close();
+      return;
+    }
+    const before = read();
+    const strip = anchor.querySelector('.drawing-bar-colorbar');
+    picker.open(
+      anchor,
+      before,
+      (color) => {
+        write(color);
+        if (strip) strip.style.background = color;
+        redrawOverlay(s);
+      },
+      () => {
+        if (read() !== before) queueDrawingStyle(s, drawing);
+      }
+    );
+  }
+
+  // Lišta vybrané kresby: šablony, barva čáry a textu, šířka a styl čáry,
+  // Settings, alert, smazání a další volby (menu pravého kliku)
+  function fillSelectionBar(bar, s, drawing) {
+    const kind = drawing.kind;
+    const options = drawing.options || {};
+    const hasLine = drawingConfig.lineKinds.includes(kind);
+    if (drawingConfig.kinds.includes(kind)) {
+      barButton(bar, toolIcon('templates'), 'Templates', (button) => showMenuBelow(button, drawingTemplateItems(s, drawing, true)));
+    }
+    // Barva kresby: u čar barva čáry, u textu barva textu
+    if (hasLine || kind === 'text') {
+      barButton(bar, colorIcon(hasLine ? 'pencil' : 'text', drawing.color), hasLine ? 'Line color' : 'Text color', (button) =>
+        pickDrawingColor(s, drawing, button, () => drawing.color, (color) => { drawing.color = color; })
+      );
+    }
+    if (drawingConfig.labelKinds.includes(kind)) {
+      // Barva popisku čáry (bez vlastní barvy má barvu čáry)
+      const textColor = () => (drawing.options || {}).textColor || drawing.color;
+      barButton(bar, colorIcon('text', textColor()), 'Text color', (button) =>
+        pickDrawingColor(s, drawing, button, textColor, (color) => {
+          drawing.options = Object.assign({}, drawing.options, { textColor: color });
+        })
+      );
+    }
+    // Šířka a styl čáry s nabídkou hodnot (aktuální má fajfku)
+    if (hasLine) {
+      const width = Number(options.width) || 1.5;
+      const widthButton = barButton(bar, linePreview(Math.min(width, 3), 'solid'), 'Line width', (button) =>
+        showMenuBelow(button, drawingConfig.widths.map(([value, label]) =>
+          [label, () => setDrawingOption(s, drawing, 'width', value), Number(value) === width ? 'check' : '']))
+      );
+      widthButton.classList.add('drawing-bar-width');
+      widthButton.appendChild(el('span', 'drawing-bar-label', width + 'px'));
+      const lineStyle = options.lineStyle || 'solid';
+      barButton(bar, linePreview(1.5, lineStyle), 'Line style', (button) =>
+        showMenuBelow(button, drawingConfig.lineStyles.map(([value, label]) =>
+          [label, () => setDrawingOption(s, drawing, 'lineStyle', value), value === lineStyle ? 'check' : '']))
+      );
+    }
+    barButton(bar, toolIcon('settings'), 'Settings…', () => requestDrawingSettings(s, drawing));
+    if (alertLineKinds.includes(kind)) {
+      barButton(bar, toolIcon('alarm_add'), tvTr('Přidat alert…'), () => requestDrawingAlert(s, drawing));
+    }
+    barButton(bar, toolIcon('trash'), tvTr('Smazat objekt'), () => deleteSelectedDrawing(s));
+    barButton(bar, toolIcon('more'), 'More', (button) => showMenuBelow(button, drawingMenuItems(s, drawing)));
+  }
+
+  // Lišta aktivního nástroje: výběr šablony pro další nové objekty; zvolená
+  // (ne výchozí) šablona je na tlačítku zvýrazněná a v tooltipu
+  function fillToolBar(bar, s, kind) {
+    const chosen = toolTemplate[kind];
+    const button = barButton(bar, toolIcon('templates'), chosen ? 'Templates: ' + chosen : 'Templates', (anchor) =>
+      showMenuBelow(anchor, toolTemplateItems(s, kind))
+    );
+    button.classList.toggle('active', !!chosen);
+  }
+
+  // Nabídka šablon aktivního nástroje: výchozí šablona typu a uložené šablony
+  // (zvolená má fajfku, koš ji smaže); volba platí pro další nové objekty
+  function toolTemplateItems(s, kind) {
+    const choose = (name) => () => {
+      if (name) toolTemplate[kind] = name;
+      else delete toolTemplate[kind];
+      // Překreslení ukáže rozepsanou kresbu v novém stylu a přestaví lištu
+      // (zvolená šablona je v jejím klíči)
+      redrawOverlay(s);
+    };
+    const items = [['Apply Default Drawing Template', choose(null)]];
+    const names = Object.keys(templatesOf(kind));
+    if (names.length) items.push(null);
+    for (const name of names) {
+      items.push([name, choose(name), toolTemplate[kind] === name ? 'check' : '', '', null, deleteTemplateAction(s, kind, name)]);
+    }
+    return items;
+  }
+
+  // Umístí lištu kresby pod panel oblíbených (bez něj nahoře uprostřed
   // plochy grafů); vždy celou uvnitř okna
-  function positionTemplateBar() {
-    if (!templateBar || templateBar.classList.contains('hidden')) return;
+  function positionDrawingBar() {
+    const bar = drawingBar.el;
+    if (!bar || bar.classList.contains('hidden')) return;
     let left;
     let top;
     if (fav.el && !fav.el.classList.contains('hidden')) {
@@ -1976,13 +2168,13 @@ window.TickViewChart = (function () {
       top = rect.bottom + 4;
     } else {
       const rect = chartAreaRect();
-      left = rect.left + (rect.width - templateBar.offsetWidth) / 2;
+      left = rect.left + (rect.width - bar.offsetWidth) / 2;
       top = rect.top + 6;
     }
-    const maxLeft = Math.max(0, window.innerWidth - templateBar.offsetWidth);
-    const maxTop = Math.max(0, window.innerHeight - templateBar.offsetHeight);
-    templateBar.style.left = Math.round(Math.min(maxLeft, Math.max(0, left))) + 'px';
-    templateBar.style.top = Math.round(Math.min(maxTop, Math.max(0, top))) + 'px';
+    const maxLeft = Math.max(0, window.innerWidth - bar.offsetWidth);
+    const maxTop = Math.max(0, window.innerHeight - bar.offsetHeight);
+    bar.style.left = Math.round(Math.min(maxLeft, Math.max(0, left))) + 'px';
+    bar.style.top = Math.round(Math.min(maxTop, Math.max(0, top))) + 'px';
   }
 
   // SVG ikony nástrojů z Pythonu (posílají se jednou, i před init grafu)
@@ -3150,9 +3342,9 @@ window.TickViewChart = (function () {
     s.overlay.canvas.classList.toggle('drawing-active', !!mode && mode !== 'cursor');
     redrawOverlay(s);
     // Zvýraznění aktivního nástroje v panelu oblíbených (bez přestavby panelu)
-    // a lištička výběru šablony nového objektu
+    // a lišta kresby (výběr šablony nového objektu)
     paintFavoriteTools();
-    syncTemplateBar();
+    syncDrawingBar();
   }
 
   // Oblíbené nástroje z nastavení: seznam režimů, uložená pozice panelu
@@ -3228,6 +3420,7 @@ window.TickViewChart = (function () {
   function setDrawings(id, drawings) {
     const s = state.get(id);
     if (!s) return;
+    const selectedId = (s.overlay.drawings[s.overlay.selected] || {}).id;
     s.overlay.drawings = (drawings || []).map((d) => ({
       id: d.id,
       kind: d.kind,
@@ -3236,7 +3429,8 @@ window.TickViewChart = (function () {
       text: d.text || null,
       options: d.options || {},
     }));
-    s.overlay.selected = -1;
+    // Vybraná kresba zůstane vybraná i po novém načtení (změna stylu, šablona)
+    s.overlay.selected = selectedId ? s.overlay.drawings.findIndex((d) => d.id === selectedId) : -1;
     s.overlay.drag = null;
     s.overlay.hovered = null;
     redrawOverlay(s);
@@ -3245,7 +3439,7 @@ window.TickViewChart = (function () {
   // Styl nové kresby daného typu: šablona zvolená u nástroje, jinak výchozí
   // šablona typu, jinak tovární
   function defaultStyle(s, kind) {
-    const chosen = toolTemplate[kind] && (drawingTemplates[kind] || {})[toolTemplate[kind]];
+    const chosen = toolTemplate[kind] && templatesOf(kind)[toolTemplate[kind]];
     return chosen || s.drawingDefaults[kind] || { color: '#2962ff', options: {} };
   }
 
@@ -3513,20 +3707,17 @@ window.TickViewChart = (function () {
         const box = textLayout(s, drawing, points[0]);
         if (x >= box.x - 3 && x <= box.x + box.w + 3 && y >= box.y - 3 && y <= box.y + box.h + 3) return i;
       } else if (drawing.kind === 'rect') {
-        const [a, b] = points;
         const options = drawing.options || {};
-        // Prodloužená strana sahá až k okraji grafu (nekonečno stačí pro rozsah);
-        // svislá hrana tam není, takže ji nelze zasáhnout
-        const x1 = options.extendLeft ? -Infinity : Math.min(a.x, b.x);
-        const x2 = options.extendRight ? Infinity : Math.max(a.x, b.x);
-        const y1 = Math.min(a.y, b.y);
-        const y2 = Math.max(a.y, b.y);
-        // Okraje obdélníku (ne vnitřek, aby se dalo kreslit přes něj)
+        // Prodloužená strana sahá až k okraji grafu (nekonečno stačí pro rozsah)
+        const box = rectBounds(points[0], points[1], options, Infinity);
+        // Okraje obdélníku (ne vnitřek, aby se dalo kreslit přes něj); svislá
+        // hrana na prodloužené straně není, takže ji nelze zasáhnout
+        const nearSide = (!options.extendLeft && Math.abs(x - box.left) <= threshold) ||
+          (!options.extendRight && Math.abs(x - box.right) <= threshold);
+        if (nearSide && y >= box.top - threshold && y <= box.bottom + threshold) return i;
         if (
-          (Math.abs(x - x1) <= threshold || Math.abs(x - x2) <= threshold) && y >= y1 - threshold && y <= y2 + threshold
-        ) return i;
-        if (
-          (Math.abs(y - y1) <= threshold || Math.abs(y - y2) <= threshold) && x >= x1 - threshold && x <= x2 + threshold
+          (Math.abs(y - box.top) <= threshold || Math.abs(y - box.bottom) <= threshold) &&
+          x >= box.left - threshold && x <= box.right + threshold
         ) return i;
       } else if (drawing.kind === 'fib') {
         const [a, b] = points;
@@ -3650,6 +3841,69 @@ window.TickViewChart = (function () {
   const TEXT_SIZE = 13;
   // Šířka řádku textu se zapnutým zalomením (Text wrap) v px
   const TEXT_WRAP_WIDTH = 240;
+
+  // Hranice obdélníku v pixelech z protilehlých rohů a, b; prodloužená strana
+  // (Extend left / right) sahá k levému okraji (0) / k paneWidth
+  function rectBounds(a, b, options, paneWidth) {
+    return {
+      left: options.extendLeft ? 0 : Math.min(a.x, b.x),
+      right: options.extendRight ? paneWidth : Math.max(a.x, b.x),
+      top: Math.min(a.y, b.y),
+      bottom: Math.max(a.y, b.y),
+    };
+  }
+
+  // Odsazení popisku od čáry / okraje obdélníku a výška řádku vůči písmu
+  const LABEL_GAP = 4;
+  const LABEL_LINE_HEIGHT = 1.25;
+
+  // Textový popisek čáry nebo obdélníku (záložka Text v Settings): u čar
+  // podél čáry (natočený, nikdy vzhůru nohama) nad / na / pod čarou
+  // a na začátku / uprostřed / na konci, u obdélníku uvnitř podle zarovnání
+  function drawLabel(ctx, s, drawing, paneWidth, paneHeight) {
+    if (!drawing.text || drawing.preview || !drawingConfig.labelKinds.includes(drawing.kind)) return;
+    const pixels = drawing.points.map((point) => pointToPixel(s, point));
+    if (!pixels.length || pixels.some((pixel) => !pixel)) return;
+    const options = drawing.options || {};
+    const lineHeight = textSize(drawing) * LABEL_LINE_HEIGHT;
+    const lines = String(drawing.text).split('\n');
+    const total = lines.length * lineHeight;
+    const hAlign = options.textHAlign || 'center';
+    const vAlign = options.textVAlign || 'top';
+    ctx.save();
+    ctx.font = textFont(drawing);
+    ctx.fillStyle = options.textColor || drawing.color || '#2962ff';
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = hAlign;
+    // x kotvy textu a horní hrana bloku řádků (u čáry v natočených souřadnicích)
+    let x;
+    let top;
+    if (drawing.kind === 'rect') {
+      const box = rectBounds(pixels[0], pixels[1], options, paneWidth);
+      x = hAlign === 'left' ? box.left + LABEL_GAP : hAlign === 'right' ? box.right - LABEL_GAP : (box.left + box.right) / 2;
+      top = vAlign === 'top' ? box.top + LABEL_GAP : vAlign === 'bottom' ? box.bottom - LABEL_GAP - total : (box.top + box.bottom - total) / 2;
+    } else {
+      const [start, end] = labelSegment(drawing.kind, pixels, paneWidth, paneHeight);
+      const length = Math.hypot(end.x - start.x, end.y - start.y);
+      ctx.translate(start.x, start.y);
+      ctx.rotate(Math.atan2(end.y - start.y, end.x - start.x));
+      x = hAlign === 'left' ? LABEL_GAP : hAlign === 'right' ? length - LABEL_GAP : length / 2;
+      top = vAlign === 'top' ? -LABEL_GAP - total : vAlign === 'bottom' ? LABEL_GAP : -total / 2;
+    }
+    lines.forEach((line, index) => ctx.fillText(line, x, top + lineHeight * (index + 0.5)));
+    ctx.restore();
+  }
+
+  // Úsečka, podél které se kreslí popisek čáry (pixely plátna): zleva
+  // doprava, svislá zdola nahoru, aby text nebyl vzhůru nohama
+  function labelSegment(kind, pixels, paneWidth, paneHeight) {
+    const p = pixels[0];
+    if (kind === 'hline') return [{ x: 0, y: p.y }, { x: paneWidth, y: p.y }];
+    if (kind === 'hray') return [p, { x: paneWidth, y: p.y }];
+    if (kind === 'vline') return [{ x: p.x, y: paneHeight }, { x: p.x, y: 0 }];
+    const [a, b] = pixels;
+    return a.x < b.x || (a.x === b.x && a.y > b.y) ? [a, b] : [b, a];
+  }
 
   // Písmo textové kresby podle její velikosti, tučnosti a kurzívy (sdílí kreslení i výběr)
   function textFont(drawing) {
@@ -4157,10 +4411,7 @@ window.TickViewChart = (function () {
     }
     if (drawing.kind === 'rect') {
       // Prodloužený obdélník (Extend left / right) sahá až k okraji grafu
-      const left = options.extendLeft ? 0 : Math.min(p1.x, p2.x);
-      const right = options.extendRight ? paneWidth : Math.max(p1.x, p2.x);
-      const top = Math.min(p1.y, p2.y);
-      const bottom = Math.max(p1.y, p2.y);
+      const { left, right, top, bottom } = rectBounds(p1, p2, options, paneWidth);
       ctx.fillStyle = withAlpha(color, 0.12);
       ctx.fillRect(left, top, right - left, bottom - top);
       // Obrys: vodorovné hrany vždy, svislou hranu jen na neprodloužené straně
@@ -4812,12 +5063,15 @@ window.TickViewChart = (function () {
       if (s.overlay.pending) all.push({ ...s.overlay.pending, ...defaultStyle(s, s.overlay.pending.kind), preview: true });
       for (const drawing of all) {
         drawShape(ctx, s, drawing, pane.width, pane.height);
+        drawLabel(ctx, s, drawing, pane.width, pane.height);
       }
       renderMeasure(ctx, s, pane.width, pane.height);
     }
     renderMagnetMarker(ctx, s);
     ctx.restore();
     redrawPaneMarkers(s);
+    // Lišta kresby sleduje výběr a nástroj aktivního grafu
+    if (s === activeState()) syncDrawingBar();
   }
 
   // Značka přichycení magnetem: kroužek na O/H/L/C, kam se bod kresby uloží
@@ -4872,7 +5126,7 @@ window.TickViewChart = (function () {
     endReplayDrag: endReplayDrag,
     showTime: showTime,
     setAlertKinds: setAlertKinds,
-    setDrawingTemplates: setDrawingTemplates,
+    setDrawingConfig: setDrawingConfig,
     playSound: playSound,
     scrollIntoView: scrollIntoView,
   };

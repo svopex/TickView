@@ -9,9 +9,13 @@ jednou přes LightweightChart.set_icons.
 # Vnitřek SVG jednotlivých ikon (cesty v souřadnicích 0–28); kroužky
 # znázorňují kotevní body kresby jako v TradingView
 _ICON_PATHS: dict[str, str] = {
-    # Šablony kresby: mřížka čtverců s plusem (lištička aktivního nástroje)
+    # Šablony kresby: mřížka čtverců s plusem (lišta kresby)
     "templates": '<rect x="6" y="6" width="6" height="6" rx="1.5"/><rect x="16" y="6" width="6" height="6" rx="1.5"/>'
                  '<rect x="6" y="16" width="6" height="6" rx="1.5"/><path d="M19 15.5v7M15.5 19h7"/>',
+    # Lišta vybrané kresby: nastavení (šestiúhelník), alert (budík s plusem), další volby
+    "settings": '<path d="M14 4.5 22.2 9.25v9.5L14 23.5 5.8 18.75v-9.5z"/><circle cx="14" cy="14" r="3.2"/>',
+    "alarm_add": '<path d="M19.5 22.4A8 8 0 1 1 21.9 16"/><path d="M13.5 10v5l3 2M5 6.5 8 4M23 6.5 20 4M22 19v6M19 22h6"/>',
+    "more": '<circle cx="7" cy="14" r="1.6"/><circle cx="14" cy="14" r="1.6"/><circle cx="21" cy="14" r="1.6"/>',
     # Kurzor: kříž (crosshair)
     "cursor": '<path d="M14 5v7M14 16v7M5 14h7M16 14h7"/>',
     # Čáry

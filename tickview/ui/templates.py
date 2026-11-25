@@ -91,6 +91,19 @@ async def store_named_template(cache: KlineCache, scope: str, name: str, values:
     return message.format(name=name)
 
 
+async def delete_named_template(cache: KlineCache, scope: str, name: str) -> str:
+    """Smaže pojmenovanou šablonu rozsahu a vrátí hlášku pro uživatele.
+
+    Parametry:
+        cache: úložiště nastavení.
+        scope: rozsah šablon, např. "drawing.rect".
+        name: název šablony.
+    """
+    templates = delete_template(await load_named_templates(cache, scope), name)
+    await cache.set_setting(templates_key(scope), json.dumps(templates))
+    return tr("Šablona „{name}“ smazána.").format(name=name)
+
+
 class TemplateMenu:
     """Tlačítko „Template“ s nabídkou jako v TradingView.
 
@@ -157,10 +170,6 @@ class TemplateMenu:
         # Uložené šablony aktuálního rozsahu (seřazené podle názvu)
         return await load_named_templates(self._cache, self._get_scope())
 
-    async def _store(self, templates: dict[str, dict]) -> None:
-        # Uloží šablony aktuálního rozsahu do nastavení
-        await self._cache.set_setting(templates_key(self._get_scope()), json.dumps(templates))
-
     async def refresh(self) -> None:
         """Přestaví položky nabídky podle uložených šablon (volá se při otevření dialogu)."""
         templates = await self._templates()
@@ -179,8 +188,8 @@ class TemplateMenu:
                 with ui.menu_item(on_click=self._make_apply(name)).classes("tpl-item tpl-saved"):
                     ui.label(name).classes("tpl-name")
                     ui.space()
-                    # Křížek smaže šablonu; .stop zabrání současnému použití šablony
-                    ui.button(icon="close").props("flat dense round size=xs").classes("tpl-delete").tooltip(
+                    # Koš smaže šablonu; .stop zabrání současnému použití šablony
+                    ui.button(icon="delete_outline").props("flat dense round size=xs").classes("tpl-delete").tooltip(
                         tr("Smazat šablonu")
                     ).on("click.stop", self._make_delete(name))
 
@@ -195,12 +204,11 @@ class TemplateMenu:
 
     def _make_delete(self, name: str) -> Callable[[], Awaitable[None]]:
         async def _handler() -> None:
-            templates = delete_template(await self._templates(), name)
-            await self._store(templates)
+            message = await delete_named_template(self._cache, self._get_scope(), name)
             if self._on_templates_change:
                 await self._on_templates_change()
             await self.refresh()
-            ui.notify(tr("Šablona „{name}“ smazána.").format(name=name))
+            ui.notify(message)
 
         return _handler
 

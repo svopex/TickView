@@ -630,7 +630,25 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   nabízí podmenu „Template“ jako v TradingView: „Save as…“ uloží styl kresby
   jako pojmenovanou šablonu jejího typu, „Apply default“ použije výchozí
   šablonu typu (jinak tovární styl) a pod čarou jsou uložené šablony typu –
-  klik styl rovnou použije a uloží (text a body kresby zůstanou).
+  klik styl rovnou použije a uloží (text a body kresby zůstanou), koš (vidět
+  při najetí na řádek) šablonu smaže. Koš mají uložené šablony i v nabídce
+  Template dialogů Settings a v liště kresby.
+- Lišta kresby jako v TradingView (plovoucí pod panelem oblíbených):
+  - při aktivním kreslicím nástroji (z lišty i z panelu oblíbených) nabízí
+    tlačítko šablon „Apply Default Drawing Template“ a uložené šablony
+    nástroje – zvolená šablona (fajfka, zvýrazněné tlačítko) určí styl
+    dalších nových objektů nástroje až do změny volby nebo obnovení stránky;
+  - u vybrané kresby rychlé změny: šablony („Save Drawing Template As…“,
+    „Apply Default Drawing Template“, uložené šablony s košem), barva čáry
+    a barva textu (výběr barvy s průhledností), šířka a styl čáry, Settings,
+    alert (u čar), smazání a „…“ s nabídkou pravého kliku. Změna se hned
+    projeví a uloží; výběr kresby zůstává i po uložení stylu nebo šablony.
+- Textový popisek čar a obdélníku: Settings horizontální linie
+  a polopřímky, svislé linie, trendové čáry, polopřímky, přímky, šipky
+  a obdélníku mají záložku Text (barva, velikost, tučné, kurzíva, text,
+  zarovnání). Popisek se kreslí podél čáry (natočený, nikdy vzhůru nohama)
+  nad / na / pod čarou (Top / Middle / Bottom) na začátku / uprostřed /
+  na konci (Left / Center / Right); u obdélníku uvnitř podle zarovnání.
 - Oblíbené nástroje: ve flyout nabídce nástrojů je u každého nástroje
   hvězdička, u skupin s jediným nástrojem (kurzor, měřič) pravý klik na
   tlačítko lišty. Oblíbené nástroje se ukazují v plovoucím panelu (výchozí
