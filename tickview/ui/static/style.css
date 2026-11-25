@@ -667,6 +667,82 @@
   color: #808080;
 }
 
+/* Vlaječka symbolu (jako v TradingView): praporek u levého okraje řádku;
+   bez vlaječky je vidět jen obrys při najetí na řádek (static/watchlist_flags.js).
+   Barva vlaječky i tečky palety = currentColor podle atributu data-flag */
+.wl-flag {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 14px;
+  margin-left: -2px;
+  cursor: pointer;
+  color: transparent;
+  background: currentColor;
+  clip-path: polygon(0 0, 100% 0, 55% 50%, 100% 100%, 0 100%);
+}
+
+.watch-row:hover .wl-flag:not([data-flag]) {
+  color: rgba(128, 128, 128, 0.45);
+}
+
+/* Barvy vlaječek v pořadí logic.watchlists.FLAG_COLORS */
+[data-flag="red"] { color: #f23645; }
+[data-flag="blue"] { color: #2962ff; }
+[data-flag="green"] { color: #4caf50; }
+[data-flag="orange"] { color: #ff9800; }
+[data-flag="purple"] { color: #9c27b0; }
+[data-flag="cyan"] { color: #00bcd4; }
+[data-flag="pink"] { color: #e91e63; }
+
+/* Vlaječka v záhlaví (řazení podle vlaječek): šedá, při řazení modrá */
+.wl-flag.wl-flag-head {
+  margin-left: 0;
+  color: inherit;
+}
+
+.watch-flag-sort {
+  min-width: 0;
+  padding: 0 2px;
+}
+
+/* Paleta barev vlaječky vedle řádku (vytváří static/watchlist_flags.js) */
+.wl-flag-palette {
+  --palette-bg: #3a3a3a;
+  position: fixed;
+  z-index: var(--z-popover);
+  display: none;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--palette-bg);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.body--light .wl-flag-palette {
+  --palette-bg: #ffffff;
+}
+
+.wl-flag-palette.open {
+  display: flex;
+}
+
+.wl-flag-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  cursor: pointer;
+  background: currentColor;
+}
+
+.wl-flag-dot:hover {
+  transform: scale(1.15);
+}
+
+/* Současná barva symbolu: kroužek (klik na ni vlaječku odebere) */
+.wl-flag-dot.selected {
+  box-shadow: 0 0 0 2px var(--palette-bg), 0 0 0 4px currentColor;
+}
+
 /* Záhlaví sekce watchlistu (jako v TradingView): šipka sbalení, název, nabídka ⋯ */
 .wl-section-head {
   cursor: pointer;

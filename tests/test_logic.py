@@ -28,11 +28,15 @@ from tickview.indicators.compute import (
 )
 from tickview.logic.sessions import filter_session, timezone_options, utc_offset_label
 from tickview.logic.watchlists import (
+    FLAG_COLORS,
     build_groups,
+    click_flag,
     move_section,
     move_symbol,
+    next_sort,
     parse_entry,
     remove_section,
+    sort_column,
     sort_watchlist,
 )
 from tickview.logic.styles import (
@@ -760,6 +764,44 @@ class WatchlistSortTest(unittest.TestCase):
         self.assertEqual(sort_watchlist(items, ""), items)
         self.assertEqual(sort_watchlist(items, "xyz"), items)
 
+    def test_sort_by_flag(self) -> None:
+        # Barvy v pořadí palety, bez vlaječky (i neznámá barva) na konec; stejná
+        # barva drží vlastní pořadí i obráceně
+        items = [{"symbol": "A", "flag": None}, {"symbol": "B", "flag": "green"}, {"symbol": "C", "flag": "red"},
+                 {"symbol": "D", "flag": "green"}, {"symbol": "E", "flag": "xyz"}]
+        symbols = lambda result: "".join(item["symbol"] for item in result)  # noqa: E731
+        self.assertEqual(symbols(sort_watchlist(items, "flag")), "CBDAE")
+        self.assertEqual(symbols(sort_watchlist(items, "flag_desc")), "AEBDC")
+
+    def test_flag_colors_styled(self) -> None:
+        # Každá barva palety má odstín ve style.css (atribut data-flag)
+        css = (Path(__file__).resolve().parent.parent / "tickview/ui/static/style.css").read_text(encoding="utf-8")
+        for color in FLAG_COLORS:
+            self.assertIn(f'[data-flag="{color}"]', css)
+
+    def test_sort_column(self) -> None:
+        # Sloupec záhlaví podle řazení, vlastní pořadí (i neznámé) žádný
+        self.assertEqual([sort_column(sort) for sort in ("asc", "desc", "flag", "flag_desc")],
+                         ["symbol", "symbol", "flag", "flag"])
+        self.assertIsNone(sort_column(""))
+        self.assertIsNone(sort_column("xyz"))
+
+    def test_next_sort(self) -> None:
+        # Klik na záhlaví: cyklus sloupce, z řazení jiného sloupce jeho první stav
+        self.assertEqual([next_sort(sort, "symbol") for sort in ("", "asc", "desc", "flag")], ["asc", "desc", "", "asc"])
+        self.assertEqual([next_sort(sort, "flag") for sort in ("", "flag", "flag_desc", "desc")],
+                         ["flag", "flag_desc", "", "flag"])
+
+    def test_click_flag(self) -> None:
+        # Klik na vlaječku řádku: přidá naposledy použitou barvu (neznámá = červená), nebo odebere
+        self.assertEqual(click_flag(None, None, "blue"), "blue")
+        self.assertEqual(click_flag(None, None, None), "red")
+        self.assertIsNone(click_flag("green", None, "blue"))
+        # Barva z palety: nastaví ji, stejná barva vlaječku odebere, neznámá = klik na řádek
+        self.assertEqual(click_flag("green", "pink", "blue"), "pink")
+        self.assertIsNone(click_flag("pink", "pink", "blue"))
+        self.assertEqual(click_flag(None, "xyz", "cyan"), "cyan")
+
 
 class WatchlistsTest(unittest.IsolatedAsyncioTestCase):
     """Více pojmenovaných watchlistů a převod původního jediného seznamu."""
@@ -784,8 +826,8 @@ class WatchlistsTest(unittest.IsolatedAsyncioTestCase):
                 first = lists[0]["id"]
                 self.assertEqual(
                     await cache.watchlist_list(first),
-                    [{"source": "binance", "symbol": "BTCUSDT", "section_id": None},
-                     {"source": "ibkr", "symbol": "MSFT", "section_id": None}],
+                    [{"source": "binance", "symbol": "BTCUSDT", "section_id": None, "flag": None},
+                     {"source": "ibkr", "symbol": "MSFT", "section_id": None, "flag": None}],
                 )
                 # Kopie seznamu, stejný symbol ve dvou seznamech, přejmenování
                 copy = await cache.watchlist_create("Forex", copy_from=first)
@@ -794,6 +836,13 @@ class WatchlistsTest(unittest.IsolatedAsyncioTestCase):
                 await cache.watchlist_remove(copy, "binance", "BTCUSDT")
                 await cache.watchlist_rename(copy, "FX")
                 self.assertEqual(len(await cache.watchlist_list(copy)), 2)
+                # Vlaječka platí pro symbol ve všech seznamech, None ji odebere
+                await cache.symbol_flag_set("ibkr", "MSFT", "blue")
+                for list_id in (first, copy):
+                    flags = {item["symbol"]: item["flag"] for item in await cache.watchlist_list(list_id)}
+                    self.assertEqual(flags["MSFT"], "blue")
+                await cache.symbol_flag_set("ibkr", "MSFT", None)
+                self.assertEqual([item["flag"] for item in await cache.watchlist_list(first)], [None, None])
                 self.assertEqual(len(await cache.watchlist_list(first)), 2)
                 self.assertEqual([item["name"] for item in await cache.watchlists()], ["Watchlist", "FX"])
                 await cache.watchlist_clear(first)

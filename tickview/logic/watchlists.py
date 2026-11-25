@@ -1,4 +1,4 @@
-"""Řazení symbolů ve watchlistu a sekce seznamu (jako v TradingView).
+"""Řazení symbolů ve watchlistu, vlaječky a sekce seznamu (jako v TradingView).
 
 Modul obsahuje jen čisté funkce – načtení seznamu a uložení volby řeší UI.
 
@@ -10,10 +10,16 @@ Přesuny pracují s plochým pořadím (záhlaví skupiny, pak její symboly), t
 symbol patří vždy do skupiny nad sebou.
 """
 
-from tickview.i18n import N_
+# Řazení, kterými postupně prochází klik na záhlaví sloupce: Symbol = abeceda
+# A→Z / Z→A, vlaječka = barvy v pořadí palety / obráceně; po posledním následuje
+# vlastní pořadí (""), z jiného řazení se začíná prvním
+SORT_CYCLES: dict[str, tuple[str, str]] = {"symbol": ("asc", "desc"), "flag": ("flag", "flag_desc")}
+# Všechna platná řazení ("" = vlastní pořadí)
+WATCHLIST_SORTS: tuple[str, ...] = ("",) + tuple(sort for cycle in SORT_CYCLES.values() for sort in cycle)
 
-# Řazení: klíč -> popis ("" = vlastní pořadí, asc / desc podle abecedy)
-WATCHLIST_SORTS: dict[str, str] = {"": N_("Vlastní pořadí"), "asc": "A→Z", "desc": "Z→A"}
+# Barvy vlaječek symbolů v pořadí palety (a řazení) jako v TradingView;
+# stejné pořadí drží static/watchlist_flags.js, odstíny static/style.css
+FLAG_COLORS: tuple[str, ...] = ("red", "blue", "green", "orange", "purple", "cyan", "pink")
 
 # Skupina seznamu: id sekce (None = bez sekce) a klíče "zdroj:SYMBOL" v pořadí
 Group = tuple[int | None, list[str]]
@@ -23,17 +29,61 @@ def sort_watchlist(items: list[dict], sort: str) -> list[dict]:
     """Symboly seznamu v požadovaném pořadí.
 
     Abeceda nerozlišuje velikost písmen; shodný symbol z více zdrojů se řadí
-    podle zdroje (u Z→A také vzestupně). Neznámé řazení = vlastní pořadí.
+    podle zdroje (u Z→A také vzestupně). Vlaječky se řadí podle pořadí barev
+    v paletě, symboly bez vlaječky na konec (obráceně na začátek); stejná barva
+    drží vlastní pořadí. Neznámé řazení = vlastní pořadí.
 
     Parametry:
-        items: symboly [{"source", "symbol"}] ve vlastním pořadí.
+        items: symboly [{"source", "symbol", "flag"}] ve vlastním pořadí.
         sort: klíč WATCHLIST_SORTS.
     """
+    if sort_column(sort) == "flag":
+        # Stabilní řazení – reverse=True zachová vlastní pořadí uvnitř barvy
+        return sorted(items, key=lambda item: _flag_rank(item.get("flag")), reverse=sort == "flag_desc")
     if sort not in ("asc", "desc"):
         return list(items)
     # Nejdřív podle zdroje, pak stabilně podle symbolu – zdroj zůstane vzestupně i u Z→A
     by_source = sorted(items, key=lambda item: item["source"])
     return sorted(by_source, key=lambda item: item["symbol"].casefold(), reverse=sort == "desc")
+
+
+def _flag_rank(flag) -> int:
+    # Pořadí barvy v paletě; bez vlaječky (i neznámá barva) za všemi barvami
+    return FLAG_COLORS.index(flag) if flag in FLAG_COLORS else len(FLAG_COLORS)
+
+
+def sort_column(sort: str) -> str | None:
+    """Sloupec záhlaví ("symbol" / "flag"), podle kterého řazení třídí; None = vlastní pořadí."""
+    return next((column for column, cycle in SORT_CYCLES.items() if sort in cycle), None)
+
+
+def next_sort(current: str, column: str) -> str:
+    """Řazení po kliknutí na záhlaví sloupce (Symbol / vlaječka) jako v TradingView.
+
+    Parametry:
+        current: aktuální klíč WATCHLIST_SORTS.
+        column: "symbol" nebo "flag" (klíč SORT_CYCLES).
+    """
+    cycle = SORT_CYCLES[column] + ("",)
+    return cycle[cycle.index(current) + 1] if current in cycle[:-1] else cycle[0]
+
+
+def click_flag(current: str | None, clicked: str | None, last: str | None) -> str | None:
+    """Vlaječka symbolu po kliknutí (jako v TradingView); None = bez vlaječky.
+
+    Klik na vlaječku řádku přidá naposledy použitou barvu, nebo vlaječku
+    odebere; klik na barvu palety ji nastaví, klik na barvu, kterou symbol
+    už má, vlaječku odebere.
+
+    Parametry:
+        current: současná barva symbolu (None = bez vlaječky).
+        clicked: barva z palety; None (i neznámá barva) = klik na vlaječku řádku.
+        last: naposledy použitá barva (neznámá = první barva palety).
+    """
+    color = clicked if clicked in FLAG_COLORS else current or last
+    if color not in FLAG_COLORS:
+        color = FLAG_COLORS[0]
+    return None if color == current else color
 
 
 def item_key(item: dict) -> str:

@@ -161,6 +161,7 @@ EN = {
     "Seznam symbolů": "Symbol list",
     "Přidat symbol grafu do seznamu": "Add the chart symbol to the list",
     "Řadit podle abecedy (A→Z, Z→A, vlastní pořadí)": "Sort alphabetically (A→Z, Z→A, custom order)",
+    "Řadit podle vlaječek (barvy, obráceně, vlastní pořadí)": "Sort by flags (colors, reversed, custom order)",
     # Sekce watchlistu
     "Přidat sekci": "Add section",
     "Přidat sekci…": "Add section…",

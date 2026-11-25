@@ -225,6 +225,16 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   záhlaví sloupce „Symbol“ řadí symboly podle abecedy (A→Z, Z→A, zpět
   vlastní pořadí); řazení platí uvnitř každé sekce, pro všechny seznamy
   a pamatuje se.
+- Vlaječky symbolů jako v TradingView: u levého okraje řádku je praporek
+  (bez vlaječky vidět jen při najetí na řádek). Klik na něj přidá naposledy
+  použitou barvu (poprvé červenou), další klik vlaječku odebere. Po chvíli
+  nad praporkem se vedle něj ukáže paleta 7 barev (červená, modrá, zelená,
+  oranžová, fialová, tyrkysová, růžová); klik na barvu ji nastaví, klik na
+  zvýrazněnou současnou barvu vlaječku odebere. Vlaječka patří symbolu, takže
+  platí ve všech seznamech. Klik na vlaječku v záhlaví (vlevo od „Symbol“)
+  řadí podle vlaječek – barvy v pořadí palety a symboly bez vlaječky na konci,
+  pak obráceně, pak zpět vlastní pořadí; stejná barva drží vlastní pořadí,
+  řazení platí uvnitř každé sekce a pamatuje se.
 - Sekce ve watchlistu jako v TradingView: „Přidat sekci…“ v nabídce seznamu
   (nebo ikona složky v hlavičce) vytvoří pojmenovanou sekci na konci seznamu.
   Klik na záhlaví sekce ji sbalí / rozbalí (pamatuje se), tlačítko ⋯ nebo
@@ -871,7 +881,7 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   časových pásem pro nabídku
 - `tickview/logic/layouts.py` – rozložení více grafů (Layout setup), volby
   synchronizace, kontrola uložené konfigurace a změna počtu grafů
-- `tickview/logic/watchlists.py` – řazení symbolů watchlistu podle abecedy a sekce (skupiny, přesuny myší, odebrání sekce)
+- `tickview/logic/watchlists.py` – řazení symbolů watchlistu podle abecedy a vlaječek, vlaječky (barvy, klik) a sekce (skupiny, přesuny myší, odebrání sekce)
 - `tickview/logic/indicator_templates.py` – šablony indikátorů (uložení,
   přepsání, oblíbené, naposledy použité, popis)
 - `tickview/ui/chart_pane.py` – jeden graf rozložení (ChartPane): symbol,
@@ -930,6 +940,8 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   při přepínání záložek
 - `tickview/ui/static/resizers.js` – posuvné hrany panelů (šířka pravého
   panelu, výška panelu obchodů replaye) s uložením velikosti v prohlížeči
+- `tickview/ui/static/watchlist_flags.js` – vlaječky symbolů watchlistu
+  (klik na praporek, paleta barev při najetí, událost `watchlist_flag`)
 - `tickview/ui/static/watchlist_dnd.js` – přesun symbolů a sekcí watchlistu
   tažením myši (událost `watchlist_drop` do Pythonu)
 - `tickview/ui/static/style.css` – styly UI

@@ -75,6 +75,14 @@ CREATE TABLE IF NOT EXISTS watchlist_sections (
     position   INTEGER NOT NULL DEFAULT 0,
     collapsed  INTEGER NOT NULL DEFAULT 0
 );
+-- Vlaječky symbolů (barevné značky jako v TradingView): platí pro symbol
+-- ve všech seznamech, color = klíč z tickview.logic.watchlists.FLAG_COLORS
+CREATE TABLE IF NOT EXISTS symbol_flags (
+    source  TEXT NOT NULL,
+    symbol  TEXT NOT NULL,
+    color   TEXT NOT NULL,
+    PRIMARY KEY (source, symbol)
+);
 -- Intervaly (UTC ms), které už byly stažené ze sítě a jsou v cache kompletní;
 -- mezery mezi svíčkami uvnitř nich jsou skutečné (noc, víkend), ne díry
 CREATE TABLE IF NOT EXISTS fetched_ranges (
@@ -680,13 +688,19 @@ class KlineCache:
         self._conn.commit()
 
     async def watchlist_list(self, list_id: int) -> list[dict]:
-        """Vrátí symboly seznamu [{"source", "symbol", "section_id"}] ve vlastním pořadí."""
+        """Vrátí symboly seznamu [{"source", "symbol", "section_id", "flag"}] ve vlastním pořadí.
+
+        flag = barva vlaječky symbolu, None = bez vlaječky.
+        """
         rows = await self._run(self._watchlist_list_sync, list_id)
-        return [{"source": row[0], "symbol": row[1], "section_id": row[2]} for row in rows]
+        return [{"source": row[0], "symbol": row[1], "section_id": row[2], "flag": row[3]} for row in rows]
 
     def _watchlist_list_sync(self, list_id: int):
+        # Vlaječka je společná pro všechny seznamy – připojí se podle zdroje a symbolu
         return self._conn.execute(
-            "SELECT source, symbol, section_id FROM watchlist_items WHERE list_id = ? ORDER BY position, id",
+            "SELECT i.source, i.symbol, i.section_id, f.color FROM watchlist_items i "
+            "LEFT JOIN symbol_flags f ON f.source = i.source AND f.symbol = i.symbol "
+            "WHERE i.list_id = ? ORDER BY i.position, i.id",
             (list_id,),
         ).fetchall()
 
@@ -707,6 +721,19 @@ class KlineCache:
             "DELETE FROM watchlist_items WHERE list_id = ? AND source = ? AND symbol = ?",
             (list_id, source, symbol),
         )
+
+    async def symbol_flag_set(self, source: str, symbol: str, color: Optional[str]) -> None:
+        """Nastaví vlaječku symbolu (ve všech seznamech); color None vlaječku odebere."""
+        if color is None:
+            await self._run(
+                self._execute_sync, "DELETE FROM symbol_flags WHERE source = ? AND symbol = ?", (source, symbol)
+            )
+        else:
+            await self._run(
+                self._execute_sync,
+                "INSERT OR REPLACE INTO symbol_flags (source, symbol, color) VALUES (?, ?, ?)",
+                (source, symbol, color),
+            )
 
     # ---------- sekce seznamů symbolů ----------
 
