@@ -643,12 +643,16 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
     a barva textu (výběr barvy s průhledností), šířka a styl čáry, Settings,
     alert (u čar), smazání a „…“ s nabídkou pravého kliku. Změna se hned
     projeví a uloží; výběr kresby zůstává i po uložení stylu nebo šablony.
-- Textový popisek čar a obdélníku: Settings horizontální linie
-  a polopřímky, svislé linie, trendové čáry, polopřímky, přímky, šipky
-  a obdélníku mají záložku Text (barva, velikost, tučné, kurzíva, text,
-  zarovnání). Popisek se kreslí podél čáry (natočený, nikdy vzhůru nohama)
-  nad / na / pod čarou (Top / Middle / Bottom) na začátku / uprostřed /
-  na konci (Left / Center / Right); u obdélníku uvnitř podle zarovnání.
+- Textový popisek kreseb: Settings všech čar (horizontální a svislá linie,
+  polopřímky, trendová čára, přímka, šipka, kříž), paralelního kanálu,
+  pitchforku, Fibonacci retracementu a extension, obdélníku a štětce mají
+  záložku Text (barva, velikost, tučné, kurzíva, text, zarovnání). Popisek
+  se kreslí podél čáry (natočený, nikdy vzhůru nohama) nad / na / pod čarou
+  (Top / Middle / Bottom) na začátku / uprostřed / na konci (Left / Center /
+  Right); u kanálu nad horní / na ose / pod dolní čarou, u pitchforku podél
+  střední linie, u obdélníku uvnitř, u Fibonacci a štětce nad / uprostřed /
+  pod jejich ohraničením. Text má popis sám a pozice (Long / Short) mají
+  vlastní popisky s výpočtem.
 - Oblíbené nástroje: ve flyout nabídce nástrojů je u každého nástroje
   hvězdička, u skupin s jediným nástrojem (kurzor, měřič) pravý klik na
   tlačítko lišty. Oblíbené nástroje se ukazují v plovoucím panelu (výchozí

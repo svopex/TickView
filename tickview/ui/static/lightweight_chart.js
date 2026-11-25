@@ -30,6 +30,8 @@ window.TickViewChart = (function () {
 
   // Úrovně Fibonacci retracementu
   const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+  // Úrovně Fibonacci extension (za první bod včetně 1.618 a 2.618)
+  const FIBEXT_LEVELS = [0, 0.618, 1, 1.618, 2.618];
 
   // Kolik svíček od levého okraje dat stačí k vyžádání starší historie
   const OLDER_THRESHOLD_BARS = 30;
@@ -3719,11 +3721,11 @@ window.TickViewChart = (function () {
           (Math.abs(y - box.top) <= threshold || Math.abs(y - box.bottom) <= threshold) &&
           x >= box.left - threshold && x <= box.right + threshold
         ) return i;
-      } else if (drawing.kind === 'fib') {
+      } else if (drawing.kind === 'fib' || drawing.kind === 'fibext') {
         const [a, b] = points;
         const x1 = Math.min(a.x, b.x);
         const x2 = Math.max(a.x, b.x);
-        for (const level of FIB_LEVELS) {
+        for (const level of fibLevels(drawing.kind)) {
           const yLevel = b.y + (a.y - b.y) * level;
           if (x >= x1 - threshold && x <= x2 + threshold && Math.abs(y - yLevel) <= threshold) return i;
         }
@@ -3748,23 +3750,8 @@ window.TickViewChart = (function () {
         const [a, b, c] = points;
         if (distToSegment(x, y, a.x, a.y, b.x, b.y) <= threshold) return i;
         if (!c) continue;
-        const ddx = b.x - a.x;
-        const ddy = b.y - a.y;
-        const len = Math.hypot(ddx, ddy) || 1;
-        const nx = -ddy / len;
-        const ny = ddx / len;
-        const perp = (c.x - a.x) * nx + (c.y - a.y) * ny;
-        const offX = nx * perp;
-        const offY = ny * perp;
-        if (distToSegment(x, y, a.x + offX, a.y + offY, b.x + offX, b.y + offY) <= threshold) return i;
-      } else if (drawing.kind === 'fibext') {
-        const [a, b] = points;
-        const x1 = Math.min(a.x, b.x);
-        const x2 = Math.max(a.x, b.x);
-        for (const level of [0, 0.618, 1, 1.618, 2.618]) {
-          const yLevel = b.y + (a.y - b.y) * level;
-          if (x >= x1 - threshold && x <= x2 + threshold && Math.abs(y - yLevel) <= threshold) return i;
-        }
+        const off = channelOffset(a, b, c);
+        if (distToSegment(x, y, a.x + off.x, a.y + off.y, b.x + off.x, b.y + off.y) <= threshold) return i;
       } else if (drawing.kind === 'pitchfork') {
         // Tři linie: A→M(B,C) a rovnoběžky z B a C (testujeme viditelnou část);
         // při dvoubodové (rozpracované) kresbě testujeme jen spojnici A→B
@@ -3857,9 +3844,10 @@ window.TickViewChart = (function () {
   const LABEL_GAP = 4;
   const LABEL_LINE_HEIGHT = 1.25;
 
-  // Textový popisek čáry nebo obdélníku (záložka Text v Settings): u čar
-  // podél čáry (natočený, nikdy vzhůru nohama) nad / na / pod čarou
-  // a na začátku / uprostřed / na konci, u obdélníku uvnitř podle zarovnání
+  // Textový popisek kresby (záložka Text v Settings): u čar podél čáry
+  // (natočený, nikdy vzhůru nohama) nad / na / pod čarou a na začátku /
+  // uprostřed / na konci; u obdélníku uvnitř, u Fibonacci a štětce nad /
+  // uprostřed / pod jejich ohraničením (labelGeometry)
   function drawLabel(ctx, s, drawing, paneWidth, paneHeight) {
     if (!drawing.text || drawing.preview || !drawingConfig.labelKinds.includes(drawing.kind)) return;
     const pixels = drawing.points.map((point) => pointToPixel(s, point));
@@ -3878,12 +3866,18 @@ window.TickViewChart = (function () {
     // x kotvy textu a horní hrana bloku řádků (u čáry v natočených souřadnicích)
     let x;
     let top;
-    if (drawing.kind === 'rect') {
-      const box = rectBounds(pixels[0], pixels[1], options, paneWidth);
+    const geometry = labelGeometry(drawing, pixels, options, vAlign, paneWidth, paneHeight);
+    if (geometry.box) {
+      // Ohraničení: uvnitř (obdélník) se text drží u hrany uvnitř, jinak nad
+      // horní / pod dolní hranou (posun o výšku textu ven)
+      const { box, inside } = geometry;
+      const outside = inside ? 0 : total + 2 * LABEL_GAP;
       x = hAlign === 'left' ? box.left + LABEL_GAP : hAlign === 'right' ? box.right - LABEL_GAP : (box.left + box.right) / 2;
-      top = vAlign === 'top' ? box.top + LABEL_GAP : vAlign === 'bottom' ? box.bottom - LABEL_GAP - total : (box.top + box.bottom - total) / 2;
+      if (vAlign === 'top') top = box.top + LABEL_GAP - outside;
+      else if (vAlign === 'bottom') top = box.bottom - LABEL_GAP - total + outside;
+      else top = (box.top + box.bottom - total) / 2;
     } else {
-      const [start, end] = labelSegment(drawing.kind, pixels, paneWidth, paneHeight);
+      const [start, end] = geometry.segment;
       const length = Math.hypot(end.x - start.x, end.y - start.y);
       ctx.translate(start.x, start.y);
       ctx.rotate(Math.atan2(end.y - start.y, end.x - start.x));
@@ -3894,14 +3888,80 @@ window.TickViewChart = (function () {
     ctx.restore();
   }
 
-  // Úsečka, podél které se kreslí popisek čáry (pixely plátna): zleva
-  // doprava, svislá zdola nahoru, aby text nebyl vzhůru nohama
-  function labelSegment(kind, pixels, paneWidth, paneHeight) {
+  // Kde se kreslí popisek kresby (pixely plátna): {segment: [začátek, konec]}
+  // u čar, {box, inside} u kreseb s plošným ohraničením
+  function labelGeometry(drawing, pixels, options, vAlign, paneWidth, paneHeight) {
+    const kind = drawing.kind;
     const p = pixels[0];
-    if (kind === 'hline') return [{ x: 0, y: p.y }, { x: paneWidth, y: p.y }];
-    if (kind === 'hray') return [p, { x: paneWidth, y: p.y }];
-    if (kind === 'vline') return [{ x: p.x, y: paneHeight }, { x: p.x, y: 0 }];
-    const [a, b] = pixels;
+    if (kind === 'hline' || kind === 'cross') return { segment: [{ x: 0, y: p.y }, { x: paneWidth, y: p.y }] };
+    if (kind === 'hray') return { segment: [p, { x: paneWidth, y: p.y }] };
+    if (kind === 'vline') return { segment: [{ x: p.x, y: paneHeight }, { x: p.x, y: 0 }] };
+    if (kind === 'rect') return { box: rectBounds(pixels[0], pixels[1], options, paneWidth), inside: true };
+    // Štětec: ohraničení všech bodů tahu
+    if (kind === 'brush') return { box: pointsBounds(pixels), inside: false };
+    if (kind === 'fib' || kind === 'fibext') {
+      // Fibonacci: šířka mezi body, výška od nejvyšší po nejnižší úroveň
+      // (úrovně jsou seřazené, krajní jsou první a poslední)
+      const [a, b] = pixels;
+      const levels = fibLevels(kind);
+      const levelY = (level) => b.y + (a.y - b.y) * level;
+      return { box: pointsBounds([{ x: a.x, y: levelY(levels[0]) }, { x: b.x, y: levelY(levels[levels.length - 1]) }]), inside: false };
+    }
+    if (kind === 'channel' && pixels.length > 2) {
+      // Kanál: popisek nad horní čarou, pod dolní čarou, uprostřed na ose
+      // (druhá čára je posunutá o kolmou složku vektoru k třetímu bodu)
+      const [a, b, c] = pixels;
+      const off = channelOffset(a, b, c);
+      const shift = (factor) => [
+        { x: a.x + off.x * factor, y: a.y + off.y * factor },
+        { x: b.x + off.x * factor, y: b.y + off.y * factor },
+      ];
+      // Horní je posunutá čára, když posun míří nahoru (záporné y); Top bere
+      // horní čáru, Bottom dolní, Middle osu kanálu
+      const upperFactor = off.y < 0 ? 1 : 0;
+      let factor = 0.5;
+      if (vAlign === 'top') factor = upperFactor;
+      else if (vAlign === 'bottom') factor = 1 - upperFactor;
+      return { segment: leftToRight(shift(factor)) };
+    }
+    if (kind === 'pitchfork' && pixels.length > 2) {
+      // Pitchfork: podél střední linie z A ke středu B–C
+      const [a, b, c] = pixels;
+      return { segment: leftToRight([a, { x: (b.x + c.x) / 2, y: (b.y + c.y) / 2 }]) };
+    }
+    return { segment: leftToRight(pixels.slice(0, 2)) };
+  }
+
+  // Posun druhé čáry kanálu p1→p2: jen kolmá složka vektoru p1→třetí bod
+  // (šířka kanálu; posun podél přímky šířku nemění) – kreslení, výběr i popisek
+  function channelOffset(p1, p2, third) {
+    const length = Math.hypot(p2.x - p1.x, p2.y - p1.y) || 1;
+    const nx = -(p2.y - p1.y) / length;
+    const ny = (p2.x - p1.x) / length;
+    const perp = (third.x - p1.x) * nx + (third.y - p1.y) * ny;
+    return { x: nx * perp, y: ny * perp };
+  }
+
+  // Úrovně Fibonacci retracementu / extension podle druhu kresby
+  function fibLevels(kind) {
+    return kind === 'fibext' ? FIBEXT_LEVELS : FIB_LEVELS;
+  }
+
+  // Ohraničení bodů {left, right, top, bottom} (smyčka – štětec může mít
+  // tisíce bodů, rozbalení do Math.min by bylo zbytečně drahé)
+  function pointsBounds(points) {
+    const box = { left: Infinity, right: -Infinity, top: Infinity, bottom: -Infinity };
+    for (const point of points) {
+      if (point.x < box.left) box.left = point.x;
+      if (point.x > box.right) box.right = point.x;
+      if (point.y < box.top) box.top = point.y;
+      if (point.y > box.bottom) box.bottom = point.y;
+    }
+    return box;
+  }
+
+  // Úsečka zleva doprava (svislá zdola nahoru), aby text nebyl vzhůru nohama
+  function leftToRight([a, b]) {
     return a.x < b.x || (a.x === b.x && a.y > b.y) ? [a, b] : [b, a];
   }
 
@@ -4299,14 +4359,7 @@ window.TickViewChart = (function () {
         renderHandles(ctx, s, drawing);
         return;
       }
-      const ddx = p2.x - p1.x;
-      const ddy = p2.y - p1.y;
-      const len = Math.hypot(ddx, ddy) || 1;
-      const nx = -ddy / len;
-      const ny = ddx / len;
-      const perp = (thirdPixel.x - p1.x) * nx + (thirdPixel.y - p1.y) * ny;
-      const dx = nx * perp;
-      const dy = ny * perp;
+      const { x: dx, y: dy } = channelOffset(p1, p2, thirdPixel);
       ctx.beginPath();
       ctx.moveTo(p1.x, p1.y);
       ctx.lineTo(p2.x, p2.y);
@@ -4370,12 +4423,11 @@ window.TickViewChart = (function () {
     }
     if (drawing.kind === 'fibext') {
       // Fibonacci extension: úrovně za první bod (včetně 1.618/2.618)
-      const extLevels = [0, 0.618, 1, 1.618, 2.618];
       const x1 = Math.min(p1.x, p2.x);
       const x2 = Math.max(p1.x, p2.x);
       ctx.font = '11px sans-serif';
       ctx.textBaseline = 'bottom';
-      for (const level of extLevels) {
+      for (const level of FIBEXT_LEVELS) {
         const y = p2.y + (p1.y - p2.y) * level;
         const price = points[1].price + (points[0].price - points[1].price) * level;
         ctx.beginPath();

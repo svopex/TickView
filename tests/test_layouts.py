@@ -161,8 +161,8 @@ class TextStyleTest(unittest.TestCase):
         text = normalize_drawing_style({"options": {"bold": True, "fontSize": 20}}, "text")
         self.assertTrue(text["options"]["bold"])
         self.assertEqual(text["options"]["fontSize"], 20)
-        # Kresba bez textu i popisku (fib) vzhled písma nemá
-        self.assertNotIn("bold", normalize_drawing_style({"options": {"bold": True}}, "fib")["options"])
+        # Kresba bez textu i popisku (pozice) vzhled písma nemá
+        self.assertNotIn("bold", normalize_drawing_style({"options": {"bold": True}}, "long")["options"])
 
     def test_label_style_for_lines(self) -> None:
         # Popisek čáry: barva textu výchozí podle čáry, neplatné zarovnání = výchozí
@@ -170,7 +170,8 @@ class TextStyleTest(unittest.TestCase):
         self.assertEqual(line["options"]["textColor"], "#ff0000")
         self.assertEqual(line["options"]["textVAlign"], "top")
         self.assertEqual(line["options"]["textHAlign"], "right")
-        self.assertNotIn("textColor", normalize_drawing_style({}, "fib")["options"])
+        self.assertIn("textColor", normalize_drawing_style({}, "channel")["options"])
+        self.assertNotIn("textColor", normalize_drawing_style({}, "long")["options"])
 
     def test_rect_extend_only_for_rect(self) -> None:
         # Prodloužení obdélníku se převede na bool a jiné kresby ho nemají

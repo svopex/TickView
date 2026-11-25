@@ -96,8 +96,13 @@ def normalize_position_options(options) -> dict:
 # Velikosti písma textové kresby v nabídce dialogu (jako v TradingView)
 TEXT_FONT_SIZES = [10, 11, 12, 13, 14, 16, 20, 24, 28, 32, 40]
 # Kresby s volitelným textovým popiskem (záložka Text v Settings jako
-# v TradingView): čáry kreslí popisek podél čáry, obdélník uvnitř
-LABEL_KINDS = ("hline", "hray", "vline", "trend", "ray", "extended", "arrow", "rect")
+# v TradingView): čáry, kanál a pitchfork kreslí popisek podél čáry,
+# obdélník uvnitř, Fibonacci a štětec nad / pod ohraničením. Text má popis
+# sám, pozice mají vlastní popisky s výpočtem a sticker je emoji
+LABEL_KINDS = (
+    "hline", "hray", "vline", "trend", "ray", "extended", "arrow", "cross",
+    "channel", "pitchfork", "fib", "fibext", "rect", "brush",
+)
 # Svislé zarovnání popisku (nad čárou / na čáře / pod čárou, u obdélníku
 # nahoře / uprostřed / dole uvnitř) a vodorovné (začátek / střed / konec)
 LABEL_V_ALIGNS = {"top": "Top", "middle": "Middle", "bottom": "Bottom"}
