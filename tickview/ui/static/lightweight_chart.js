@@ -58,6 +58,14 @@ window.TickViewChart = (function () {
   let toolIcons = {};
   // Druhy kreseb, na které lze nastavit alert (posílá Python z logic/alerts.py)
   let alertLineKinds = [];
+  // Druhy kreseb se stylem a šablonami a uložené šablony {druh: {název: styl}}
+  // (podmenu Template v pravém kliku, výběr šablony u aktivního nástroje)
+  let styledKinds = [];
+  let drawingTemplates = {};
+  // Šablona zvolená u nástroje pro nové objekty {druh: název} (bez položky =
+  // výchozí šablona typu) a lištička jejího výběru pod panelem oblíbených
+  const toolTemplate = {};
+  let templateBar = null;
 
   // Neviditelná barva (vypnuté tělo svíčky)
   const TRANSPARENT = 'rgba(0, 0, 0, 0)';
@@ -926,6 +934,8 @@ window.TickViewChart = (function () {
           type: s.overlay.mode + '_request',
           time: point.time,
           price: point.price,
+          // Šablona zvolená u nástroje Text vyplní dialog (jinak výchozí šablona)
+          style: toolTemplate[s.overlay.mode] ? defaultStyle(s, s.overlay.mode) : null,
         });
         returnToCursor(s);
         return;
@@ -1346,21 +1356,51 @@ window.TickViewChart = (function () {
     return { x: event.clientX - pane.hostLeft - pane.offsetX, y: event.clientY - pane.hostTop - pane.offsetY };
   }
 
-  // Kontextové menu na pozici kurzoru; položky [popisek, handler, ikona, třída]
-  function showContextMenu(clientX, clientY, items) {
-    closeContextMenu();
-    const menu = el('div', 'drawing-contextmenu');
-    for (const [label, handler, icon, extraClass] of items) {
+  // Naplní kontextové menu (i podmenu) položkami [popisek, handler, ikona,
+  // třída, podmenu]; null = oddělovač, položka s podmenu ho ukáže při najetí
+  function fillContextMenu(menu, items) {
+    for (const entry of items) {
+      if (!entry) {
+        menu.appendChild(el('div', 'drawing-contextmenu-separator'));
+        continue;
+      }
+      const [label, handler, icon, extraClass, submenu] = entry;
       const item = el('div', 'drawing-contextmenu-item' + (extraClass ? ' ' + extraClass : ''));
       item.appendChild(el('span', 'material-icons drawing-contextmenu-icon', icon || ''));
-      item.appendChild(el('span', '', label));
+      item.appendChild(el('span', 'drawing-contextmenu-label', label));
+      menu.appendChild(item);
+      if (submenu) {
+        item.classList.add('has-submenu');
+        item.appendChild(el('span', 'material-icons drawing-contextmenu-arrow', 'chevron_right'));
+        const sub = el('div', 'drawing-contextmenu drawing-contextmenu-sub');
+        fillContextMenu(sub, submenu);
+        item.appendChild(sub);
+        // Podmenu u pravého okraje okna se otevře doleva, u dolního okraje se posune nahoru
+        item.addEventListener('mouseenter', () => {
+          sub.classList.remove('flip');
+          sub.style.top = '';
+          const rect = sub.getBoundingClientRect();
+          if (rect.right > window.innerWidth - 4) sub.classList.add('flip');
+          const overflow = rect.bottom - (window.innerHeight - 4);
+          if (overflow > 0) sub.style.top = sub.offsetTop - overflow + 'px';
+        });
+        // Klik na samotnou položku s podmenu menu nezavírá
+        item.addEventListener('click', (event) => event.stopPropagation());
+        continue;
+      }
       item.addEventListener('click', (event) => {
         event.stopPropagation();
         closeContextMenu();
         handler();
       });
-      menu.appendChild(item);
     }
+  }
+
+  // Kontextové menu na pozici kurzoru (položky viz fillContextMenu)
+  function showContextMenu(clientX, clientY, items) {
+    closeContextMenu();
+    const menu = el('div', 'drawing-contextmenu');
+    fillContextMenu(menu, items);
     document.body.appendChild(menu);
     // Menu nesmí přetéct přes pravý/dolní okraj okna
     const rect = menu.getBoundingClientRect();
@@ -1390,7 +1430,27 @@ window.TickViewChart = (function () {
     s.finishedQueue.push({ type: 'replay_position_order', id: drawing.id, kind: drawing.kind, points: drawing.points });
   }
 
-  // Položky menu kresby: Settings, alert (u čar) a smazání
+  // Podmenu Template kresby (jako v TradingView): uložení stylu jako šablony,
+  // výchozí šablona typu a uložené šablony typu; vše vyřídí Python
+  function drawingTemplateItems(s, drawing) {
+    const send = (action, name) => () => s.finishedQueue.push({
+      type: 'drawing_template',
+      action: action,
+      name: name || null,
+      id: drawing.id,
+      kind: drawing.kind,
+      color: drawing.color,
+      text: drawing.text || null,
+      options: drawing.options || {},
+    });
+    const items = [['Save as…', send('save')], ['Apply default', send('default')]];
+    const names = Object.keys(drawingTemplates[drawing.kind] || {});
+    if (names.length) items.push(null);
+    for (const name of names) items.push([name, send('apply', name)]);
+    return items;
+  }
+
+  // Položky menu kresby: Settings, alert (u čar), Template a smazání
   function drawingMenuItems(s, drawing) {
     const items = [];
     // Long / Short position v replayi: zadání obchodu z úrovní kresby
@@ -1400,6 +1460,10 @@ window.TickViewChart = (function () {
     items.push(['Settings…', () => requestDrawingSettings(s, drawing), 'settings']);
     if (alertLineKinds.includes(drawing.kind) && drawing.id) {
       items.push([tvTr('Přidat alert…'), () => s.finishedQueue.push({ type: 'alert_request', drawingId: drawing.id, kind: drawing.kind }), 'alarm_add']);
+    }
+    // Šablony stylu jen u uložených kreseb se stylem (sticker je emoji)
+    if (drawing.id && styledKinds.includes(drawing.kind)) {
+      items.push(['Template', null, 'style', '', drawingTemplateItems(s, drawing)]);
     }
     items.push([tvTr('Smazat objekt'), () => { deleteSelected(s); redrawOverlay(s); }, 'delete', 'danger']);
     return items;
@@ -1724,6 +1788,7 @@ window.TickViewChart = (function () {
     let panel = fav.el;
     if (!tools.length || !fav.visible || !state.size) {
       if (panel) panel.classList.add('hidden');
+      positionTemplateBar();
       return;
     }
     if (!panel) {
@@ -1772,19 +1837,29 @@ window.TickViewChart = (function () {
     });
   }
 
+  // Obdélník plochy grafů v okně (výchozí umístění plovoucích panelů)
+  function chartAreaRect() {
+    const area = document.querySelector('.chart-grid') || (activeState() || {}).container;
+    return area ? area.getBoundingClientRect() : { left: 0, top: 0, width: window.innerWidth };
+  }
+
   // Umístí panel oblíbených: uložená pozice, jinak nahoře uprostřed plochy
   // grafů; vždy celý uvnitř okna (po zúžení okna se posune dovnitř)
   function positionFavorites() {
     const panel = fav.el;
-    if (!panel || panel.classList.contains('hidden')) return;
+    if (!panel || panel.classList.contains('hidden')) {
+      positionTemplateBar();
+      return;
+    }
     // Pozice v px vůči oknu; bez uložené pozice nahoře uprostřed plochy grafů
     const maxLeft = Math.max(0, window.innerWidth - panel.offsetWidth);
     const maxTop = Math.max(0, window.innerHeight - panel.offsetHeight);
-    const area = document.querySelector('.chart-grid') || (activeState() || {}).container;
-    const rect = area ? area.getBoundingClientRect() : { left: 0, top: 0, width: window.innerWidth };
+    const rect = chartAreaRect();
     const pos = fav.pos || { left: rect.left + (rect.width - panel.offsetWidth) / 2, top: rect.top + 6 };
     panel.style.left = Math.round(Math.min(maxLeft, Math.max(0, pos.left))) + 'px';
     panel.style.top = Math.round(Math.min(maxTop, Math.max(0, pos.top))) + 'px';
+    // Lištička šablon aktivního nástroje se drží pod panelem
+    positionTemplateBar();
   }
 
   // Tažení panelu oblíbených za úchop; konečná pozice se uloží v Pythonu
@@ -1822,6 +1897,92 @@ window.TickViewChart = (function () {
     const node = el('span', 'tv-icon-wrap' + (className ? ' ' + className : ''));
     node.innerHTML = toolIcons[name] || '';
     return node;
+  }
+
+  // Šablony kreseb {kinds, templates: {druh: {název: styl}}} (posílá Python
+  // po načtení a po každé změně šablon; společné všem grafům). Zvolená
+  // šablona nástroje, která mezitím zmizela, se vrátí na výchozí
+  function setDrawingTemplates(id, payload) {
+    const data = payload && typeof payload === 'object' ? payload : {};
+    styledKinds = Array.isArray(data.kinds) ? data.kinds : [];
+    drawingTemplates = data.templates && typeof data.templates === 'object' ? data.templates : {};
+    for (const kind of Object.keys(toolTemplate)) {
+      if (!(drawingTemplates[kind] || {})[toolTemplate[kind]]) delete toolTemplate[kind];
+    }
+    syncTemplateBar();
+  }
+
+  // Lištička výběru šablony nového objektu (jako v TradingView): ukáže se pod
+  // panelem oblíbených, když je aktivní kreslicí nástroj se stylem
+  function syncTemplateBar() {
+    const s = activeState();
+    const mode = s && s.overlay.mode;
+    if (!mode || !styledKinds.includes(mode)) {
+      if (templateBar) templateBar.classList.add('hidden');
+      return;
+    }
+    if (!templateBar) {
+      templateBar = el('div', 'fav-toolbar template-bar');
+      const button = el('button', 'fav-tool template-bar-button');
+      button.type = 'button';
+      button.appendChild(toolIcon('templates'));
+      // stopPropagation: globální klik by nově otevřenou nabídku hned zavřel
+      button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        openToolTemplateMenu(button);
+      });
+      templateBar.appendChild(button);
+      document.body.appendChild(templateBar);
+    }
+    // Zvolená (ne výchozí) šablona je na tlačítku zvýrazněná a v tooltipu
+    const chosen = toolTemplate[mode];
+    const button = templateBar.querySelector('.template-bar-button');
+    button.classList.toggle('active', !!chosen);
+    button.title = chosen ? 'Templates: ' + chosen : 'Templates';
+    templateBar.classList.remove('hidden');
+    positionTemplateBar();
+  }
+
+  // Nabídka šablon aktivního nástroje: výchozí šablona typu a uložené šablony
+  // (zvolená má fajfku); volba platí pro další nové objekty nástroje
+  function openToolTemplateMenu(button) {
+    const s = activeState();
+    const mode = s && s.overlay.mode;
+    if (!mode) return;
+    const choose = (name) => () => {
+      if (name) toolTemplate[mode] = name;
+      else delete toolTemplate[mode];
+      syncTemplateBar();
+      // Rozepsaná kresba se hned překreslí v novém stylu
+      redrawOverlay(s);
+    };
+    const items = [['Apply Default Drawing Template', choose(null)]];
+    const names = Object.keys(drawingTemplates[mode] || {});
+    if (names.length) items.push(null);
+    for (const name of names) items.push([name, choose(name), toolTemplate[mode] === name ? 'check' : '']);
+    const rect = button.getBoundingClientRect();
+    showContextMenu(rect.left, rect.bottom + 4, items);
+  }
+
+  // Umístí lištičku šablon pod panel oblíbených (bez něj nahoře uprostřed
+  // plochy grafů); vždy celou uvnitř okna
+  function positionTemplateBar() {
+    if (!templateBar || templateBar.classList.contains('hidden')) return;
+    let left;
+    let top;
+    if (fav.el && !fav.el.classList.contains('hidden')) {
+      const rect = fav.el.getBoundingClientRect();
+      left = rect.left;
+      top = rect.bottom + 4;
+    } else {
+      const rect = chartAreaRect();
+      left = rect.left + (rect.width - templateBar.offsetWidth) / 2;
+      top = rect.top + 6;
+    }
+    const maxLeft = Math.max(0, window.innerWidth - templateBar.offsetWidth);
+    const maxTop = Math.max(0, window.innerHeight - templateBar.offsetHeight);
+    templateBar.style.left = Math.round(Math.min(maxLeft, Math.max(0, left))) + 'px';
+    templateBar.style.top = Math.round(Math.min(maxTop, Math.max(0, top))) + 'px';
   }
 
   // SVG ikony nástrojů z Pythonu (posílají se jednou, i před init grafu)
@@ -2989,7 +3150,9 @@ window.TickViewChart = (function () {
     s.overlay.canvas.classList.toggle('drawing-active', !!mode && mode !== 'cursor');
     redrawOverlay(s);
     // Zvýraznění aktivního nástroje v panelu oblíbených (bez přestavby panelu)
+    // a lištička výběru šablony nového objektu
     paintFavoriteTools();
+    syncTemplateBar();
   }
 
   // Oblíbené nástroje z nastavení: seznam režimů, uložená pozice panelu
@@ -3079,9 +3242,11 @@ window.TickViewChart = (function () {
     redrawOverlay(s);
   }
 
-  // Výchozí styl nové kresby daného typu (výchozí šablona, jinak tovární)
+  // Styl nové kresby daného typu: šablona zvolená u nástroje, jinak výchozí
+  // šablona typu, jinak tovární
   function defaultStyle(s, kind) {
-    return s.drawingDefaults[kind] || { color: '#2962ff', options: {} };
+    const chosen = toolTemplate[kind] && (drawingTemplates[kind] || {})[toolTemplate[kind]];
+    return chosen || s.drawingDefaults[kind] || { color: '#2962ff', options: {} };
   }
 
   // Přidá novou kresbu do grafu a do fronty k uložení; id z databáze jí
@@ -3349,8 +3514,11 @@ window.TickViewChart = (function () {
         if (x >= box.x - 3 && x <= box.x + box.w + 3 && y >= box.y - 3 && y <= box.y + box.h + 3) return i;
       } else if (drawing.kind === 'rect') {
         const [a, b] = points;
-        const x1 = Math.min(a.x, b.x);
-        const x2 = Math.max(a.x, b.x);
+        const options = drawing.options || {};
+        // Prodloužená strana sahá až k okraji grafu (nekonečno stačí pro rozsah);
+        // svislá hrana tam není, takže ji nelze zasáhnout
+        const x1 = options.extendLeft ? -Infinity : Math.min(a.x, b.x);
+        const x2 = options.extendRight ? Infinity : Math.max(a.x, b.x);
         const y1 = Math.min(a.y, b.y);
         const y2 = Math.max(a.y, b.y);
         // Okraje obdélníku (ne vnitřek, aby se dalo kreslit přes něj)
@@ -3988,13 +4156,28 @@ window.TickViewChart = (function () {
       return;
     }
     if (drawing.kind === 'rect') {
-      const x = Math.min(p1.x, p2.x);
-      const y = Math.min(p1.y, p2.y);
-      const w = Math.abs(p2.x - p1.x);
-      const h = Math.abs(p2.y - p1.y);
+      // Prodloužený obdélník (Extend left / right) sahá až k okraji grafu
+      const left = options.extendLeft ? 0 : Math.min(p1.x, p2.x);
+      const right = options.extendRight ? paneWidth : Math.max(p1.x, p2.x);
+      const top = Math.min(p1.y, p2.y);
+      const bottom = Math.max(p1.y, p2.y);
       ctx.fillStyle = withAlpha(color, 0.12);
-      ctx.fillRect(x, y, w, h);
-      ctx.strokeRect(x, y, w, h);
+      ctx.fillRect(left, top, right - left, bottom - top);
+      // Obrys: vodorovné hrany vždy, svislou hranu jen na neprodloužené straně
+      ctx.beginPath();
+      ctx.moveTo(left, top);
+      ctx.lineTo(right, top);
+      ctx.moveTo(left, bottom);
+      ctx.lineTo(right, bottom);
+      if (!options.extendLeft) {
+        ctx.moveTo(left, top);
+        ctx.lineTo(left, bottom);
+      }
+      if (!options.extendRight) {
+        ctx.moveTo(right, top);
+        ctx.lineTo(right, bottom);
+      }
+      ctx.stroke();
       renderHandles(ctx, s, drawing);
       return;
     }
@@ -4689,6 +4872,7 @@ window.TickViewChart = (function () {
     endReplayDrag: endReplayDrag,
     showTime: showTime,
     setAlertKinds: setAlertKinds,
+    setDrawingTemplates: setDrawingTemplates,
     playSound: playSound,
     scrollIntoView: scrollIntoView,
   };

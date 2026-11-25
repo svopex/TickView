@@ -191,7 +191,9 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   stylu TradingView: skupiny nástrojů s flyout nabídkami — trendová čára,
   polopřímka, přímka, trendová šipka, horizontální/svislá linie, horizontální
   polopřímka, kříž, Fibonacci retracement i extension (s popisky), paralelní
-  kanál, pitchfork, obdélník, štětec, text, sticker (emoji), Long a Short
+  kanál, pitchfork, obdélník (v Settings volby „Extend left“ / „Extend
+  right“ – obdélník pak pokračuje až k okraji grafu, např. pro zóny
+  podpory a rezistence), štětec, text, sticker (emoji), Long a Short
   position (viz níže), měřič; výběr
   kresby klikem s úchopy a tažením (celá kresba i jednotlivé body; výběr
   zůstává i po uložení); úchopy jsou jako v TradingView kolečka (u pozice
@@ -624,7 +626,11 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   a kreseb navíc „Save as default“ – nově přidaný indikátor (parametry,
   barva) nebo nová kresba (barva, šířka a styl čáry, písmo) daného typu
   převezme výchozí šablonu (a „Apply defaults“ ji použije); „Reset default“
-  vrátí tovární hodnoty. Šablony se ukládají do SQLite.
+  vrátí tovární hodnoty. Šablony se ukládají do SQLite. Pravý klik na kresbu
+  nabízí podmenu „Template“ jako v TradingView: „Save as…“ uloží styl kresby
+  jako pojmenovanou šablonu jejího typu, „Apply default“ použije výchozí
+  šablonu typu (jinak tovární styl) a pod čarou jsou uložené šablony typu –
+  klik styl rovnou použije a uloží (text a body kresby zůstanou).
 - Oblíbené nástroje: ve flyout nabídce nástrojů je u každého nástroje
   hvězdička, u skupin s jediným nástrojem (kurzor, měřič) pravý klik na
   tlačítko lišty. Oblíbené nástroje se ukazují v plovoucím panelu (výchozí

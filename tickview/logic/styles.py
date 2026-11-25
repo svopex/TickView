@@ -301,7 +301,7 @@ def normalize_drawing_style(values, kind: str | None = None) -> dict:
             – může být neúplný.
         kind: druh kresby; pozice (POSITION_KINDS) mají v options navíc
             parametry výpočtu (velikost účtu, riziko, lot), text vzhled písma,
-            pozadí a rámečku.
+            pozadí a rámečku, obdélník prodloužení doleva / doprava.
 
     Vrací {"color", "options"} s platnou barvou, šířkou, stylem čáry, písmem
     a viditelností podle timeframu.
@@ -323,6 +323,10 @@ def normalize_drawing_style(values, kind: str | None = None) -> dict:
         style["options"].update(normalize_position_options(options))
     if kind == "text":
         style["options"].update(normalize_text_options(options))
+    # Obdélník: prodloužení doleva / doprava až k okraji grafu (Extend left / right)
+    if kind == "rect":
+        style["options"]["extendLeft"] = bool(options.get("extendLeft"))
+        style["options"]["extendRight"] = bool(options.get("extendRight"))
     return style
 
 

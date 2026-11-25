@@ -141,6 +141,14 @@ class LightweightChart(ui.element):
         """Výchozí styl nových kreseb podle typu: {druh: {"color", "options"}} (výchozí šablony)."""
         self._call("setDrawingDefaults", defaults)
 
+    def set_drawing_templates(self, templates: dict) -> None:
+        """Šablony kreseb: {"kinds": druhy se stylem, "templates": {druh: {název: styl}}}.
+
+        Graf je nabízí v podmenu Template pravého kliku kresby a v lištičce
+        výběru šablony nového objektu u aktivního nástroje.
+        """
+        self._call("setDrawingTemplates", templates)
+
     async def set_magnet(self, mode: str) -> None:
         """Nastaví režim magnetu: "off", "weak" (jen v blízkosti OHLC) nebo "strong" (vždy na OHLC)."""
         self._call("setMagnet", mode)

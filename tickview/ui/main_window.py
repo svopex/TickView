@@ -112,6 +112,7 @@ from tickview.logic.styles import (
     clean_name,
     default_template_key,
     load_chart_style,
+    load_templates,
     load_favorites,
     load_panel_position,
     normalize_chart_style,
@@ -123,6 +124,7 @@ from tickview.logic.styles import (
     normalize_position_points,
     normalize_indicator_style,
     normalize_text_options,
+    templates_key,
 )
 from tickview.logic.replay import DEFAULT_REWIND_MODE, REWIND_MODES
 from tickview.logic.sessions import (
@@ -148,7 +150,14 @@ from tickview.ui.param_form import ParamForm
 from tickview.ui.plot_style_fields import PlotStyleFields
 from tickview.ui.reminders_dialog import RemindersDialog
 from tickview.ui.replay_panel import ReplayUI
-from tickview.ui.templates import TemplateMenu, load_default_template, settings_buttons, settings_header
+from tickview.ui.templates import (
+    TemplateMenu,
+    load_default_template,
+    load_named_templates,
+    settings_buttons,
+    settings_header,
+    store_named_template,
+)
 from tickview.ui.visibility_fields import VisibilityFields
 
 # Hledání symbolu: kolik výsledků jednoho zdroje a kolik celkem se zobrazí
@@ -878,6 +887,8 @@ async def _build_index(
         "channel", "fib", "fibext", "pitchfork", "rect", "brush", "text", "sticker",
         "long", "short",
     ]
+    # Druhy kreseb s nastavitelným stylem a šablonami (sticker je emoji)
+    DRAWING_KINDS_STYLED = [kind for kind in DRAWING_KINDS if kind != "sticker"]
     # Skupiny nástrojů lišty (jako v TradingView): id, ikona, tooltip, nástroje;
     # položka {"section": …} je jen nadpis sekce ve flyout nabídce
     DRAWING_GROUPS = [
@@ -986,6 +997,66 @@ async def _build_index(
         for pane in panes:
             pane.chart.set_drawing_defaults(state["drawing_defaults"])
 
+    async def load_drawing_templates() -> dict:
+        # Uložené šablony kreseb pro graf: {"kinds": druhy se stylem, "templates":
+        # {druh: {název: styl}}} – podmenu Template v pravém kliku kresby
+        # a výběr šablony nového objektu u aktivního nástroje; všechny typy
+        # jedním dotazem do databáze
+        saved = await cache.get_settings_prefix(templates_key(drawing_scope("")))
+        templates = {}
+        for kind in DRAWING_KINDS_STYLED:
+            named = load_templates(saved.get(templates_key(drawing_scope(kind))))
+            if named:
+                templates[kind] = {name: normalize_drawing_style(values, kind) for name, values in named.items()}
+        return {"kinds": DRAWING_KINDS_STYLED, "templates": templates}
+
+    async def push_drawing_templates() -> None:
+        # Po změně šablon kreseb pošle nové názvy do grafů (drží se i ve state
+        # pro grafy přidané později)
+        state["drawing_templates"] = await load_drawing_templates()
+        for pane in panes:
+            pane.chart.set_drawing_templates(state["drawing_templates"])
+
+    async def save_drawing_template(payload: dict) -> None:
+        # Template → Save as… v pravém kliku kresby: styl kresby (bez textu
+        # a bodů) se po zadání názvu uloží jako šablona jejího typu
+        kind = payload["kind"]
+        style = normalize_drawing_style(payload, kind)
+
+        async def on_submit(name: str) -> None:
+            show_status(await store_named_template(cache, drawing_scope(kind), name, style))
+            await push_drawing_templates()
+
+        open_name_dialog(
+            tr("Uložit šablonu"), tr("Název šablony"), "", tr("Zadejte název šablony (1–{max_length} znaků)."), on_submit
+        )
+
+    async def apply_template_to_drawing(payload: dict, pane: ChartPane) -> None:
+        # Template → Apply default / uložená šablona v pravém kliku kresby:
+        # styl šablony (bez textu a bodů) se uloží ke kresbě a grafy se
+        # symbolem kresby si ji načtou znovu
+        kind = payload["kind"]
+        label = DRAWING_LABELS.get(kind, kind)
+        if payload.get("action") == "default":
+            # Výchozí styl typu (uživatelská výchozí šablona, jinak tovární) už drží state
+            values = state["drawing_defaults"][kind]
+            message = tr("{drawing}: použito výchozí nastavení.").format(drawing=label)
+        else:
+            name = str(payload.get("name") or "")
+            values = (await load_named_templates(cache, drawing_scope(kind))).get(name)
+            if values is None:
+                # Šablonu mezitím smazal jiný dialog – menu v grafu obnovíme
+                await push_drawing_templates()
+                ui.notify(tr("Šablona „{name}“ neexistuje.").format(name=name), type="warning")
+                return
+            message = tr("{drawing}: použita šablona „{name}“.").format(drawing=label, name=name)
+        style = normalize_drawing_style(values, kind)
+        await cache.update_drawing_style(
+            *pane.drawing_owner, int(payload["id"]), style["color"], payload.get("text"), style["options"]
+        )
+        await refresh_symbol_drawings(pane)
+        show_status(message)
+
     # ---------- oblíbené nástroje (plovoucí panel) ----------
 
     async def save_favorites(modes) -> None:
@@ -1086,6 +1157,9 @@ async def _build_index(
         if "drawing_defaults" not in state:
             state["drawing_defaults"] = await load_drawing_defaults()
         chart.set_drawing_defaults(state["drawing_defaults"])
+        if "drawing_templates" not in state:
+            state["drawing_templates"] = await load_drawing_templates()
+        chart.set_drawing_templates(state["drawing_templates"])
         await chart.set_drawing_mode(None if state["drawing_mode"] in (None, "cursor") else state["drawing_mode"])
         await chart.set_magnet(state["magnet"])
         await chart.set_keep_tool(state.get("keep_tool", False))
@@ -1135,6 +1209,8 @@ async def _build_index(
         text_border_color.value = text_options["borderColor"]
         text_wrap.value = text_options["wrap"]
         drawing_visibility.fill(options["visibility"])
+        rect_extend_left.value = bool(options.get("extendLeft"))
+        rect_extend_right.value = bool(options.get("extendRight"))
         if kind in POSITION_KINDS:
             position_account.value = options["accountSize"]
             position_risk.value = options["risk"]
@@ -1167,6 +1243,9 @@ async def _build_index(
                     "border": text_border.value,
                     "borderColor": text_border_color.value,
                     "wrap": text_wrap.value,
+                    # Prodloužení obdélníku (u ostatních kreseb ho normalizace zahodí)
+                    "extendLeft": rect_extend_left.value,
+                    "extendRight": rect_extend_right.value,
                     # Parametry pozice (u ostatních kreseb je normalizace zahodí)
                     "accountSize": position_account.value,
                     "risk": position_risk.value,
@@ -1199,23 +1278,26 @@ async def _build_index(
         drawing_tabs.value = style_tab
         text_fields.set_visibility(is_text)
         line_fields.set_visibility(kind not in NO_LINE_KINDS and not is_position)
+        rect_fields.set_visibility(kind == "rect")
         position_fields.set_visibility(is_position)
         sticker_note.set_visibility(kind == "sticker")
         drawing_templates.set_visible(kind != "sticker")
         await drawing_templates.refresh()
         drawing_settings_dialog.open()
 
-    async def open_text_dialog(pane: ChartPane, time_s: int, price: float) -> None:
+    async def open_text_dialog(pane: ChartPane, time_s: int, price: float, style: dict | None = None) -> None:
         # Nástroj Text: dialog jako v TradingView se objeví hned po kliknutí do
-        # grafu; Ok vytvoří kresbu s vyplněným vzhledem (výchozí šablona typu)
+        # grafu; Ok vytvoří kresbu s vyplněným vzhledem (šablona zvolená
+        # u nástroje v grafu – style, jinak výchozí šablona typu)
         state["drawing_settings"] = {
             "id": None,
             "kind": "text",
             "points": [{"time": int(time_s), "price": float(price)}],
             "pane": pane,
         }
-        default = await load_default_template(cache, drawing_scope("text")) or {}
-        apply_drawing_template(default)
+        if not isinstance(style, dict):
+            style = await load_default_template(cache, drawing_scope("text")) or {}
+        apply_drawing_template(style)
         drawing_text.value = ""
         await show_drawing_dialog("text", "Text")
         drawing_text.run_method("focus")
@@ -1437,6 +1519,7 @@ async def _build_index(
     USER_EVENTS = {
         "indicator", "text_request", "sticker_request", "drawing_settings", "chart_settings",
         "volume", "symbol_search", "alert_request", "alert_action", "replay_pick", "replay_position_order",
+        "drawing_template",
     }
 
     async def process_chart_events() -> None:
@@ -1517,9 +1600,15 @@ async def _build_index(
                 alert_engine.drawing_changed(int(drawing_id))
                 await refresh_symbol_drawings(pane, skip=pane)
         elif event_type == "text_request":
-            await open_text_dialog(pane, payload.get("time"), payload.get("price"))
+            await open_text_dialog(pane, payload.get("time"), payload.get("price"), payload.get("style"))
         elif event_type == "drawing_settings" and payload.get("id"):
             await open_drawing_settings(payload, pane)
+        elif event_type == "drawing_template" and payload.get("id") and payload.get("kind") in DRAWING_KINDS_STYLED:
+            # Podmenu Template v pravém kliku kresby
+            if payload.get("action") == "save":
+                await save_drawing_template(payload)
+            elif payload.get("action") in ("default", "apply"):
+                await apply_template_to_drawing(payload, pane)
         elif event_type == "chart_settings":
             await open_chart_settings()
         elif event_type == "volume":
@@ -1666,7 +1755,7 @@ async def _build_index(
         return _handler
 
     def open_name_dialog(title: str, label: str, initial: str, warning: str, on_submit) -> None:
-        """Dialog názvu (seznamu i sekce).
+        """Dialog názvu (seznamu, sekce i šablony kresby).
 
         Parametry:
             title: nadpis dialogu.
@@ -3784,6 +3873,10 @@ async def _build_index(
                     drawing_style = ui.select(tr_options(DRAWING_LINE_STYLES), value="solid", label=tr("Styl čáry")).props(
                         "outlined dense"
                     ).classes("w-full")
+                    # Obdélník: prodloužení až k levému / pravému okraji grafu (jako v TradingView)
+                    with ui.row().classes("tv-settings-row") as rect_fields:
+                        rect_extend_left = ui.checkbox("Extend left").classes("tv-settings-check")
+                        rect_extend_right = ui.checkbox("Extend right").classes("tv-settings-check")
                 sticker_note = ui.label(
                     tr("Sticker nemá nastavitelný styl – na záložce Visibility zvolte, na kterých timeframech je vidět.")
                 ).classes("settings-note")
@@ -3813,6 +3906,7 @@ async def _build_index(
                 apply_drawing_factory,
                 allow_default=True,
                 on_default_change=push_drawing_defaults,
+                on_templates_change=push_drawing_templates,
             )
             settings_buttons(drawing_settings_dialog, submit_drawing_settings)
 

@@ -64,6 +64,33 @@ async def load_default_template(cache: KlineCache, scope: str) -> dict | None:
     return values if isinstance(values, dict) else None
 
 
+async def load_named_templates(cache: KlineCache, scope: str) -> dict[str, dict]:
+    """Vrátí pojmenované šablony rozsahu seřazené podle názvu.
+
+    Parametry:
+        cache: úložiště nastavení.
+        scope: rozsah šablon, např. "drawing.rect".
+    """
+    return load_templates(await cache.get_setting(templates_key(scope)))
+
+
+async def store_named_template(cache: KlineCache, scope: str, name: str, values: dict) -> str:
+    """Uloží šablonu rozsahu pod názvem (stejný název přepíše) a vrátí hlášku pro uživatele.
+
+    Parametry:
+        cache: úložiště nastavení.
+        scope: rozsah šablon, např. "drawing.rect".
+        name: očištěný název šablony (clean_name).
+        values: hodnoty šablony.
+    """
+    templates = await load_named_templates(cache, scope)
+    overwritten = any(existing.lower() == name.lower() for existing in templates)
+    await cache.set_setting(templates_key(scope), json.dumps(save_template(templates, name, values)))
+    # Celé věty zvlášť – v překladu se tvar slovesa neskládá z kousků
+    message = tr("Šablona „{name}“ přepsána.") if overwritten else tr("Šablona „{name}“ uložena.")
+    return message.format(name=name)
+
+
 class TemplateMenu:
     """Tlačítko „Template“ s nabídkou jako v TradingView.
 
@@ -83,6 +110,8 @@ class TemplateMenu:
             uloženou výchozí šablonu – indikátory, kresby).
         on_default_change: async callback po uložení / zrušení výchozí šablony
             (např. předání výchozího stylu nových kreseb do grafu).
+        on_templates_change: async callback po uložení / smazání pojmenované
+            šablony (např. předání názvů šablon kreseb do kontextového menu grafu).
     """
 
     def __init__(
@@ -94,6 +123,7 @@ class TemplateMenu:
         apply_factory: Callable[[], None],
         allow_default: bool = False,
         on_default_change: Callable[[], Awaitable[None]] | None = None,
+        on_templates_change: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self._cache = cache
         self._get_scope = get_scope
@@ -102,6 +132,7 @@ class TemplateMenu:
         self._apply_factory = apply_factory
         self._allow_default = allow_default
         self._on_default_change = on_default_change
+        self._on_templates_change = on_templates_change
         # Tlačítko s nabídkou (Quasar QMenu se otevírá klikem na rodiče)
         with ui.button("Template", color=None).props("outline no-caps icon-right=expand_less").classes("tpl-button") as self.button:
             self.menu = ui.menu().props("anchor='top left' self='bottom left'").classes("tpl-menu")
@@ -124,7 +155,7 @@ class TemplateMenu:
 
     async def _templates(self) -> dict[str, dict]:
         # Uložené šablony aktuálního rozsahu (seřazené podle názvu)
-        return load_templates(await self._cache.get_setting(templates_key(self._get_scope())))
+        return await load_named_templates(self._cache, self._get_scope())
 
     async def _store(self, templates: dict[str, dict]) -> None:
         # Uloží šablony aktuálního rozsahu do nastavení
@@ -166,6 +197,8 @@ class TemplateMenu:
         async def _handler() -> None:
             templates = delete_template(await self._templates(), name)
             await self._store(templates)
+            if self._on_templates_change:
+                await self._on_templates_change()
             await self.refresh()
             ui.notify(tr("Šablona „{name}“ smazána.").format(name=name))
 
@@ -192,15 +225,12 @@ class TemplateMenu:
         values = self._collect()
         if values is None:
             return
-        templates = await self._templates()
-        overwritten = any(existing.lower() == name.lower() for existing in templates)
-        templates = save_template(templates, name, values)
-        await self._store(templates)
+        message = await store_named_template(self._cache, self._get_scope(), name, values)
         self.name_dialog.close()
+        if self._on_templates_change:
+            await self._on_templates_change()
         await self.refresh()
-        # Celé věty zvlášť – v překladu se tvar slovesa neskládá z kousků
-        message = tr("Šablona „{name}“ přepsána.") if overwritten else tr("Šablona „{name}“ uložena.")
-        ui.notify(message.format(name=name))
+        ui.notify(message)
 
     async def _save_default(self) -> None:
         # Výchozí šablona: převezmou ji nově přidané instance (indikátory, kresby)

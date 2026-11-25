@@ -88,6 +88,9 @@ EN = {
     "Text nesmí být prázdný.": "Text must not be empty.",
     "Text přidán a uložen.": "Text added and saved.",
     "{drawing}: nastavení uloženo.": "{drawing}: settings saved.",
+    "{drawing}: použito výchozí nastavení.": "{drawing}: default settings applied.",
+    "{drawing}: použita šablona „{name}“.": "{drawing}: template “{name}” applied.",
+    "Šablona „{name}“ neexistuje.": "Template “{name}” does not exist.",
     "Kresba smazána.": "Drawing deleted.",
     "Kresba uložena ({drawing}) k {symbol}": "Drawing saved ({drawing}) to {symbol}",
     "Magnet – přichytávání bodů kreseb k O/H/L/C (klik = výběr režimu)": (

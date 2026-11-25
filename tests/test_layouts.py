@@ -163,6 +163,13 @@ class TextStyleTest(unittest.TestCase):
         self.assertEqual(text["options"]["fontSize"], 20)
         self.assertNotIn("bold", normalize_drawing_style({"options": {"bold": True}}, "trend")["options"])
 
+    def test_rect_extend_only_for_rect(self) -> None:
+        # Prodloužení obdélníku se převede na bool a jiné kresby ho nemají
+        rect = normalize_drawing_style({"options": {"extendRight": 1}}, "rect")
+        self.assertTrue(rect["options"]["extendRight"])
+        self.assertFalse(rect["options"]["extendLeft"])
+        self.assertNotIn("extendRight", normalize_drawing_style({"options": {"extendRight": True}}, "trend")["options"])
+
 
 class IndicatorTemplatesTest(unittest.TestCase):
     """Šablony indikátorů: uložení, přepsání, oblíbené, naposledy použité."""
