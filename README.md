@@ -661,7 +661,7 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   vlastní popisky s výpočtem.
 - Typy kurzoru jako v TradingView (flyout první skupiny lišty): Nitkový
   kříž (výchozí, čáry crosshairu), Tečka, Šipka, Prezentace (průsvitný kruh
-  kolem kurzoru a vlna po kliku), Magie (doznívající stopa za kurzorem)
+  kolem kurzoru a vlna po kliku), Magie (po kliku z místa kliku vyletí emoji – ovoce, houby, peníze –, padají a mizí)
   a Guma (klik na kresbu ji smaže); u typů mimo kříž jsou čáry crosshairu
   skryté a popisky na osách zůstávají. Všechny typy vybírají a táhnou
   kresby, po dokončení kresby se vrací naposledy zvolený typ (ukládá se)

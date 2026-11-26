@@ -58,9 +58,15 @@ window.TickViewChart = (function () {
   const DEMO_RADIUS = 18;
   const DEMO_RIPPLE_MS = 600;
   const DEMO_RIPPLE_RADIUS = 34;
-  // Magie: jak dlouho stopa za kurzorem doznívá (ms) a její barva
-  const MAGIC_TRAIL_MS = 700;
-  const MAGIC_COLOR = '#e040fb';
+  // Magie (jako v TradingView): po kliku z místa kliku vyletí dávka emoji,
+  // padají a mizí; životnost částice (ms), gravitace (px/s²), částic na
+  // jeden klik a strop počtu částic
+  const MAGIC_EMOJIS = ['🍉', '🍌', '🍄', '🍑', '🍇', '🥝', '🍓', '🍒', '🍎', '💵', '💩'];
+  const MAGIC_PARTICLE_MS = 1300;
+  const MAGIC_GRAVITY = 320;
+  const MAGIC_PER_CLICK = 16;
+  const MAGIC_MAX_PARTICLES = 240;
+  const MAGIC_FONT = '18px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif';
 
   // Stav jednotlivých instancí grafu (id kontejneru -> stav)
   const state = new Map();
@@ -847,9 +853,10 @@ window.TickViewChart = (function () {
         hovered: null,
       },
       // Zvolený typ kurzoru (režim z CURSOR_TYPES) a efekty prezentace / magie:
-      // pozice kurzoru, vlny po kliku a stopa [{x, y, t}]
+      // pozice kurzoru (kruh prezentace), vlny po kliku a částice emoji
+      // (obojí seřazené podle času vzniku)
       cursorMode: 'cursor',
-      cursorFx: { canvas: fxCanvas, ctx: fxCanvas.getContext('2d'), pointer: null, ripples: [], trail: [], frame: 0 },
+      cursorFx: { canvas: fxCanvas, ctx: fxCanvas.getContext('2d'), pointer: null, ripples: [], particles: [], frame: 0 },
       // Indikátor pod kurzorem (čára v grafu, panel, řádek legendy) a označený
       // indikátor (id skupiny) – kolečka na čarách a zvýrazněný řádek legendy
       indicatorHover: null,
@@ -1046,7 +1053,8 @@ window.TickViewChart = (function () {
           return;
         }
         const type = cursorType(s);
-        if (type === 'demo') addCursorFx(s, 'ripples', x, y);
+        if (type === 'demo') addDemoRipple(s, x, y);
+        else if (type === 'magic') spawnMagicParticles(s, x, y);
         if (s.locked) return;
         // Guma: klik na kresbu ji smaže (bez tažení)
         if (type === 'eraser') {
@@ -1081,13 +1089,12 @@ window.TickViewChart = (function () {
     // (pozice i štítky Target / Stop), čára indikátoru kolečka a zvýrazněný řádek legendy
     mainHost.addEventListener('mousemove', (event) => {
       if (s.overlay.mode) return;
-      // Prezentace a magie sledují kurzor i při tažení (každý pohyb, bez throttlingu)
+      // Kruh prezentace sleduje kurzor i při tažení (každý pohyb, bez throttlingu)
       const type = cursorType(s);
-      if (hasCursorFx(type)) {
+      if (type === 'demo') {
         const { x, y } = localPoint(s, event);
         s.cursorFx.pointer = { x: x, y: y };
-        if (type === 'magic') addCursorFx(s, 'trail', x, y);
-        else animateCursorFx(s);
+        animateCursorFx(s);
       }
       if (s.overlay.drag) return;
       throttleHover(s, () => {
@@ -1823,11 +1830,6 @@ window.TickViewChart = (function () {
     return { vertLine: { color: color }, horzLine: { color: color } };
   }
 
-  // Má typ kurzoru animované efekty (prezentace, magie)?
-  function hasCursorFx(type) {
-    return type === 'demo' || type === 'magic';
-  }
-
   // Projeví typ kurzoru: atribut data-cursor-type kontejneru (CSS kurzor nad
   // grafem i panely), čáry crosshairu a vyčištění efektů prezentace / magie
   function applyCursorType(s) {
@@ -1836,19 +1838,65 @@ window.TickViewChart = (function () {
     s.chart.applyOptions({ crosshair: crosshair });
     for (const pane of s.panesMap.values()) pane.chart.applyOptions({ crosshair: crosshair });
     s.cursorFx.ripples = [];
-    s.cursorFx.trail = [];
+    s.cursorFx.particles = [];
     s.cursorFx.pointer = null;
     animateCursorFx(s);
   }
 
-  // Přidá vlnu po kliku (prezentace) nebo bod stopy (magie) a spustí animaci
-  function addCursorFx(s, list, x, y) {
-    s.cursorFx[list].push({ x: x, y: y, t: performance.now() });
+  // Přidá vlnu po kliku (prezentace) a spustí animaci
+  function addDemoRipple(s, x, y) {
+    s.cursorFx.ripples.push({ x: x, y: y, t: performance.now() });
+    animateCursorFx(s);
+  }
+
+  // Předvykreslená emoji magie (emoji → canvas): barevné emoji je drahé
+  // kreslit textem v každém snímku, sprite se jen otáčí a škáluje přes drawImage
+  const magicSprites = new Map();
+  // Velikost spritu v CSS px (písmo 18 px + rezerva) a jeho rozlišení
+  const MAGIC_SPRITE_PX = 24;
+
+  // Sprite emoji (vytvoří se při prvním použití v rozlišení obrazovky)
+  function magicSprite(emoji) {
+    let sprite = magicSprites.get(emoji);
+    if (sprite) return sprite;
+    const dpr = window.devicePixelRatio || 1;
+    sprite = document.createElement('canvas');
+    sprite.width = sprite.height = Math.ceil(MAGIC_SPRITE_PX * dpr);
+    const ctx = sprite.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.font = MAGIC_FONT;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(emoji, MAGIC_SPRITE_PX / 2, MAGIC_SPRITE_PX / 2);
+    magicSprites.set(emoji, sprite);
+    return sprite;
+  }
+
+  // Magie: po kliku vypustí z místa kliku dávku emoji s náhodným směrem
+  // (spíš vzhůru), rychlostí a rotací; nejstarší částice nad stropem
+  // MAGIC_MAX_PARTICLES zahodí
+  function spawnMagicParticles(s, x, y) {
+    const fx = s.cursorFx;
+    const now = performance.now();
+    for (let k = 0; k < MAGIC_PER_CLICK; k++) {
+      fx.particles.push({
+        x: x,
+        y: y,
+        t: now,
+        vx: (Math.random() - 0.5) * 320,
+        vy: -80 - Math.random() * 260,
+        rotation: (Math.random() - 0.5) * 1.2,
+        spin: (Math.random() - 0.5) * 6,
+        scale: 0.75 + Math.random() * 0.5,
+        emoji: MAGIC_EMOJIS[Math.floor(Math.random() * MAGIC_EMOJIS.length)],
+      });
+    }
+    if (fx.particles.length > MAGIC_MAX_PARTICLES) fx.particles.splice(0, fx.particles.length - MAGIC_MAX_PARTICLES);
     animateCursorFx(s);
   }
 
   // Animace efektů kurzoru: překresluje jejich vrstvu po snímcích, dokud
-  // efekty doznívají (vlny, stopa); kruh prezentace se překreslí s pohybem myši
+  // efekty doznívají (vlny, částice); kruh prezentace se překreslí s pohybem myši
   function animateCursorFx(s) {
     const fx = s.cursorFx;
     if (fx.frame) return;
@@ -1858,21 +1906,20 @@ window.TickViewChart = (function () {
       const now = performance.now();
       // Body jsou seřazené podle času – doznělé jsou na začátku pole
       while (fx.ripples.length && now - fx.ripples[0].t >= DEMO_RIPPLE_MS) fx.ripples.shift();
-      while (fx.trail.length && now - fx.trail[0].t >= MAGIC_TRAIL_MS) fx.trail.shift();
+      while (fx.particles.length && now - fx.particles[0].t >= MAGIC_PARTICLE_MS) fx.particles.shift();
       renderCursorFx(s, now);
-      if (fx.ripples.length || fx.trail.length) animateCursorFx(s);
+      if (fx.ripples.length || fx.particles.length) animateCursorFx(s);
     });
   }
 
   // Vykreslí efekty kurzoru do jejich vrstvy (jen plocha grafu, souřadnice
   // jako kresby): u prezentace průsvitný kruh kolem kurzoru a rozpínající se
-  // vlny po kliku, u magie doznívající stopu (barva jednou, průhlednost přes
-  // globalAlpha – bez parsování barev a rozmazání stínu na každou úsečku)
+  // vlny po kliku, u magie letící emoji (průhlednost přes globalAlpha)
   function renderCursorFx(s, now) {
     const fx = s.cursorFx;
     if (!fx.canvas.clientWidth || !fx.canvas.clientHeight) return;
     const { ctx } = prepareCanvas(fx.canvas, fx.ctx);
-    if (!fx.pointer && !fx.ripples.length && !fx.trail.length) return;
+    if (!fx.pointer && !fx.ripples.length && !fx.particles.length) return;
     const pane = getPaneGeometry(s);
     ctx.save();
     ctx.beginPath();
@@ -1880,7 +1927,7 @@ window.TickViewChart = (function () {
     ctx.clip();
     ctx.translate(pane.offsetX, pane.offsetY);
     ctx.strokeStyle = HANDLE_COLOR;
-    if (cursorType(s) === 'demo' && fx.pointer) {
+    if (fx.pointer) {
       ctx.fillStyle = HANDLE_COLOR;
       ctx.lineWidth = 1;
       ctx.beginPath();
@@ -1898,23 +1945,22 @@ window.TickViewChart = (function () {
       ctx.arc(ripple.x, ripple.y, DEMO_RADIUS / 2 + (DEMO_RIPPLE_RADIUS - DEMO_RADIUS / 2) * progress, 0, Math.PI * 2);
       ctx.stroke();
     }
-    // Stopa magie: úsečky mezi body, starší průhlednější a tenčí, pod nimi
-    // širší průsvitná čára jako záře
-    ctx.lineCap = 'round';
-    ctx.strokeStyle = MAGIC_COLOR;
-    for (let k = 1; k < fx.trail.length; k++) {
-      const a = fx.trail[k - 1];
-      const b = fx.trail[k];
-      const life = Math.max(0, 1 - (now - b.t) / MAGIC_TRAIL_MS);
-      ctx.beginPath();
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
-      ctx.globalAlpha = 0.25 * life;
-      ctx.lineWidth = 3 + 6 * life;
-      ctx.stroke();
-      ctx.globalAlpha = life;
-      ctx.lineWidth = 1 + 3 * life;
-      ctx.stroke();
+    // Částice magie: poloha z rychlosti a gravitace (šikmý vrh od vzniku),
+    // otáčení, krátké „vyskočení“ na začátku a zmizení v poslední třetině
+    // života; transformace se pro každou částici skládá od základní matice
+    const base = ctx.getTransform();
+    const half = MAGIC_SPRITE_PX / 2;
+    for (const particle of fx.particles) {
+      const age = now - particle.t;
+      const dt = age / 1000;
+      const life = age / MAGIC_PARTICLE_MS;
+      const scale = particle.scale * Math.min(1, age / 120);
+      ctx.globalAlpha = life < 0.66 ? 1 : Math.max(0, (1 - life) / 0.34);
+      ctx.setTransform(base);
+      ctx.translate(particle.x + particle.vx * dt, particle.y + particle.vy * dt + 0.5 * MAGIC_GRAVITY * dt * dt);
+      ctx.rotate(particle.rotation + particle.spin * dt);
+      ctx.scale(scale, scale);
+      ctx.drawImage(magicSprite(particle.emoji), -half, -half, MAGIC_SPRITE_PX, MAGIC_SPRITE_PX);
     }
     ctx.restore();
   }
