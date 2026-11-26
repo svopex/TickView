@@ -23,8 +23,8 @@ _HEX_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
 MAX_NAME_LENGTH = 40
 
 # Výchozí styl svíček (dialog Settings grafu, „Apply defaults“): barvy těla,
-# okrajů a knotů pro růst / pokles a obarvení podle předchozího závěru.
-# Objem do stylu nepatří – drží ho samostatné nastavení show_volume
+# okrajů a knotů pro růst / pokles a obarvení podle předchozího závěru
+# (objem je indikátor Volume)
 CHART_DEFAULTS: dict = {
     "color_by_prev_close": False,
     "body": True,

@@ -10,7 +10,6 @@ EN = {
     "Bez živých dat": "No live data",
     "Replay (minulost)": "Replay (past)",
     # Tlačítka legendy a kontextová menu
-    "Skrýt objem": "Hide volume",
     "Skrýt": "Hide",
     "Zobrazit": "Show",
     "Odebrat": "Remove",

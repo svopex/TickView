@@ -42,7 +42,7 @@ class ChartPane:
 
     Parametry:
         page: objekt stránky – atributy cache (KlineCache), state (společné
-            nastavení: session, timezone, show_volume, chart_style, dark) a metody
+            nastavení: session, timezone, chart_style, dark) a metody
             show_status(pane, zpráva, error), badge_changed(pane), replay
             (ReplayController otevřené session replaye) a pane_slot(pane)
             (pořadí grafu v rozložení – klíč indikátorů grafu v session).
@@ -92,7 +92,6 @@ class ChartPane:
         self.chart = LightweightChart(
             dark=settings["dark"],
             on_ready=self._ready,
-            show_volume=settings["show_volume"],
             chart_style=settings["chart_style"],
             chart_type=self.chart_type,
         )

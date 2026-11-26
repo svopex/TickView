@@ -20,7 +20,14 @@ from tickview.logic.indicator_templates import (
     update_indicator_template,
 )
 from tickview.indicators.compute import new_indicator
-from tickview.logic.layouts import LAYOUT_SECTIONS, LAYOUTS, load_layout, normalize_layout, resize_panes
+from tickview.logic.layouts import (
+    LAYOUT_SECTIONS,
+    LAYOUTS,
+    add_volume_indicator,
+    load_layout,
+    normalize_layout,
+    resize_panes,
+)
 from tickview.logic.styles import (
     TIMEFRAMES,
     drawing_visible,
@@ -56,6 +63,15 @@ class LayoutTest(unittest.TestCase):
         self.assertEqual(layout["panes"][0]["chart_type"], "line")
         self.assertEqual(layout["panes"][0]["indicators"][0]["kind"], "rsi")
         self.assertEqual(layout["sync"], {"symbol": False, "interval": False, "crosshair": False, "time": False, "date_range": False})
+
+    def test_add_volume_indicator(self) -> None:
+        # Migrace objemu: Volume na začátek indikátorů grafů, které ho nemají;
+        # druhé volání už rozložení nemění
+        layout = load_layout(None, {"symbol": "yahoo:AAPL", "indicators": [new_indicator("rsi")]})
+        self.assertTrue(add_volume_indicator(layout))
+        self.assertEqual([spec["kind"] for spec in layout["panes"][0]["indicators"]], ["volume", "rsi"])
+        self.assertFalse(add_volume_indicator(layout))
+        self.assertEqual(len(layout["panes"][0]["indicators"]), 2)
 
     def test_normalize_layout_fills_and_trims(self) -> None:
         raw = {

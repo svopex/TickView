@@ -393,16 +393,22 @@ def _series_payload(line: Line, plot: dict, instance_color: str, times, labels_o
     bars = series_kind == "histogram"
     color = plot["color"] or (None if bars else instance_color)
     points = _points(times, _plot_values(line.values, plot_type))
-    options: dict = {"priceLineVisible": plot["priceLine"], "lastValueVisible": labels_on_scale}
+    # Volby z deklarace výstupu (vlastní cenová osa, formát objemu, …); vzhled
+    # ze záložky Style se nastaví nad nimi
+    options: dict = {"priceLineVisible": plot["priceLine"], "lastValueVisible": labels_on_scale, **line.options}
     line_style = LINE_STYLE_VALUES[plot["lineStyle"]]
     if bars:
         if color:
             options["color"] = color
         else:
-            # Histogram obarvený podle znaménka (prázdné body zůstanou bez barvy)
+            # Barvy sloupců z deklarace (objem podle směru svíčky), jinak podle
+            # znaménka; body jsou zarovnané se svíčkami, prázdné zůstanou bez barvy
+            colors = line.colors
+            if colors is None:
+                colors = [UP_COLOR if point.get("value", 0) >= 0 else DOWN_COLOR for point in points]
             points = [
-                {**point, "color": UP_COLOR if point["value"] >= 0 else DOWN_COLOR} if "value" in point else point
-                for point in points
+                {**point, "color": bar_color} if "value" in point else point
+                for point, bar_color in zip(points, colors)
             ]
     elif series_kind == "area":
         # Plocha: čára s výplní k dolnímu okraji (výplň z barvy čáry dopočítá JS graf)
@@ -411,7 +417,6 @@ def _series_payload(line: Line, plot: dict, instance_color: str, times, labels_o
         # Čáry a body: volby z deklarace výstupu, nad nimi vzhled ze záložky Style –
         # schodovitá čára (lineType 1), body bez čáry, kosočtverce schodovité čáry
         # jako body na čáře (Lightweight Charts kreslí body kulaté)
-        options.update(line.options or {})
         options.update(
             color=color,
             lineWidth=plot["width"],

@@ -9,7 +9,7 @@ grafu, indikátory). Modul obsahuje jen čisté funkce – ukládání řeší U
 import json
 
 from tickview.i18n import N_
-from tickview.indicators.compute import normalize_indicators
+from tickview.indicators.compute import new_indicator, normalize_indicators
 from tickview.logic.styles import TIMEFRAMES, normalize_chart_type
 
 # Rozložení po řádcích nabídky podle počtu grafů: (počet, [(id, popis)]);
@@ -137,6 +137,20 @@ def load_layout(raw: str | None, legacy: dict | None = None) -> dict:
     except ValueError:
         data = None
     return normalize_layout(data, legacy)
+
+
+def add_volume_indicator(layout: dict) -> bool:
+    """Přidá indikátor Volume na začátek indikátorů grafů rozložení, které ho nemají.
+
+    Jednorázová migrace: objem býval nastavením grafu (show_volume), teď je
+    to indikátor. Vrací True, když se rozložení změnilo (je potřeba ho uložit).
+    """
+    changed = False
+    for pane in layout["panes"]:
+        if not any(spec["kind"] == "volume" for spec in pane["indicators"]):
+            pane["indicators"].insert(0, new_indicator("volume"))
+            changed = True
+    return changed
 
 
 def resize_panes(panes: list[dict], layout_id: str, active: int) -> list[dict]:

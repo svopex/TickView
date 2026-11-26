@@ -323,7 +323,7 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   celý viditelný časový rozsah). Nový graf v rozložení převezme symbol,
   timeframe a typ aktivního grafu. Rozložení, synchronizace, aktivní graf
   a stav všech grafů se ukládají (nastavení `layout`) a přetrvají restart;
-  styl svíček, objem, časové pásmo a seance jsou společné všem grafům.
+  styl svíček, časové pásmo a seance jsou společné všem grafům.
 - Alerty jako v TradingView: tlačítko Alert v horní liště (poslední cena),
   pravý klik do grafu „Přidat alert na <cena>“ nebo pravý klik na čáru
   (horizontální linie / polopřímka, trendová čára, polopřímka, přímka)
@@ -374,8 +374,8 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
 - Nadpis grafu ve stylu TradingView: „Název · timeframe · burza“ (název firmy
   / páru a burzu dodá zdroj), barevná tečka stavu dat (zelená živě, oranžová
   zpožděno), O/H/L/C obarvené podle směru svíčky, změna proti předchozímu
-  závěru (absolutně i v %), řádek Vol (skrytý u instrumentů bez objemu –
-  forex, indexy) a pod ním řádky indikátorů s hodnotami pod kurzorem. Přesnost
+  závěru (absolutně i v %) a pod ním řádky indikátorů s hodnotami pod
+  kurzorem (objem jako řádek „Vol“ indikátoru Volume). Přesnost
   cen (osa i legenda) se určuje z dat (forex 5 míst, akcie 2); ceny z Yahoo
   Finance přicházejí ve float32 a čistí se od šumu převodu (VIX 23.11, ne
   23.11000061), i ve svíčkách uložených v cache.
@@ -384,7 +384,10 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   volatilita, objem, vlastní, aktivní, oblíbené) a seznam s popisem; klik indikátor přidá
   s výchozími parametry. Hvězdička vpravo u položky (při najetí myší, oblíbený
   má plnou žlutou) přidá indikátor do kategorie Oblíbené / odebere ho; oblíbené
-  se ukládají. K dispozici SMA, EMA, WMA, HMA, VWMA, VWAP, Bollinger
+  se ukládají. K dispozici Volume (objem jako v TradingView: poloprůhledné
+  sloupce podle směru svíčky v dolní pětině hlavního grafu, v legendě
+  „Vol“ zkráceně K/M/B; u instrumentu bez objemu – forex IBKR MIDPOINT,
+  indexy – zůstane prázdný), SMA, EMA, WMA, HMA, VWMA, VWAP, Bollinger
   Bands, Keltner, Donchian, Ichimoku, Parabolic SAR, Supertrend, ADX, RSI,
   MACD, Stochastic, Stoch RSI, CCI, Williams %R, Momentum, ROC, Awesome
   Oscillator, TRIX, TSI, ATR, OBV, MFI, CMF, indikátory COT reportu (viz níže) a vlastní indikátory. Řádek indikátoru v legendě (i
@@ -615,9 +618,9 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   řádku legendy menu „Settings…“ (parametry), „Skrýt“, „Odebrat indikátor“,
   dvojklik rovnou Settings; jinde v grafu „Settings…“ grafu: barvy těla,
   okrajů a knotů svíček pro růst / pokles (každý prvek lze vypnout),
-  obarvení svíček podle předchozího závěru a zobrazení objemu (Volume; objem
-  lze skrýt i okem v řádku Vol; u instrumentu bez objemu – forex IBKR
-  MIDPOINT, indexy – se objem nezobrazí a dialog to vysvětlí). Když se
+  obarvení svíček podle předchozího závěru (objem není nastavením grafu, ale
+  indikátorem Volume; dříve zapnutý objem se jednou převedl na indikátor
+  v grafech rozložení). Když se
   data symbolu nepodaří načíst, graf se vyprázdní (nezůstanou v něm svíčky
   předchozího symbolu pod novým nadpisem). Změny v Settings grafu se hned ukazují
   v grafu, uloží se tlačítkem Ok, Cancel / zavření je vrátí.
@@ -661,7 +664,8 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   vlastní popisky s výpočtem.
 - Typy kurzoru jako v TradingView (flyout první skupiny lišty): Nitkový
   kříž (výchozí, čáry crosshairu), Tečka, Šipka, Prezentace (průsvitný kruh
-  kolem kurzoru a vlna po kliku), Magie (po kliku z místa kliku vyletí emoji – ovoce, houby, peníze –, padají a mizí)
+  kolem kurzoru a vlna po kliku), Magie (po kliku z místa kliku vybuchne
+  dávka emoji – ovoce, houby, peníze – do všech stran, zpomalí, padají a mizí)
   a Guma (klik na kresbu ji smaže); u typů mimo kříž jsou čáry crosshairu
   skryté a popisky na osách zůstávají. Všechny typy vybírají a táhnou
   kresby, po dokončení kresby se vrací naposledy zvolený typ (ukládá se)

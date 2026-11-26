@@ -85,6 +85,11 @@ EN = {
     "Objemem vážený klouzavý průměr": "Volume Weighted Moving Average",
     "Průměr cen vážený objemem obchodů.": "Average of prices weighted by trading volume.",
     "Objemem vážená průměrná cena": "Volume Weighted Average Price",
+    "Objem": "Volume",
+    "Objem (Volume)": "Volume",
+    "Objem svíček jako sloupce v dolní části grafu (barva podle směru svíčky).": (
+        "Candle volume as columns at the bottom of the chart (colored by candle direction)."
+    ),
     "Průměrná cena vážená objemem od začátku dne (UTC).": (
         "Average price weighted by volume since the start of the day (UTC)."
     ),

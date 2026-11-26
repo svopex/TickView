@@ -46,6 +46,13 @@ CATEGORIES = {
 PALETTE = ["#2962ff", "#ff9800", "#9c27b0", "#00bcd4", "#f7b500", "#e91e63"]
 UP_COLOR = "#26a69a"
 DOWN_COLOR = "#ef5350"
+
+
+def with_alpha(color: str, alpha: float) -> str:
+    """Barva #rrggbb s průhledností jako rgba(…) (sloupce objemu, pozadí COT)."""
+    red, green, blue = (int(color[i:i + 2], 16) for i in (1, 3, 5))
+    return f"rgba({red}, {green}, {blue}, {alpha})"
+
 # Barva signálních / doplňkových čar (MACD signál, %D, …)
 SIGNAL_COLOR = "#ff6d00"
 
@@ -287,6 +294,11 @@ class Line:
             v záložce Style změnit.
         options: volby série Lightweight Charts; výchozí tloušťku a styl čáry
             v záložce Style určují "lineWidth" (1–4) a "lineStyle" (LINE_*).
+            Sloupce mohou mít vlastní cenovou osu ("priceScaleId") s okraji
+            ("scaleMargins", např. objem v dolní části hlavního grafu).
+        colors: barvy jednotlivých sloupců histogramu (stejná délka jako
+            values; None = podle znaménka); použijí se, když uživatel
+            v záložce Style nezvolí jednu barvu.
     """
 
     name: str
@@ -294,6 +306,7 @@ class Line:
     color: Optional[str] = None
     type: str = "line"
     options: dict = field(default_factory=dict)
+    colors: Any = None
 
 
 @dataclass

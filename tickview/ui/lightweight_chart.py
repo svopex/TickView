@@ -18,7 +18,6 @@ class LightweightChart(ui.element):
     Parametry:
         dark: počáteční motiv grafu.
         on_ready: async callback volaný po inicializaci grafu v prohlížeči.
-        show_volume: zda zobrazit objem (Settings grafu).
         chart_style: styl svíček (Settings grafu, viz CHART_DEFAULTS).
         chart_type: typ grafu (viz CHART_TYPES – svíčky, čára, …).
     """
@@ -27,7 +26,6 @@ class LightweightChart(ui.element):
         self,
         dark: bool = True,
         on_ready=None,
-        show_volume: bool = True,
         chart_style: dict | None = None,
         chart_type: str = "candles",
     ) -> None:
@@ -38,7 +36,6 @@ class LightweightChart(ui.element):
         self.props(f"data-chart-id={self._js_id}")
         self.classes("chart-container")
         self._dark = dark
-        self._show_volume = show_volume
         self._chart_style = chart_style or dict(CHART_DEFAULTS)
         self._chart_type = chart_type
         self._on_ready = on_ready
@@ -77,7 +74,6 @@ class LightweightChart(ui.element):
             "init",
             {
                 "dark": self._dark,
-                "showVolume": self._show_volume,
                 "chartStyle": self._chart_style,
                 "chartType": self._chart_type,
             },
@@ -233,10 +229,6 @@ class LightweightChart(ui.element):
             return
         self._overview = data
         self._call("setOverview", data)
-
-    def set_volume_visible(self, visible: bool) -> None:
-        """Zapne/vypne zobrazení objemu v grafu."""
-        self._call("setVolumeVisible", visible)
 
     def set_alert_lines(self, lines: list[dict]) -> None:
         """Čárkované čáry aktivních cenových alertů symbolu: [{"price", "title"}]."""

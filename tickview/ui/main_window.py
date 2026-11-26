@@ -72,6 +72,7 @@ from tickview.logic.layouts import (
     LAYOUT_SETTINGS_KEY,
     LAYOUTS,
     SYNC_OPTIONS,
+    add_volume_indicator,
     load_layout,
     resize_panes,
 )
@@ -273,11 +274,9 @@ async def _build_index(
     # Časové pásmo zobrazení a obchodní seance z minula
     saved_timezone = await cache.get_setting("timezone", "local") or "local"
     saved_session = await cache.get_setting("session", SESSION_RTH) or SESSION_RTH
-    # Zobrazení objemu z minula (Settings grafu)
-    show_volume = (await cache.get_setting("show_volume", "1")) != "0"
     # Režim magnetu z minula (off / weak / strong)
     saved_magnet = await cache.get_setting("magnet", "off") or "off"
-    # Styl svíček (Settings grafu); objem drží samostatné nastavení show_volume
+    # Styl svíček (Settings grafu)
     chart_style = load_chart_style(await cache.get_setting("chart_style"))
     # Typ grafu z minula (Bars, Candles, Line, …)
     saved_chart_type = normalize_chart_type(await cache.get_setting("chart_type"))
@@ -293,6 +292,14 @@ async def _build_index(
             "indicators": saved_indicators,
         },
     )
+    # Jednorázová migrace: objem býval nastavením grafu (show_volume, výchozí
+    # zapnuto), teď je to indikátor Volume – zapnutý objem se přidá do grafů
+    # rozložení (rozložení se uloží po vytvoření grafů)
+    volume_migrated = False
+    if not await cache.get_setting("volume_indicator_migrated"):
+        if (await cache.get_setting("show_volume", "1")) != "0":
+            volume_migrated = add_volume_indicator(layout_config)
+        await cache.set_setting("volume_indicator_migrated", "1")
     # Obsah pravého panelu (Watchlist / Alerty, "" = skrytý) a řazení alertů z minula
     saved_right_panel = await cache.get_setting("right_panel", "watchlist")
     if saved_right_panel not in RIGHT_PANELS:
@@ -315,7 +322,6 @@ async def _build_index(
         "drawing_mode": None,
         # Naposledy zvolený typ kurzoru (režim z CURSOR_MODES)
         "cursor_mode": "cursor",
-        "show_volume": show_volume,
         "chart_style": chart_style,
         # Oblíbené typy grafu a timeframy (tlačítka v horní liště, hvězdičky
         # v nabídkách); klíč ve state je zároveň klíč nastavení
@@ -1455,16 +1461,6 @@ async def _build_index(
         await refresh_symbol_drawings(pane)
         show_status(tr("{drawing}: nastavení uloženo.").format(drawing=DRAWING_LABELS.get(kind, kind)))
 
-    async def set_volume_visible(visible: bool) -> None:
-        # Zobrazení objemu (Settings grafu / oko v legendě; všechny grafy);
-        # přetrvá restart. Stejná hodnota (i programové nastavení přepínače) nic nedělá
-        if bool(visible) == state["show_volume"]:
-            return
-        state["show_volume"] = bool(visible)
-        for pane in panes:
-            pane.chart.set_volume_visible(state["show_volume"])
-        await cache.set_setting("show_volume", "1" if state["show_volume"] else "0")
-
     # ---------- časové pásmo a obchodní seance (stavová lišta) ----------
 
     def mark_active(items: dict, active_value: str, css_class: str = "menu-item-active") -> None:
@@ -1508,16 +1504,15 @@ async def _build_index(
         refresh_session_button()
         await asyncio.gather(*(pane.reload_chart() for pane in panes))
 
-    # ---------- Settings grafu (styl svíček, objem, šablony) ----------
+    # ---------- Settings grafu (styl svíček, šablony) ----------
 
     # Stav dialogu: „filling“ potlačí náhled při hromadném vyplňování polí,
     # „dirty“ = grafy ukazují neuložený náhled (zavření bez Ok ho vrátí)
     chart_dialog_state: dict = {"filling": False, "dirty": False}
 
     def collect_chart_values() -> dict:
-        # Hodnoty dialogu (styl svíček + objem) – obsah šablony grafu
-        style = normalize_chart_style({key: field.value for key, field in chart_fields.items()})
-        return {**style, "volume": bool(volume_checkbox.value)}
+        # Hodnoty dialogu (styl svíček) – obsah šablony grafu
+        return normalize_chart_style({key: field.value for key, field in chart_fields.items()})
 
     def fill_chart_values(values: dict, preview: bool = True) -> None:
         # Vyplní pole dialogu (otevření, šablona, výchozí hodnoty); náhled
@@ -1527,48 +1522,37 @@ async def _build_index(
         try:
             for key, field in chart_fields.items():
                 field.value = style[key]
-            volume_checkbox.value = bool(values.get("volume", True))
         finally:
             chart_dialog_state["filling"] = False
         if preview:
             preview_chart_style()
 
-    def broadcast_chart_style(style: dict, volume: bool) -> None:
-        # Styl svíček a objem platí pro všechny grafy rozložení
+    def broadcast_chart_style(style: dict) -> None:
+        # Styl svíček platí pro všechny grafy rozložení
         for pane in panes:
             pane.chart.set_chart_style(style)
-            pane.chart.set_volume_visible(volume)
 
     def preview_chart_style() -> None:
         # Živý náhled v grafech (jako v TradingView); uloží se až tlačítkem Ok
         if chart_dialog_state["filling"]:
             return
-        values = collect_chart_values()
         chart_dialog_state["dirty"] = True
-        broadcast_chart_style(normalize_chart_style(values), values["volume"])
-
-    def has_volume() -> bool:
-        # Posílá zdroj u instrumentu aktivního grafu objem? (forex MIDPOINT ani indexy ne)
-        return any(candle.volume > 0 for candle in active().candles or [])
+        broadcast_chart_style(collect_chart_values())
 
     async def open_chart_settings() -> None:
         # Pole se vyplní uloženým stavem bez náhledu (graf ho už ukazuje)
-        fill_chart_values({**state["chart_style"], "volume": state["show_volume"]}, preview=False)
-        # Objem se u instrumentu bez objemu nezobrazí ani zapnutý – vysvětlíme proč
-        volume_note.set_visibility(not has_volume())
+        fill_chart_values(state["chart_style"], preview=False)
         chart_dialog_state["dirty"] = False
         await chart_templates.refresh()
         chart_settings_dialog.open()
 
     async def submit_chart_settings() -> None:
-        # Ok: styl svíček uloží do nastavení, objem přes set_volume_visible;
-        # grafy už ukazují potvrzené hodnoty, zavření nic nevrací
-        values = collect_chart_values()
-        state["chart_style"] = normalize_chart_style(values)
+        # Ok: styl svíček uloží do nastavení; grafy už ukazují potvrzené
+        # hodnoty, zavření nic nevrací
+        state["chart_style"] = collect_chart_values()
         chart_dialog_state["dirty"] = False
         chart_settings_dialog.close()
         await cache.set_setting("chart_style", json.dumps(state["chart_style"]))
-        await set_volume_visible(values["volume"])
         show_status(tr("Settings grafu uloženy."))
 
     def on_chart_dialog_change(event) -> None:
@@ -1576,7 +1560,7 @@ async def _build_index(
         if event.value or not chart_dialog_state["dirty"]:
             return
         chart_dialog_state["dirty"] = False
-        broadcast_chart_style(state["chart_style"], state["show_volume"])
+        broadcast_chart_style(state["chart_style"])
 
     def drawing_points(payload: dict) -> list[dict]:
         # Body kresby z události grafu (čas v sekundách UTC + cena)
@@ -1589,7 +1573,7 @@ async def _build_index(
     # ten se před zpracováním stane aktivním (dialogy pak míří na něj)
     USER_EVENTS = {
         "indicator", "text_request", "sticker_request", "drawing_settings", "chart_settings",
-        "volume", "symbol_search", "alert_request", "alert_action", "replay_pick", "replay_position_order",
+        "symbol_search", "alert_request", "alert_action", "replay_pick", "replay_position_order",
         "drawing_template",
     }
 
@@ -1691,8 +1675,6 @@ async def _build_index(
             await store_drawing_style(pane, payload, payload, skip=pane)
         elif event_type == "chart_settings":
             await open_chart_settings()
-        elif event_type == "volume":
-            await set_volume_visible(bool(payload.get("visible")))
         elif event_type == "symbol_search":
             # Psaní nad grafem otevře hledání symbolu s napsanými znaky
             await open_symbol_search(str(payload.get("text") or ""))
@@ -4041,7 +4023,8 @@ async def _build_index(
         )
         templates_list = ui.column().classes("ind-list tpl-list w-full")
 
-    # Settings grafu (pravý klik do grafu → Settings…): styl svíček, objem, šablony
+    # Settings grafu (pravý klik do grafu → Settings…): styl svíček a šablony
+    # (objem je indikátor Volume)
     with ui.dialog() as chart_settings_dialog, ui.card().classes("tv-settings"):
         settings_header(chart_settings_dialog, "Settings")
         ui.label(tr("Svíčky")).classes("tv-settings-section")
@@ -4060,22 +4043,17 @@ async def _build_index(
                 chart_fields[f"{prefix}_down"] = ColorButton(
                     CHART_DEFAULTS[f"{prefix}_down"], title=tr("{part} – pokles").format(part=label)
                 )
-        ui.label(tr("Objem")).classes("tv-settings-section")
-        volume_checkbox = ui.checkbox(tr("Objem (Volume)"))
-        volume_note = ui.label(
-            tr("Zdroj u tohoto instrumentu objem neposílá (forex IBKR MIDPOINT, indexy) – objem se nezobrazí.")
-        ).classes("settings-note volume-note")
         with ui.row().classes("tv-settings-actions w-full"):
             chart_templates = TemplateMenu(
                 cache,
                 lambda: "chart",
                 collect_chart_values,
                 fill_chart_values,
-                lambda: fill_chart_values({**CHART_DEFAULTS, "volume": True}),
+                lambda: fill_chart_values(CHART_DEFAULTS),
             )
             settings_buttons(chart_settings_dialog, submit_chart_settings)
     # Každá změna pole se hned promítne do grafu (náhled); zavření bez Ok ji vrátí
-    for chart_field in [*chart_fields.values(), volume_checkbox]:
+    for chart_field in chart_fields.values():
         chart_field.on_value_change(lambda _event: preview_chart_style())
     chart_settings_dialog.on_value_change(on_chart_dialog_change)
 
@@ -4241,6 +4219,8 @@ async def _build_index(
     # Grafy rozložení (vytvoří se v mřížce; data načtou po inicializaci v prohlížeči)
     for pane_config in layout_config["panes"]:
         panes.append(create_pane(pane_config))
+    if volume_migrated:
+        await save_layout()
     paint_layout()
     render_indicator_templates()
     # Pravý panel z minula (Watchlist / Alerty / skrytý)

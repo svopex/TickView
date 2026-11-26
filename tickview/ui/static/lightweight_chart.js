@@ -58,14 +58,18 @@ window.TickViewChart = (function () {
   const DEMO_RADIUS = 18;
   const DEMO_RIPPLE_MS = 600;
   const DEMO_RIPPLE_RADIUS = 34;
-  // Magie (jako v TradingView): po kliku z místa kliku vyletí dávka emoji,
-  // padají a mizí; životnost částice (ms), gravitace (px/s²), částic na
-  // jeden klik a strop počtu částic
+  // Magie (jako v TradingView): po kliku z místa kliku vybuchne dávka emoji
+  // do všech stran, zpomalí odporem vzduchu, padají a mizí; životnost
+  // částice (ms), gravitace (px/s²), odpor (1/s – dolet ≈ rychlost / odpor),
+  // rozsah počáteční rychlosti (px/s), částic na jeden klik a strop počtu
   const MAGIC_EMOJIS = ['🍉', '🍌', '🍄', '🍑', '🍇', '🥝', '🍓', '🍒', '🍎', '💵', '💩'];
-  const MAGIC_PARTICLE_MS = 1300;
-  const MAGIC_GRAVITY = 320;
-  const MAGIC_PER_CLICK = 16;
-  const MAGIC_MAX_PARTICLES = 240;
+  const MAGIC_PARTICLE_MS = 2600;
+  const MAGIC_GRAVITY = 260;
+  const MAGIC_DRAG = 1.6;
+  const MAGIC_SPEED_MIN = 120;
+  const MAGIC_SPEED_MAX = 900;
+  const MAGIC_PER_CLICK = 70;
+  const MAGIC_MAX_PARTICLES = 420;
   const MAGIC_FONT = '18px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif';
 
   // Stav jednotlivých instancí grafu (id kontejneru -> stav)
@@ -273,11 +277,6 @@ window.TickViewChart = (function () {
     applyIndicatorMarkers(s);
   }
 
-  // Barva objemového sloupce podle směru svíčky (poloprůhledná)
-  function volumeColor(candle) {
-    return candle.close >= candle.open ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)';
-  }
-
   // Počet desetinných míst cen instrumentu odhadnutý z dat (90. percentil
   // počtu míst u OHLC posledních svíček, 2–8) – forex 5, akcie 2, krypto různě
   function detectPriceDecimals(candles) {
@@ -334,7 +333,8 @@ window.TickViewChart = (function () {
     if (value >= 1e9) return (value / 1e9).toFixed(2) + ' B';
     if (value >= 1e6) return (value / 1e6).toFixed(2) + ' M';
     if (value >= 1e3) return (value / 1e3).toFixed(2) + ' K';
-    return value.toFixed(2);
+    // Malý objem: celé kusy bez desetinných míst (akcie, futures), zlomky na 2 místa (krypto)
+    return Number.isInteger(value) ? String(value) : value.toFixed(2);
   }
 
   // ---------- časové pásmo zobrazení (UTC / burza / místní / město) ----------
@@ -511,22 +511,6 @@ window.TickViewChart = (function () {
     ohlc.appendChild(els.change);
     main.appendChild(ohlc);
     legend.appendChild(main);
-    const volume = el('div', 'legend-row legend-volume');
-    volume.appendChild(el('span', 'legend-key', 'Vol'));
-    els.volume = el('span', 'legend-val');
-    volume.appendChild(els.volume);
-    els.volumeRow = volume;
-    // Ovládání objemu jako u indikátoru: skrýt (vypnout) a Settings grafu
-    const volumeActions = el('span', 'legend-ind-actions');
-    volumeActions.appendChild(legendButton(s, 'visibility_off', tvTr('Skrýt objem'), { type: 'volume', visible: false }));
-    volumeActions.appendChild(legendButton(s, 'settings', 'Settings…', { type: 'chart_settings' }));
-    volume.appendChild(volumeActions);
-    bindLegendRow(
-      volume,
-      (event) => showContextMenu(event.clientX, event.clientY, chartMenuItems(s)),
-      () => s.finishedQueue.push({ type: 'chart_settings' })
-    );
-    legend.appendChild(volume);
     els.indicators = el('div', 'legend-indicators');
     legend.appendChild(els.indicators);
     s.legendEls = els;
@@ -559,12 +543,12 @@ window.TickViewChart = (function () {
     return -1;
   }
 
-  // Legenda: OHLC svíčky (barva podle směru), změna proti předchozímu závěru,
-  // objem a hodnoty indikátorů v daném čase
+  // Legenda: OHLC svíčky (barva podle směru), změna proti předchozímu závěru
+  // a hodnoty indikátorů (i objemu – indikátor Volume) v daném čase
   function renderLegend(s, bar) {
     const els = s.legendEls;
     if (!els) return;
-    const fields = [els.O, els.H, els.L, els.C, els.change, els.volume];
+    const fields = [els.O, els.H, els.L, els.C, els.change];
     if (!bar) {
       fields.forEach((node) => (node.textContent = ''));
       renderIndicatorValues(s, null);
@@ -582,9 +566,8 @@ window.TickViewChart = (function () {
     els.C.textContent = formatInstrumentPrice(s, bar.close);
     els.change.textContent =
       (change >= 0 ? '+' : '') + formatInstrumentPrice(s, change) + ' (' + (changePct >= 0 ? '+' : '') + changePct.toFixed(2) + '%)';
-    els.volume.textContent = formatVolume(bar.volume);
-    // Barva hodnot OHLC a objemu podle směru svíčky, změna podle znaménka
-    for (const node of [els.O, els.H, els.L, els.C, els.volume]) {
+    // Barva hodnot OHLC podle směru svíčky, změna podle znaménka
+    for (const node of [els.O, els.H, els.L, els.C]) {
       node.classList.toggle('up', dir === 'up');
       node.classList.toggle('down', dir === 'down');
     }
@@ -677,7 +660,11 @@ window.TickViewChart = (function () {
       } else {
         s.legendEls.indicators.appendChild(built.row);
       }
-      s.indicatorRows.push({ group: group.id, row: built.row, values: built.values, precision: group.precision });
+      // Výstupy ve formátu objemu (indikátor Volume) se v legendě zkracují na K/M/B
+      const volumeFormat = valueSeries.map((spec) => isVolumeFormat(spec));
+      s.indicatorRows.push({
+        group: group.id, row: built.row, values: built.values, precision: group.precision, volumeFormat: volumeFormat,
+      });
     }
     // Označený / zvýrazněný indikátor, který z grafu zmizel, se zapomene
     const ids = new Set((payload.groups || []).map((group) => group.id));
@@ -695,7 +682,9 @@ window.TickViewChart = (function () {
       const maps = s.indicatorValues.get(row.group) || [];
       row.values.forEach((node, index) => {
         const value = maps[index] && at !== null ? maps[index].get(at) : undefined;
-        node.textContent = value === undefined ? '' : formatIndicatorValue(s, value, row.precision);
+        if (value === undefined) node.textContent = '';
+        else if (row.volumeFormat[index]) node.textContent = formatVolume(value);
+        else node.textContent = formatIndicatorValue(s, value, row.precision);
       });
     }
   }
@@ -813,24 +802,12 @@ window.TickViewChart = (function () {
       },
     });
 
-    // Svíčky
-
-    // Objem jako překryvná série v dolní části hlavního panelu
-    const volumeSeries = chart.addHistogramSeries({
-      priceFormat: { type: 'volume' },
-      priceScaleId: 'volume',
-      lastValueVisible: false,
-      priceLineVisible: false,
-    });
-    chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
-
     const s = {
       chart,
       // Hlavní série (typ grafu – svíčky, čára, …); vzniká v createMainSeries
       candleSeries: null,
       mainPoints: [],
       chartType: options.chartType || 'candles',
-      volumeSeries,
       legend,
       container,
       panes,
@@ -896,8 +873,7 @@ window.TickViewChart = (function () {
       paneUnderPointer: null,
       // Časové pásmo zobrazení (IANA); výchozí místní čas prohlížeče
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
-      // Objem: zapnutý uživatelem / instrument nějaký objem má
-      volumeEnabled: !(options && options.showVolume === false),
+      // Má instrument nějaký objem? (měřič pak ukazuje objem úseku)
       hasVolume: true,
       // Overlay série indikátorů: skupina a pořadí série (hit-test čar)
       overlayMeta: [],
@@ -1872,19 +1848,21 @@ window.TickViewChart = (function () {
     return sprite;
   }
 
-  // Magie: po kliku vypustí z místa kliku dávku emoji s náhodným směrem
-  // (spíš vzhůru), rychlostí a rotací; nejstarší částice nad stropem
-  // MAGIC_MAX_PARTICLES zahodí
+  // Magie: po kliku vypustí z místa kliku dávku emoji do všech stran
+  // (s mírným tahem vzhůru) s náhodnou rychlostí a rotací; nejstarší
+  // částice nad stropem MAGIC_MAX_PARTICLES zahodí
   function spawnMagicParticles(s, x, y) {
     const fx = s.cursorFx;
     const now = performance.now();
     for (let k = 0; k < MAGIC_PER_CLICK; k++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = MAGIC_SPEED_MIN + Math.random() * (MAGIC_SPEED_MAX - MAGIC_SPEED_MIN);
       fx.particles.push({
         x: x,
         y: y,
         t: now,
-        vx: (Math.random() - 0.5) * 320,
-        vy: -80 - Math.random() * 260,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - 120,
         rotation: (Math.random() - 0.5) * 1.2,
         spin: (Math.random() - 0.5) * 6,
         scale: 0.75 + Math.random() * 0.5,
@@ -1945,7 +1923,8 @@ window.TickViewChart = (function () {
       ctx.arc(ripple.x, ripple.y, DEMO_RADIUS / 2 + (DEMO_RIPPLE_RADIUS - DEMO_RADIUS / 2) * progress, 0, Math.PI * 2);
       ctx.stroke();
     }
-    // Částice magie: poloha z rychlosti a gravitace (šikmý vrh od vzniku),
+    // Částice magie: poloha z rychlosti, odporu a gravitace (vrh s odporem
+    // úměrným rychlosti: dolet v/k·(1−e^(−kt)), pád ustálenou rychlostí g/k),
     // otáčení, krátké „vyskočení“ na začátku a zmizení v poslední třetině
     // života; transformace se pro každou částici skládá od základní matice
     const base = ctx.getTransform();
@@ -1957,7 +1936,9 @@ window.TickViewChart = (function () {
       const scale = particle.scale * Math.min(1, age / 120);
       ctx.globalAlpha = life < 0.66 ? 1 : Math.max(0, (1 - life) / 0.34);
       ctx.setTransform(base);
-      ctx.translate(particle.x + particle.vx * dt, particle.y + particle.vy * dt + 0.5 * MAGIC_GRAVITY * dt * dt);
+      const glide = (1 - Math.exp(-MAGIC_DRAG * dt)) / MAGIC_DRAG;
+      const fall = (MAGIC_GRAVITY / MAGIC_DRAG) * (dt - glide);
+      ctx.translate(particle.x + particle.vx * glide, particle.y + particle.vy * glide + fall);
       ctx.rotate(particle.rotation + particle.spin * dt);
       ctx.scale(scale, scale);
       ctx.drawImage(magicSprite(particle.emoji), -half, -half, MAGIC_SPRITE_PX, MAGIC_SPRITE_PX);
@@ -2784,16 +2765,25 @@ window.TickViewChart = (function () {
     s.paneUnderPointer = null;
   }
 
+  // Je výstup indikátoru ve formátu objemu (indikátor Volume)?
+  function isVolumeFormat(spec) {
+    const format = spec.options && spec.options.priceFormat;
+    return !!format && format.type === 'volume';
+  }
+
   // Volby série indikátoru: volby z payloadu (barva, tloušťka, styl, popisek na
   // ose, cenová linka podle záložky Style), viditelnost skupiny i výstupu a formát cen
   function indicatorSeriesOptions(spec, visible, priceFormat) {
-    const options = Object.assign({}, spec.options || {}, { visible: visible && spec.visible !== false });
+    // Okraje cenové osy (scaleMargins) nejsou volbou série – nastaví je createIndicatorSeries
+    const { scaleMargins, ...seriesOptions } = spec.options || {};
+    const options = Object.assign(seriesOptions, { visible: visible && spec.visible !== false });
     // Plocha: výplň z barvy čáry, průhlednost klesá k dolnímu okraji
     if (spec.series === 'area' && spec.color) {
       options.topColor = withAlpha(spec.color, AREA_FILL_ALPHA);
       options.bottomColor = withAlpha(spec.color, 0);
     }
-    if (priceFormat) options.priceFormat = priceFormat;
+    // Formát deklarovaný výstupem (objem) má přednost před přesností ze záložky Style
+    if (priceFormat && !seriesOptions.priceFormat) options.priceFormat = priceFormat;
     return options;
   }
 
@@ -2803,12 +2793,19 @@ window.TickViewChart = (function () {
   function createIndicatorSeries(chart, spec, visible, priceFormat) {
     const options = indicatorSeriesOptions(spec, visible, priceFormat);
     const kind = spec.series || (spec.type === 'histogram' ? 'histogram' : 'line');
-    if (kind === 'histogram') {
-      return chart.addHistogramSeries(Object.assign({ lastValueVisible: false, priceLineVisible: false }, options));
-    }
     const base = { lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false };
-    if (kind === 'area') return chart.addAreaSeries(Object.assign(base, options));
-    return chart.addLineSeries(Object.assign(base, { color: spec.color }, options));
+    let series;
+    if (kind === 'histogram') {
+      series = chart.addHistogramSeries(Object.assign({ lastValueVisible: false, priceLineVisible: false }, options));
+    } else if (kind === 'area') {
+      series = chart.addAreaSeries(Object.assign(base, options));
+    } else {
+      series = chart.addLineSeries(Object.assign(base, { color: spec.color }, options));
+    }
+    // Série na vlastní ose (objem v dolní části grafu): okraje osy z deklarace
+    const margins = spec.options && spec.options.scaleMargins;
+    if (margins && options.priceScaleId) chart.priceScale(options.priceScaleId).applyOptions({ scaleMargins: margins });
+    return series;
   }
 
   // Viditelnost skupiny indikátoru podle payloadu (skrytý = oko v legendě)
@@ -3387,12 +3384,9 @@ window.TickViewChart = (function () {
     return clean;
   }
 
-  // Nastaví svíčky i objemy grafu ze s.candles (barva objemu podle směru svíčky)
+  // Nastaví svíčky grafu ze s.candles
   function applySeriesData(s) {
     s.candleSeries.setData(mainData(s));
-    s.volumeSeries.setData(
-      s.candles.map((candle) => ({ time: candle.time, value: candle.volume, color: volumeColor(candle) }))
-    );
   }
 
   function setCandles(id, candles, opts) {
@@ -3417,9 +3411,8 @@ window.TickViewChart = (function () {
     // v rozsahu cen, kde nová data nejsou vidět
     resetPriceScales(s);
     resetScaleWidths(s);
-    // Instrument bez objemu (forex MIDPOINT, indexy) objem neukazuje
+    // Instrument bez objemu (forex MIDPOINT, indexy): měřič objem neukazuje
     s.hasVolume = clean.some((candle) => candle.volume > 0);
-    applyVolumeVisibility(s);
     // Zobrazit konec grafu (posledních N svíček), ne celou historii zmenšenou
     // na minimum; panely se srovnají až s novými daty indikátorů
     const visible = (opts && opts.visibleBars) || 150;
@@ -3445,22 +3438,6 @@ window.TickViewChart = (function () {
   // Zapne automatické měřítko cenové osy hlavního grafu i panelů indikátorů
   function resetPriceScales(s) {
     for (const chart of stackCharts(s)) chart.priceScale('right').applyOptions({ autoScale: true });
-  }
-
-  // Objem je vidět, když ho uživatel nevypnul (Settings grafu) a instrument
-  // nějaký objem má (forex MIDPOINT ani indexy ho nemají)
-  function applyVolumeVisibility(s) {
-    const visible = s.volumeEnabled && s.hasVolume;
-    s.volumeSeries.applyOptions({ visible: visible });
-    if (s.legendEls) s.legendEls.volumeRow.classList.toggle('hidden', !visible);
-  }
-
-  // Zapne/vypne zobrazení objemu (Settings grafu, uloženo v Pythonu)
-  function setVolumeVisible(id, visible) {
-    const s = state.get(id);
-    if (!s) return;
-    s.volumeEnabled = !!visible;
-    applyVolumeVisibility(s);
   }
 
   // Požádá Python o starší svíčky, když se graf posunul blízko začátku dat
@@ -3511,7 +3488,6 @@ window.TickViewChart = (function () {
     const previousPoint = s.mainPoints[replace ? count - 2 : count - 1];
     const point = mainPoint(s, candle, previous, previousPoint);
     s.candleSeries.update(point);
-    s.volumeSeries.update({ time: candle.time, value: candle.volume, color: volumeColor(candle) });
     if (replace) {
       s.mainPoints[count - 1] = point;
       s.candles[count - 1] = candle;
@@ -5459,7 +5435,6 @@ window.TickViewChart = (function () {
     setTheme: setTheme,
     setIndicators: setIndicators,
     setOverview: setOverview,
-    setVolumeVisible: setVolumeVisible,
     setTimezone: setTimezone,
     setSymbolInfo: setSymbolInfo,
     setLegendStatus: setLegendStatus,

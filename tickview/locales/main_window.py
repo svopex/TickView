@@ -142,11 +142,6 @@ EN = {
     "Knoty": "Wick",
     "{part} – růst": "{part} – up",
     "{part} – pokles": "{part} – down",
-    "Objem": "Volume",
-    "Objem (Volume)": "Volume",
-    "Zdroj u tohoto instrumentu objem neposílá (forex IBKR MIDPOINT, indexy) – objem se nezobrazí.": (
-        "The source does not send volume for this instrument (IBKR forex MIDPOINT, indices) – volume is not shown."
-    ),
     # Watchlist a seznamy symbolů
     "Ceny watchlistu ({source}) nedostupné: {error}": "Watchlist prices ({source}) unavailable: {error}",
     "Nový seznam…": "New list…",

@@ -179,30 +179,8 @@
   column-gap: 8px;
 }
 
-/* Řádek objemu: jen v šířce obsahu a s myší (tlačítka skrýt / Settings) */
-.legend-volume {
-  display: inline-flex;
-  padding: 0 4px;
-  margin-left: -4px;
-  border: 1px solid transparent;
-  border-radius: 4px;
-  pointer-events: auto;
-}
-
-.legend-volume:hover {
-  border-color: rgba(128, 128, 128, 0.45);
-}
-
-.legend-volume:hover .legend-ind-actions {
-  visibility: visible;
-}
-
 /* Hodnota výstupu indikátoru skrytá záložkou Style (Values in status line, skrytý výstup) */
 .legend-ind-val-hidden {
-  display: none;
-}
-
-.legend-volume.hidden {
   display: none;
 }
 
@@ -2166,10 +2144,6 @@
 
 .position-row > * {
   flex: 1 1 0;
-}
-
-.volume-note {
-  max-width: none;
 }
 
 /* ---------- Rozložení více grafů (Layout setup jako v TradingView) ---------- */

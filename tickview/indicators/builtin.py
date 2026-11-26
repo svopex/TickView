@@ -9,6 +9,7 @@ se až při zobrazení; název čáry je zároveň klíčem jejího vzhledu (zá
 
 from typing import Callable, Optional
 
+import numpy as np
 import pandas as pd
 import pandas_ta
 
@@ -24,6 +25,7 @@ from tickview.indicators.api import (
     Param,
     Result,
     tr,
+    with_alpha,
 )
 
 # Funkce výpočtu vestavěného indikátoru: (svíčky, parametry) -> (čáry, úrovně)
@@ -151,6 +153,25 @@ def _bands(frame, upper: str, middle: str, lower: str):
     ]), []
 
 
+# Objem (Volume) jako v TradingView: poloprůhledné sloupce podle směru
+# svíčky na vlastní ose v dolní pětině hlavního grafu
+VOLUME_UP_COLOR = with_alpha(UP_COLOR, 0.5)
+VOLUME_DOWN_COLOR = with_alpha(DOWN_COLOR, 0.5)
+VOLUME_OPTIONS = {
+    "priceScaleId": "volume",
+    "priceFormat": {"type": "volume"},
+    "scaleMargins": {"top": 0.82, "bottom": 0},
+}
+
+
+def _volume(df: pd.DataFrame, params: dict):
+    """Sloupce objemu obarvené podle směru svíčky; bez objemu (forex
+    MIDPOINT, indexy) prázdné body, takže se nic nevykreslí."""
+    values = df["volume"].where(df["volume"] > 0)
+    colors = np.where(df["close"] >= df["open"], VOLUME_UP_COLOR, VOLUME_DOWN_COLOR).tolist()
+    return [Line(N_("Objem"), values, None, "columns", dict(VOLUME_OPTIONS), colors)], []
+
+
 def _vwap(df: pd.DataFrame) -> pd.Series:
     """VWAP s resetem na začátku každého dne (UTC) z typické ceny a objemu."""
     typical = (df["high"] + df["low"] + df["close"]) / 3
@@ -210,6 +231,10 @@ BUILTIN_INDICATORS: list[Indicator] = [
     BuiltinIndicator(
         "vwma", "VWMA", N_("Objemem vážený klouzavý průměr"), "ma", N_("Průměr cen vážený objemem obchodů."),
         [_length(20)], lambda df, p: _single("VWMA", pandas_ta.vwma(df["close"], df["volume"], length=p["length"])),
+    ),
+    BuiltinIndicator(
+        "volume", "Vol", N_("Objem (Volume)"), "volume",
+        N_("Objem svíček jako sloupce v dolní části grafu (barva podle směru svíčky)."), [], _volume,
     ),
     BuiltinIndicator(
         "vwap", "VWAP", N_("Objemem vážená průměrná cena"), "volume",

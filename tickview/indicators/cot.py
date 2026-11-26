@@ -32,6 +32,7 @@ from tickview.indicators.api import (
     Signal,
     Table,
     tr,
+    with_alpha,
 )
 from tickview.logic.cot import GROUP_OPTIONS, GROUPS, CotMarket, cot_index, cot_key, resolve_market
 
@@ -107,11 +108,6 @@ def _table_params() -> list[Param]:
         Param.select("table_size", "small", N_("Velikost textu"), options=TABLE_SIZES, group=G_TABLE),
     ]
 
-
-def _with_alpha(color: str, alpha: float) -> str:
-    """Barva #rrggbb s průhledností jako rgba(…)."""
-    red, green, blue = (int(color[i:i + 2], 16) for i in (1, 3, 5))
-    return f"rgba({red}, {green}, {blue}, {alpha})"
 
 
 def _format_number(value: float, signed: bool = False) -> str:
@@ -275,7 +271,7 @@ class CotPositions(CotIndicator):
             rows = self.base_rows(ctx, market, reports) + self.value_rows(reports, int(idx[-1]), group, sign)
         lines = [
             Line("Net", net, color=color, type="step", options={"lineWidth": 2, "title": label}),
-            Line(N_("Týdenní změna"), change, color=_with_alpha(color, CHANGE_ALPHA), type="histogram"),
+            Line(N_("Týdenní změna"), change, color=with_alpha(color, CHANGE_ALPHA), type="histogram"),
         ]
         return Result(lines=lines, levels=[0.0],
                       tables=self.table(params, ctx, f"COT {label}", rows, POSITION_GUIDES[group], color, sign))
@@ -372,7 +368,7 @@ class CotIndex(CotIndicator):
         for group in reversed(groups):
             series = values[group]
             extreme = (series >= upper) | (series <= lower)
-            color = _with_alpha(INDEX_COLORS[group], BACKGROUND_ALPHA)
+            color = with_alpha(INDEX_COLORS[group], BACKGROUND_ALPHA)
             for position in np.flatnonzero(extreme):
                 colors[position] = color
         return colors
