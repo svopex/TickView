@@ -5,10 +5,12 @@ Blokující operace sqlite3 běží přes asyncio.to_thread, aby nikdy nezdržel
 
 import asyncio
 import json
+import logging
 import sqlite3
 from typing import Callable, Optional
 
 from tickview.i18n import tr
+from tickview.logic.volume import VOLUME_TIMEFRAMES, merge_volume, volume_fetch_range
 from tickview.providers.base import (
     SPIKE_NEIGHBORS,
     TIMEFRAME_MS,
@@ -19,6 +21,8 @@ from tickview.providers.base import (
     is_closed,
     utc_now_ms,
 )
+
+log = logging.getLogger(__name__)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS klines (
@@ -1181,7 +1185,53 @@ async def fetch_history(
             provider.id, symbol, timeframe, result[0].open_time, result[-1].open_time, SPIKE_NEIGHBORS
         )
         clip_spikes(before + result + after)
-    return result
+    # Instrumenty bez objemu (IBKR forex, kovy, CFD) dostanou objem z cTrader
+    return await enrich_volume(provider, cache, symbol, timeframe, result)
+
+
+# Nejdelší čekání na objem ze zdroje objemu – pomalý cTrader nesmí zdržet graf
+VOLUME_TIMEOUT_S = 10.0
+
+
+def volume_source(provider: DataProvider, symbol: str, timeframe: str) -> Optional[DataProvider]:
+    """Zapnutý zdroj objemu (cTrader) pro instrument bez objemu, jinak None.
+
+    Registr zdrojů se importuje až zde: jeho import sestaví všechny zdroje
+    (čte config.yaml) a samotné čtení cache ho nepotřebuje.
+    """
+    if timeframe not in VOLUME_TIMEFRAMES or not provider.lacks_volume(symbol):
+        return None
+    from tickview.providers import PROVIDERS
+
+    return next((source for source in PROVIDERS if source.id == "ctrader"), None)
+
+
+async def enrich_volume(
+    provider: DataProvider, cache: "KlineCache", symbol: str, timeframe: str, candles: list[Candle]
+) -> list[Candle]:
+    """Svíčky s objemem ze zdroje objemu (bary stejného období přes cache a síť).
+
+    Bez zdroje objemu, u neznámého instrumentu, při chybě nebo vypršení
+    VOLUME_TIMEOUT_S vrátí svíčky beze změny.
+    """
+    source = volume_source(provider, symbol, timeframe) if candles else None
+    if source is None:
+        return candles
+
+    async def load_bars() -> list[Candle]:
+        name = await source.volume_symbol(symbol)
+        if name is None:
+            return []
+        start, end = volume_fetch_range(candles, timeframe)
+        return await fetch_history(source, cache, name, VOLUME_TIMEFRAMES[timeframe], start, end)
+
+    try:
+        bars = await asyncio.wait_for(load_bars(), VOLUME_TIMEOUT_S)
+    except Exception as exc:
+        # Výpadek cTrader nesmí zablokovat graf – svíčky zůstanou bez objemu
+        log.warning("Objem z %s pro %s %s: %s", source.id, symbol, timeframe, exc)
+        return candles
+    return merge_volume(candles, bars, timeframe)
 
 
 # Mezera mezi začátkem okna a první svíčkou, od které se historie bere jako

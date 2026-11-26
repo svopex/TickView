@@ -139,6 +139,7 @@ from tickview.logic.sessions import (
 )
 from tickview.providers import PROVIDERS, get_provider, provider_symbol
 from tickview.providers.alpaca import DEFAULT_ENDPOINT as ALPACA_DEFAULT_ENDPOINT
+from tickview.providers.ctrader import CTraderProvider
 from tickview.providers.base import SymbolInfo, utc_now_ms
 from tickview.providers.ibkr import DEFAULT_HOST as IBKR_DEFAULT_HOST
 from tickview.providers.ibkr import IbkrProvider, connection_settings
@@ -219,7 +220,7 @@ def drawing_scope(kind: str) -> str:
 
 
 # Krátké kódy zdrojů (watchlist, hledání, alerty – aby sloupec nebyl široký)
-PROVIDER_CODES = {"binance": "BIN", "yahoo": "YAH", "alpaca": "ALP", "ibkr": "IBK"}
+PROVIDER_CODES = {"binance": "BIN", "yahoo": "YAH", "alpaca": "ALP", "ibkr": "IBK", "ctrader": "CTR"}
 
 
 def provider_code(source: str) -> str:
@@ -2180,7 +2181,34 @@ async def _build_index(
         push_overview([pane])
         await pane.reload_chart()
 
-    # ---------- Settings: Telegram, Interactive Brokers, Alpaca (config.yaml) ----------
+    # ---------- Settings: Telegram, Interactive Brokers, Alpaca, cTrader (config.yaml) ----------
+
+    def settings_links(links: list[tuple[str, str]]) -> None:
+        # Odkazy na stránky, kde se údaje záložky Settings získávají: „popisek: URL“
+        # (URL je vidět celá a otevře se v nové záložce)
+        with ui.column().classes("settings-links"):
+            for label, url in links:
+                with ui.row().classes("settings-link-row"):
+                    ui.label(f"{label}:").classes("settings-note")
+                    ui.link(url, url, new_tab=True).classes("about-link settings-link")
+
+    # Klíče sekce ctrader v config.yaml zadávané v dialogu (symbols se upravuje jen v souboru)
+    CTRADER_FIELDS = ("client_id", "client_secret", "access_token", "refresh_token", "account_id")
+
+    def ctrader_form_values() -> dict:
+        # Údaje cTrader Open API z dialogu (oříznuté texty, server demo / živý)
+        values = {key: (settings_ctrader[key].value or "").strip() for key in CTRADER_FIELDS}
+        values["live"] = settings_ctrader_server.value == "live"
+        return values
+
+    async def test_ctrader() -> None:
+        # Zkušební připojení k cTrader s hodnotami z dialogu (i neuloženými)
+        try:
+            message = await CTraderProvider.test_connection(ctrader_form_values())
+        except Exception as exc:
+            ui.notify(tr("cTrader: připojení selhalo – {error}").format(error=exc), type="negative", multi_line=True)
+            return
+        ui.notify(message, type="positive")
 
     def ibkr_form_values() -> dict | None:
         # Připojovací údaje IBKR z dialogu (prázdné pole = výchozí); neplatné číslo ohlásí a vrátí None
@@ -2216,7 +2244,7 @@ async def _build_index(
     async def save_settings() -> None:
         # Uloží nastavení do config.yaml v kořenu projektu (necommituje se); zbytek
         # souboru včetně komentářů zůstane beze změny. Zapisují se jen změněné
-        # sekce (Telegram a IBKR platí hned, Alpaca po restartu)
+        # sekce (Telegram a IBKR platí hned, Alpaca a zapnutí cTrader po restartu)
         config = load_config()
         ibkr = ibkr_form_values()
         if ibkr is None:
@@ -2233,8 +2261,9 @@ async def _build_index(
             update_config_section("ibkr", ibkr)
             messages.append(tr("IBKR uloženo a přepojeno"))
         alpaca_config = config.get("alpaca") or {}
+        # Endpoint se v dialogu nezadává (paper účet; jiný jen ručně v config.yaml)
         alpaca = {
-            "endpoint": (settings_alpaca_endpoint.value or "").strip() or ALPACA_DEFAULT_ENDPOINT,
+            "endpoint": str(alpaca_config.get("endpoint") or "") or ALPACA_DEFAULT_ENDPOINT,
             "api_key": (settings_key.value or "").strip(),
             "secret": (settings_secret.value or "").strip(),
         }
@@ -2243,6 +2272,13 @@ async def _build_index(
         if alpaca != saved_alpaca:
             update_config_section("alpaca", alpaca)
             messages.append(tr("Alpaca uložena – změna se projeví po restartu aplikace"))
+        ctrader_config = config.get("ctrader") or {}
+        ctrader = ctrader_form_values()
+        saved_ctrader = {key: str(ctrader_config.get(key) or "") for key in CTRADER_FIELDS}
+        saved_ctrader["live"] = bool(ctrader_config.get("live"))
+        if ctrader != saved_ctrader:
+            update_config_section("ctrader", ctrader)
+            messages.append(tr("cTrader uložen – zapnutí zdroje se projeví po restartu aplikace"))
         if settings_replay_rewind.value != replay_rewind_mode():
             update_config_section("replay", {"rewind": settings_replay_rewind.value})
             messages.append(tr("Replay uložen"))
@@ -2261,9 +2297,12 @@ async def _build_index(
         settings_ibkr_port.value = ibkr["port"]
         settings_ibkr_client.value = ibkr["client_id"]
         alpaca_config = config.get("alpaca") or {}
-        settings_alpaca_endpoint.value = alpaca_config.get("endpoint") or ALPACA_DEFAULT_ENDPOINT
         settings_key.value = alpaca_config.get("api_key", "")
         settings_secret.value = alpaca_config.get("secret", "")
+        ctrader_config = config.get("ctrader") or {}
+        for key in CTRADER_FIELDS:
+            settings_ctrader[key].value = str(ctrader_config.get(key) or "")
+        settings_ctrader_server.value = "live" if ctrader_config.get("live") else "demo"
         settings_telegram_token.value, settings_telegram_chat.value = telegram_settings(config)
         settings_replay_rewind.value = replay_rewind_mode()
         settings_dialog.open()
@@ -4060,9 +4099,8 @@ async def _build_index(
     # Popup s předplatnými dat IBKR (otevírá se ze záložky Interactive Brokers v Settings)
     ibkr_data_dialog = build_ibkr_data_dialog()
 
-    # Dialog nastavení: Telegram pro alerty a API klíče Alpaca (config.yaml)
     # Settings aplikace: všechny sekce config.yaml (Telegram, Interactive Brokers,
-    # Alpaca) v záložkách; ukládá se jen to, co se změnilo
+    # Alpaca, cTrader, Replay) v záložkách; ukládá se jen to, co se změnilo
     with ui.dialog() as settings_dialog, ui.card().classes("tv-settings app-settings"):
         settings_header(settings_dialog, "Settings")
         ui.label(
@@ -4072,6 +4110,7 @@ async def _build_index(
             tab_telegram = ui.tab("Telegram")
             tab_ibkr = ui.tab("Interactive Brokers")
             tab_alpaca = ui.tab("Alpaca")
+            tab_ctrader = ui.tab("cTrader")
             tab_replay = ui.tab("Replay")
         with ui.tab_panels(settings_tabs, value=tab_telegram).classes("tv-tab-panels w-full"):
             with ui.tab_panel(tab_telegram).classes("tv-tab-panel"):
@@ -4082,6 +4121,10 @@ async def _build_index(
                         "doplní sám. Platí hned."
                     )
                 ).classes("settings-note")
+                settings_links([
+                    (tr("Stažení Telegramu"), "https://telegram.org/apps"),
+                    (tr("Založení bota (@BotFather)"), "https://t.me/BotFather"),
+                ])
                 settings_telegram_token = ui.input("Bot token").props("outlined dense type=password").classes("w-full")
                 settings_telegram_chat = ui.input("Chat ID").props("outlined dense").classes("w-full")
                 with ui.row().classes("dialog-actions"):
@@ -4095,6 +4138,11 @@ async def _build_index(
                         "Při obsazeném client ID se zkusí další. Po uložení se zdroj hned přepojí."
                     )
                 ).classes("settings-note")
+                settings_links([
+                    (tr("Stažení TWS"), "https://www.interactivebrokers.com/en/trading/tws.php"),
+                    (tr("Stažení IB Gateway"), "https://www.interactivebrokers.com/en/trading/ibgateway-stable.php"),
+                    (tr("Předplatné dat (Settings → Market Data Subscriptions)"), "https://www.interactivebrokers.com/portal"),
+                ])
                 settings_ibkr_host = ui.input("Host").props("outlined dense").classes("w-full")
                 with ui.row().classes("tv-settings-row w-full"):
                     settings_ibkr_port = ui.number("Port", min=1, max=65535, step=1).props("outlined dense")
@@ -4111,9 +4159,36 @@ async def _build_index(
                         "se zdroj nezapne. Změna se projeví po restartu aplikace."
                     )
                 ).classes("settings-note")
-                settings_alpaca_endpoint = ui.input("Endpoint (Trading API)").props("outlined dense").classes("w-full")
+                settings_links([(tr("API klíče (Paper Trading dashboard → API Keys)"), "https://app.alpaca.markets")])
                 settings_key = ui.input("API key").props("outlined dense type=password").classes("w-full")
                 settings_secret = ui.input("Secret").props("outlined dense type=password").classes("w-full")
+            with ui.tab_panel(tab_ctrader).classes("tv-tab-panel"):
+                ui.label(
+                    tr(
+                        "Forex, kovy a CFD s tick volume (jako v TradingView) od brokera s platformou cTrader "
+                        "(Pepperstone, IC Markets, Purple Trading…); zároveň dodá objem pro IBKR forex, kovy a CFD. "
+                        "Stačí demo účet u brokera. Na openapi.ctrader.com založte aplikaci (Applications → Add new "
+                        "app) a počkejte na schválení (status se změní ze Submitted na Active). Pak v Credentials zkopírujte "
+                        "Client ID a Secret a v Sandbox získejte Access a Refresh token (scope accounts). Token se "
+                        "obnovuje sám. Zapnutí zdroje se projeví po restartu."
+                    )
+                ).classes("settings-note")
+                settings_links([(tr("Aplikace Open API (Add new app, Credentials, Sandbox)"), "https://openapi.ctrader.com/apps")])
+                settings_ctrader = {
+                    "client_id": ui.input("Client ID").props("outlined dense").classes("w-full"),
+                    "client_secret": ui.input("Client secret").props("outlined dense type=password").classes("w-full"),
+                    "access_token": ui.input("Access token").props("outlined dense type=password").classes("w-full"),
+                    "refresh_token": ui.input("Refresh token").props("outlined dense type=password").classes("w-full"),
+                }
+                with ui.row().classes("tv-settings-row w-full"):
+                    settings_ctrader_server = ui.select(
+                        {"demo": tr("Demo účet"), "live": tr("Živý účet")}, label=tr("Server")
+                    ).props("outlined dense")
+                    settings_ctrader["account_id"] = ui.input(
+                        tr("ID účtu (prázdné = první účet)")
+                    ).props("outlined dense")
+                with ui.row().classes("dialog-actions"):
+                    ui.button(tr("Otestovat připojení"), on_click=test_ctrader, color=None).props("flat no-caps")
             with ui.tab_panel(tab_replay).classes("tv-tab-panel"):
                 ui.label(
                     tr(

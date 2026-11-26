@@ -96,7 +96,7 @@
         "name": "Is TickView really free?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "Yes. TickView is open source under the Apache 2.0 license, with no subscription, no sign-up and no ads. Data from Binance, Yahoo Finance and the CFTC is free and needs no API key, and Alpaca offers a free key (Basic plan). Interactive Brokers requires an IB account (a paper account works) and the available data depends on your subscriptions."
+          "text": "Yes. TickView is open source under the Apache 2.0 license, with no subscription, no sign-up and no ads. Data from Binance, Yahoo Finance and the CFTC is free and needs no API key, Alpaca offers a free key (Basic plan) and cTrader a free Open API application with a broker demo account. Interactive Brokers requires an IB account (a paper account works) and the available data depends on your subscriptions."
         }
       },
       {
@@ -120,7 +120,7 @@
         "name": "Where does TickView get its data?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "From Binance (crypto, live), Yahoo Finance (stocks, ETFs, indices, forex and futures, delayed), Alpaca (US stocks, live once you enter your keys), Interactive Brokers via TWS or IB Gateway, and the public CFTC API for the COT report. History is kept in a local SQLite cache."
+          "text": "From Binance (crypto, live), Yahoo Finance (stocks, ETFs, indices, forex and futures, delayed), Alpaca (US stocks, live once you enter your keys), Interactive Brokers via TWS or IB Gateway, cTrader (forex, metals and CFDs with tick volume, live) and the public CFTC API for the COT report. History is kept in a local SQLite cache."
         }
       },
       {
@@ -253,7 +253,7 @@
         <div class="stat"><strong class="accent">$0</strong><span>for the app and for data from Binance, Yahoo and the CFTC</span></div>
         <div class="stat"><strong>28</strong><span>built-in indicators, plus your own in Python</span></div>
         <div class="stat"><strong>1–16</strong><span>synced charts at once</span></div>
-        <div class="stat"><strong>4 + COT</strong><span>data sources, most without an API key</span></div>
+        <div class="stat"><strong>5 + COT</strong><span>data sources, most without an API key</span></div>
       </div>
     </section>
 
@@ -417,7 +417,7 @@
               </tr>
               <tr>
                 <th scope="row">Data sources</th>
-                <td class="cmp-partial">Binance, Yahoo Finance, Alpaca, Interactive Brokers and the CFTC (COT)</td>
+                <td class="cmp-partial">Binance, Yahoo Finance, Alpaca, Interactive Brokers, cTrader and the CFTC (COT)</td>
                 <td class="cmp-yes">Data from many exchanges and markets; some real-time data is paid</td>
               </tr>
               <tr>
@@ -476,6 +476,11 @@
             <header><h3>Interactive Brokers</h3><span class="tag tag-mixed">per subscription</span></header>
             <p>Through TWS or IB Gateway: stocks, forex, spot metals, index CFDs and continuous futures with automatic rollover.</p>
             <p class="source-meta">IB account (paper works too)</p>
+          </article>
+          <article class="source">
+            <header><h3>cTrader</h3><span class="tag tag-live">live</span></header>
+            <p>Forex including crosses, metals and index CFDs with tick volume like TradingView. Also supplies volume and VWAP for IBKR forex and CFDs.</p>
+            <p class="source-meta">Free Open API app, broker demo account</p>
           </article>
           <article class="source">
             <header><h3>CFTC</h3><span class="tag tag-delay">weekly</span></header>
@@ -601,7 +606,7 @@ cd TickView-main
         </p>
 
         <p class="note">
-          API keys (Alpaca, Telegram, IB) are entered in the app settings and stored only in your local
+          API keys (Alpaca, cTrader, Telegram, IB) are entered in the app settings and stored only in your local
           <code>config.yaml</code>, never in the code. Use <code>config.example.yaml</code> as a template.
         </p>
       </div>
@@ -634,7 +639,7 @@ cd TickView-main
         <div class="faq-list">
           <details class="faq-item">
             <summary><h3>Is TickView really free?</h3></summary>
-            <p>Yes. TickView is open source under the Apache 2.0 license, with no subscription, no sign-up and no ads. Data from Binance, Yahoo Finance and the CFTC is free and needs no API key, and Alpaca offers a free key (Basic plan). Interactive Brokers requires an IB account (a paper account works) and the available data depends on your subscriptions.</p>
+            <p>Yes. TickView is open source under the Apache 2.0 license, with no subscription, no sign-up and no ads. Data from Binance, Yahoo Finance and the CFTC is free and needs no API key, Alpaca offers a free key (Basic plan) and cTrader a free Open API application with a broker demo account. Interactive Brokers requires an IB account (a paper account works) and the available data depends on your subscriptions.</p>
           </details>
           <details class="faq-item">
             <summary><h3>Can I use TickView instead of TradingView?</h3></summary>
@@ -646,7 +651,7 @@ cd TickView-main
           </details>
           <details class="faq-item">
             <summary><h3>Where does TickView get its data?</h3></summary>
-            <p>From Binance (crypto, live), Yahoo Finance (stocks, ETFs, indices, forex and futures, delayed), Alpaca (US stocks, live once you enter your keys), Interactive Brokers via TWS or IB Gateway, and the public CFTC API for the COT report. History is kept in a local SQLite cache.</p>
+            <p>From Binance (crypto, live), Yahoo Finance (stocks, ETFs, indices, forex and futures, delayed), Alpaca (US stocks, live once you enter your keys), Interactive Brokers via TWS or IB Gateway, cTrader (forex, metals and CFDs with tick volume, live) and the public CFTC API for the COT report. History is kept in a local SQLite cache.</p>
           </details>
           <details class="faq-item">
             <summary><h3>Which operating systems does TickView run on?</h3></summary>

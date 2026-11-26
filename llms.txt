@@ -4,7 +4,7 @@
 
 Key facts:
 
-- Data sources: Binance (crypto, live), Yahoo Finance (stocks, ETFs, indices, forex, futures; delayed), Alpaca (US stocks, live with a free key), Interactive Brokers (via TWS or IB Gateway) and the CFTC API (Commitments of Traders / COT report).
+- Data sources: Binance (crypto, live), Yahoo Finance (stocks, ETFs, indices, forex, futures; delayed), Alpaca (US stocks, live with a free key), Interactive Brokers (via TWS or IB Gateway), cTrader (forex, metals and CFDs with tick volume; live with a free Open API app and a broker demo account) and the CFTC API (Commitments of Traders / COT report).
 - Features: 28 built-in indicators plus custom indicators written in Python (pandas), drawing tools, watchlists, alerts (Telegram, webhook, toast, sound), a scanner for up to 40 symbols, bar replay with manual trades on a simulated account, and layouts with up to 16 synced charts.
 - Stack: Python 3.12–3.13, asyncio, NiceGUI, pandas, SQLite; charts are rendered by the open-source Lightweight Charts™ library by TradingView.
 - Not supported: Pine Script, mobile apps, cloud sync, social features, broker trading, automated strategy tester.

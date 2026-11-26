@@ -184,6 +184,35 @@ EN = {
     "IBKR uloženo a přepojeno": "IBKR saved and reconnected",
     "Alpaca uložena – změna se projeví po restartu aplikace": "Alpaca saved – the change takes effect after restarting the app",
     "Replay uložen": "Replay saved",
+    "cTrader uložen – zapnutí zdroje se projeví po restartu aplikace": (
+        "cTrader saved – enabling the source takes effect after restarting the app"
+    ),
+    "cTrader: připojení selhalo – {error}": "cTrader: connection failed – {error}",
+    "Forex, kovy a CFD s tick volume (jako v TradingView) od brokera s platformou cTrader "
+    "(Pepperstone, IC Markets, Purple Trading…); zároveň dodá objem pro IBKR forex, kovy a CFD. "
+    "Stačí demo účet u brokera. Na openapi.ctrader.com založte aplikaci (Applications → Add new "
+    "app) a počkejte na schválení (status se změní ze Submitted na Active). Pak v Credentials zkopírujte "
+    "Client ID a Secret a v Sandbox získejte Access a Refresh token (scope accounts). Token se "
+    "obnovuje sám. Zapnutí zdroje se projeví po restartu.": (
+        "Forex, metals and CFDs with tick volume (as in TradingView) from a broker with the cTrader "
+        "platform (Pepperstone, IC Markets, Purple Trading…); it also provides volume for IBKR forex, "
+        "metals and CFDs. A demo account at the broker is enough. Create an application at "
+        "openapi.ctrader.com (Applications → Add new app) and wait for approval (the status changes "
+        "from Submitted to Active). Then copy the Client ID and Secret under Credentials and get an Access "
+        "and Refresh token in the Sandbox (scope accounts). The token refreshes automatically. "
+        "Enabling the source takes effect after a restart."
+    ),
+    "Demo účet": "Demo account",
+    "Stažení Telegramu": "Download Telegram",
+    "Založení bota (@BotFather)": "Create a bot (@BotFather)",
+    "Stažení TWS": "Download TWS",
+    "Stažení IB Gateway": "Download IB Gateway",
+    "Předplatné dat (Settings → Market Data Subscriptions)": "Data subscriptions (Settings → Market Data Subscriptions)",
+    "API klíče (Paper Trading dashboard → API Keys)": "API keys (Paper Trading dashboard → API Keys)",
+    "Aplikace Open API (Add new app, Credentials, Sandbox)": "Open API applications (Add new app, Credentials, Sandbox)",
+    "Živý účet": "Live account",
+    "Server": "Server",
+    "ID účtu (prázdné = první účet)": "Account ID (empty = first account)",
     "Nejdřív vložte token bota od @BotFather.": "First paste the bot token from @BotFather.",
     "Bot zatím nemá žádnou zprávu – napište mu (např. /start) a zkuste to znovu.": (
         "The bot has no message yet – write to it (e.g. /start) and try again."

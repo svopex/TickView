@@ -20,6 +20,7 @@ from tickview.logic.styles import drawing_visible
 from tickview.providers import get_provider
 from tickview.providers.base import TIMEFRAME_MS, Candle, StreamStatus, is_closed, merge_candle, utc_now_ms
 from tickview.services import datafeeds
+from tickview.services.volume import with_live_volume
 from tickview.ui.lightweight_chart import LightweightChart
 
 # Kolik svíček historie se načte pro jedno zobrazení (a uloží do cache)
@@ -583,7 +584,8 @@ class ChartPane:
         live = provider.is_live_for(timeframe)
         market_closed_warned = False
         try:
-            async for item in provider.stream(symbol, timeframe):
+            # IBKR forex, kovy a CFD: objem živé svíčky z živého baru cTrader
+            async for item in with_live_volume(provider, symbol, timeframe, provider.stream(symbol, timeframe)):
                 if seq != self.load_seq:
                     # Mezitím se přepnulo zobrazení – stream ukončíme
                     return

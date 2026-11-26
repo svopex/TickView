@@ -477,6 +477,11 @@ class DataProvider(ABC):
         True = fetch_history je zastřihne (clip_spikes)."""
         return False
 
+    def lacks_volume(self, symbol: str) -> bool:
+        """Zda zdroj u instrumentu neposílá objem; True = fetch_history doplní
+        objem ze zdroje objemu (cTrader), pokud je zapnutý."""
+        return False
+
     def contract_size(self, symbol: str) -> Optional[float]:
         """Velikost kontraktu (hodnota bodu u futures) pro replay; None = výchozí podle druhu instrumentu."""
         return None

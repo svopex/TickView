@@ -8,6 +8,19 @@ alpaca:
   api_key: ""   # např. PK...
   secret: ""
 
+# cTrader Open API (volitelný zdroj forexu, kovů a CFD s tick volume; dodá i objem
+# pro IBKR forex, kovy a CFD) – aplikace z openapi.ctrader.com (Client ID a secret),
+# tokeny ze Sandbox po schválení aplikace (scope accounts); stačí demo účet u cTrader brokera
+ctrader:
+  client_id: ""
+  client_secret: ""
+  access_token: ""     # obnovuje se sám (nový token se zapíše sem)
+  refresh_token: ""
+  account_id: ""       # ctidTraderAccountId; prázdné = první demo / živý účet tokenu
+  live: false          # false = demo server, true = živý
+  # Ruční přiřazení symbolů IBKR k názvům u brokera (jinak se dohledají samy)
+  symbols: {}          # např. {IBUST100: NAS100, IBDE40: GER40}
+
 # Interactive Brokers – TWS nebo IB Gateway musí běžet a mít povolené API
 ibkr:
   host: 127.0.0.1

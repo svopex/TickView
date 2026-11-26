@@ -4,7 +4,7 @@ TickView je bezplatná open-source alternativa k TradingView – desktopová
 a webová aplikace v Pythonu pro svíčkové grafy akcií, ETF, forexu, futures
 a kryptoměn, která běží lokálně na Windows, macOS i Linuxu. Zdarma, bez
 registrace a bez reklam; data bere z Binance, Yahoo Finance, Alpaca,
-Interactive Brokers a CFTC (COT report), nabízí 28 indikátorů a vlastní
+Interactive Brokers, cTrader (forex, kovy a CFD s tick volume) a CFTC (COT report), nabízí 28 indikátorů a vlastní
 indikátory v Pythonu, kreslení, alerty (Telegram/webhook), scanner, replay
 a až 16 grafů najednou.
 
@@ -220,7 +220,7 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   v pravém panelu (přidat/odebrat, klik kamkoli do řádku – symbol, cena,
   změna – přepne graf a řádek se zvýrazní jako aktuální, poslední cena
   a denní změna – Binance živě po 5 s, Yahoo po 60 s, IBKR po 30 s, Alpaca
-  snapshots po 5 s).
+  snapshots po 5 s, cTrader z denních barů).
 - Více seznamů symbolů jako v TradingView: název aktivního seznamu v hlavičce
   watchlistu otevře nabídku seznamů (s počtem symbolů; klik přepne) a správu
   aktivního seznamu – „Nový seznam…“, „Přejmenovat…“, „Vytvořit kopii…“,
@@ -358,14 +358,18 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   Alerty na pravé liště, která ukazuje počet nepřečtených záznamů logu). Aktivní cenové alerty
   zobrazeného symbolu jsou v grafu oranžové čárkované čáry s popiskem na ose.
 - Settings aplikace (ozubené kolečko v horní liště): všechny sekce
-  `config.yaml` v záložkách. Telegram – bot token (od @BotFather, příkaz
+  `config.yaml` v záložkách; u každé služby je odkaz (celá URL) na stránku,
+  kde se údaje získávají (stažení Telegramu, @BotFather, stažení TWS / IB Gateway a předplatné
+  dat IB, API klíče Alpaca, aplikace cTrader Open API). Telegram – bot token (od @BotFather, příkaz
   /newbot), po zprávě botovi tlačítko „Zjistit chat ID“ doplní chat,
   „Odeslat test“ pošle zkušební zprávu; platí hned. Interactive Brokers –
   host, port a client ID, „Otestovat připojení“ (s hodnotami z dialogu);
   po uložení se zdroj hned přepojí bez restartu. Tlačítko „Jak na předplatné dat“
   otevře průvodce předplatnými IB pro živá data (postup, levná varianta bez
-  futures, varianta s futures CME Group a srovnání). Alpaca – endpoint, API key
-  a secret; projeví se po restartu. Replay – chování kroku zpět (viz
+  futures, varianta s futures CME Group a srovnání). Alpaca – API key
+  a secret (endpoint paper účtu jen v `config.yaml`); projeví se po restartu. cTrader – Client ID a secret aplikace
+  Open API, Access a Refresh token, server (demo / živý) a volitelně ID účtu,
+  „Otestovat připojení“ (s hodnotami z dialogu); zapnutí zdroje po restartu. Replay – chování kroku zpět (viz
   Replay); platí hned. Ukládají se jen změněné sekce, komentáře v souboru
   zůstanou.
 - Měřič jako v TradingView: obdélník modrý při růstu / červený při poklesu,
@@ -736,6 +740,35 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
 - S neplatnými klíči se zdroj chová korektně: chybu 401 zobrazí ve stavové
   liště a zůstanou funkční ostatní zdroje.
 
+### cTrader (forex, kovy a CFD s tick volume; objem pro IBKR)
+
+- Volitelný zdroj dat od brokera s platformou cTrader (Pepperstone,
+  IC Markets, Purple Trading…) přes cTrader Open API: všechny forexové páry
+  včetně křížových, kovy, indexová a ropná CFD – historie i živě (WebSocket,
+  JSON). Objem svíček je tick volume (počet změn ceny) jako v TradingView.
+  Stačí demo účet u brokera; bez údajů se zdroj do aplikace nepřidá.
+- Zprovoznění: na https://openapi.ctrader.com (přihlášení cTrader ID) založit
+  aplikaci (Applications → Add new app) a počkat na schválení (status se
+  změní ze „Submitted“ na „Active“); pak v Credentials zkopírovat Client ID a Secret
+  a v Sandbox získat Access a Refresh token (scope `accounts`). Údaje vložit v Settings → cTrader (nebo do `config.yaml`,
+  sekce `ctrader`) a restartovat. Přístupový token (platnost ~30 dní) se
+  obnovuje sám a nový se zapíše do `config.yaml`; bez ID účtu se použije
+  první demo (živý) účet tokenu.
+- Objem pro IBKR: forex, spotové kovy a CFD z IBKR (data MIDPOINT bez
+  objemu) dostanou objem z cTrader – bary stejného období se stáhnou
+  (a uloží do cache) a přiřadí ke svíčkám IBKR podle času (4h z hodinových,
+  denní a týdenní bar brokera k obchodnímu dni IBKR); živá svíčka bere objem
+  z živého baru cTrader. Díky tomu funguje indikátor Volume i VWAP. Symboly
+  se dohledají samy (`EUR.USD` → `EURUSD`, `IBUS500` → `US500`/`SPX500`,
+  `IBUST100` → `USTEC`/`NAS100`…); ruční přiřazení v `config.yaml`:
+
+      ctrader:
+        symbols: {IBUST100: NAS100, IBDE40: GER40}
+
+- Limity Open API: 5 dotazů na historii za sekundu (historie se stahuje po
+  úsecích, minutové bary nejvýš 3,5 dne na dotaz), heartbeat každých 10 s;
+  po výpadku se spojení i živé odběry obnoví samy.
+
 ### Interactive Brokers (TWS / IB Gateway)
 
 - Zdroj `IBKR` se připojuje k běžící TWS (demo) nebo IB Gateway s povoleným
@@ -749,7 +782,8 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
         client_id: 30
 
 - Forex IDEALPRO: dotaz typu `EURUSD`, `EUR/USD` nebo jen `EUR` nabídne
-  páry IBKR (symbol `EUR.USD`, data MIDPOINT, bez objemu) – návrhy fungují
+  páry IBKR (symbol `EUR.USD`, data MIDPOINT bez objemu – objem doplní
+  cTrader, viz výše) – návrhy fungují
   i bez běžící TWS, data se pak stahují z TWS.
 - Spotové kovy, indexová a ropná CFD od IB (data MIDPOINT, obchodují téměř
   nonstop jako kovy, indexy a ropa OANDA v TradingView): `XAUUSD` (zlato),
@@ -861,6 +895,10 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
 - `tickview/providers/alpaca.py` – volitelný zdroj Alpaca (americké akcie):
   historie feed=iex, sdílený živý websocket IEX (1m) / polling (delší
   timeframy), aktivace po zadání klíčů
+- `tickview/providers/ctrader.py` – volitelný zdroj cTrader Open API (forex,
+  kovy, CFD s tick volume): sdílené WebSocket spojení (JSON), přihlášení
+  aplikace a účtu s obnovou tokenu, historie trendbarů po úsecích, živé bary
+  ze spot událostí, mapování symbolů IBKR na názvy u brokera
 - `tickview/providers/__init__.py` – registr zdrojů (nový zdroj = jeden řádek)
 - `tickview/logic/cache.py` – SQLite cache svíček, nastavení, kreseb,
   alertů a jejich logu, seznamů symbolů (watchlistů), session replaye, COT reportu a evidence stažených intervalů; skládání historie z cache a sítě (se zastřižením chybných knotů z kotací)
@@ -874,6 +912,9 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   jako deklarace přes rozhraní indikátorů
 - `tickview/indicators/cot.py` – indikátory COT reportu (pozice skupiny,
   COT Index): zarovnání reportů na svíčky, tabulka a průvodce interpretací
+- `tickview/logic/volume.py` – objem z jiného zdroje: přiřazení barů objemu
+  ke svíčkám podle času (intraday, 4h z hodinových, denní a týdenní);
+  doplnění historie objemem dělá `fetch_history` v `logic/cache.py`
 - `tickview/logic/cot.py` – COT report: kódy trhů CFTC, mapování symbolů
   (futures, forex, CFD, krypto), čas zveřejnění se svátky v USA, zpracování
   řádků API a COT Index
@@ -903,6 +944,8 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   otevřeným stránkám
 - `tickview/services/cot.py` – stahování COT reportu z API CFTC s uložením
   do SQLite a odkladem po chybě
+- `tickview/services/volume.py` – živý objem pro IBKR forex, kovy a CFD
+  z živého baru cTrader během streamu grafu
 - `tickview/services/datafeeds.py` – externí data indikátorů (`Context.data`):
   požadavky indikátorů, data z paměti pro graf, čekání pro scanner a alerty
 - `tickview/services/notify.py` – Telegram bot (sendMessage, zjištění chat

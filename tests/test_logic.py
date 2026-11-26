@@ -100,6 +100,9 @@ class FakeProvider:
     def has_quote_spikes(self, symbol: str) -> bool:
         return False
 
+    def lacks_volume(self, symbol: str) -> bool:
+        return False
+
     async def history(self, symbol: str, timeframe: str, start_ms: int, end_ms: int) -> list[Candle]:
         self.calls.append((start_ms, end_ms))
         step = TIMEFRAME_MS[timeframe]

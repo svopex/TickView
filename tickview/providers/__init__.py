@@ -1,8 +1,8 @@
 """Registr dostupných datových zdrojů.
 
 Nový zdroj stačí přidat do seznamu PROVIDERS; zbytek aplikace se nezmění.
-Alpaca je volitelný – přidá se jen tehdy, když jsou v lokální konfiguraci
-(config.yaml) uložené API klíče.
+Alpaca a cTrader jsou volitelné – přidají se jen tehdy, když jsou v lokální
+konfiguraci (config.yaml) uložené API klíče / údaje aplikace a token.
 """
 
 from typing import Optional
@@ -11,6 +11,7 @@ from tickview.i18n import tr
 from tickview.providers.alpaca import AlpacaProvider
 from tickview.providers.base import DataProvider, split_symbol
 from tickview.providers.binance import BinanceProvider
+from tickview.providers.ctrader import CTraderProvider
 from tickview.providers.ibkr import IbkrProvider
 from tickview.providers.yahoo import YahooProvider
 
@@ -28,6 +29,10 @@ def _build_providers() -> list[DataProvider]:
     alpaca = AlpacaProvider()
     if alpaca.configured:
         providers.append(alpaca)
+    # cTrader (forex, kovy a CFD s tick volume; i objem pro IBKR) jen s údaji Open API
+    ctrader = CTraderProvider()
+    if ctrader.configured:
+        providers.append(ctrader)
     return providers
 
 

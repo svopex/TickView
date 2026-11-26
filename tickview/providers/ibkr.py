@@ -537,6 +537,10 @@ class IbkrProvider(DataProvider):
         """Data MIDPOINT (forex, kovy, CFD) mají při otevření trhu chybné knoty ze středu bid/ask."""
         return is_midpoint(symbol)
 
+    def lacks_volume(self, symbol: str) -> bool:
+        """Data MIDPOINT (forex, kovy, CFD) objem nemají – doplní ho cTrader."""
+        return is_midpoint(symbol)
+
     def price_tick(self, symbol: str, price: float) -> Optional[float]:
         """Futures: tick z tabulky, u obecného symbolu z detailů kontraktu; jinak se odhadne z dat."""
         return self._future_value(symbol, "tick", "min_tick")

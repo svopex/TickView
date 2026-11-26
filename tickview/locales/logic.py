@@ -151,6 +151,23 @@ EN = {
     "websocket Alpaca znovu připojen": "Alpaca websocket reconnected",
     "chyba websocketu Alpaca": "Alpaca websocket error",
     "websocket Alpaca odpojen: {error}": "Alpaca websocket disconnected: {error}",
+    # cTrader Open API
+    "cTrader nezná symbol {symbol}": "cTrader does not know symbol {symbol}",
+    "cTrader připojen: {broker}, účet {account}, {count} symbolů.": (
+        "cTrader connected: {broker}, account {account}, {count} symbols."
+    ),
+    "cTrader znovu připojen": "cTrader reconnected",
+    "cTrader: připojení nedávno selhalo": "cTrader: connection failed recently",
+    "cTrader: {error}": "cTrader: {error}",
+    "chybí přístupový token": "access token missing",
+    "chybí údaje aplikace Open API nebo token": "Open API application credentials or token missing",
+    "demo": "demo",
+    "živý": "live",
+    "obnova tokenu selhala: {error}": "token refresh failed: {error}",
+    "spojení s cTrader není otevřené": "cTrader connection is not open",
+    "spojení s cTrader přerušeno": "cTrader connection lost",
+    "token nemá účet {account}": "the token has no account {account}",
+    "token nemá žádný {kind} účet": "the token has no {kind} account",
     "websocket Binance znovu připojen": "Binance websocket reconnected",
     "websocket Binance odpojen: {error}": "Binance websocket disconnected: {error}",
     "TWS ({host}:{port}) není dostupná – další pokus za {seconds} s.": (
