@@ -40,6 +40,28 @@ window.TickViewChart = (function () {
   // Jak blízko (px) musí být kurzor u kresby, čáry alertu nebo indikátoru, aby ji zasáhl
   const HIT_TOLERANCE_PX = 6;
 
+  // Typy kurzoru jako v TradingView: režim nástroje z lišty → typ kurzoru;
+  // všechny jsou režimem kurzoru (výběr a tažení kreseb), liší se vzhledem,
+  // guma klikem kresbu smaže
+  const CURSOR_TYPES = {
+    cursor: 'cross',
+    cursor_dot: 'dot',
+    cursor_arrow: 'arrow',
+    cursor_demo: 'demo',
+    cursor_magic: 'magic',
+    eraser: 'eraser',
+  };
+  // Barva čar crosshairu (výchozí v Lightweight Charts); u jiných typů než
+  // kříž jsou čáry průhledné (popisky na osách zůstávají)
+  const CROSSHAIR_LINE_COLOR = '#9598A1';
+  // Prezentace: poloměr kruhu kolem kurzoru, délka a poloměr vlny po kliku
+  const DEMO_RADIUS = 18;
+  const DEMO_RIPPLE_MS = 600;
+  const DEMO_RIPPLE_RADIUS = 34;
+  // Magie: jak dlouho stopa za kurzorem doznívá (ms) a její barva
+  const MAGIC_TRAIL_MS = 700;
+  const MAGIC_COLOR = '#e040fb';
+
   // Stav jednotlivých instancí grafu (id kontejneru -> stav)
   const state = new Map();
 
@@ -765,6 +787,11 @@ window.TickViewChart = (function () {
     const overlay = document.createElement('canvas');
     overlay.className = 'lwchart-overlay';
     mainHost.appendChild(overlay);
+    // Canvas efektů kurzoru (prezentace, magie) nad kresbami: animace
+    // překresluje jen tuto vrstvu, ne všechny kresby
+    const fxCanvas = document.createElement('canvas');
+    fxCanvas.className = 'lwchart-cursor-fx';
+    mainHost.appendChild(fxCanvas);
 
     const chart = LightweightCharts.createChart(mainHost, {
       autoSize: true,
@@ -819,6 +846,10 @@ window.TickViewChart = (function () {
         // Kresba pod kurzorem v režimu kurzoru – ukáže úchopy (a u pozice štítky Target/Stop)
         hovered: null,
       },
+      // Zvolený typ kurzoru (režim z CURSOR_TYPES) a efekty prezentace / magie:
+      // pozice kurzoru, vlny po kliku a stopa [{x, y, t}]
+      cursorMode: 'cursor',
+      cursorFx: { canvas: fxCanvas, ctx: fxCanvas.getContext('2d'), pointer: null, ripples: [], trail: [], frame: 0 },
       // Indikátor pod kurzorem (čára v grafu, panel, řádek legendy) a označený
       // indikátor (id skupiny) – kolečka na čarách a zvýrazněný řádek legendy
       indicatorHover: null,
@@ -1014,7 +1045,20 @@ window.TickViewChart = (function () {
           event.preventDefault();
           return;
         }
+        const type = cursorType(s);
+        if (type === 'demo') addCursorFx(s, 'ripples', x, y);
         if (s.locked) return;
+        // Guma: klik na kresbu ji smaže (bez tažení)
+        if (type === 'eraser') {
+          const index = hitTest(s, x, y);
+          if (index >= 0) {
+            event.stopPropagation();
+            event.preventDefault();
+            removeDrawing(s, index);
+            setHover(s, null, null);
+          }
+          return;
+        }
         // Úchop táhne bod / hranu, tělo kresby celou kresbu
         const hit = hitDrawing(s, x, y);
         if (hit) {
@@ -1036,7 +1080,16 @@ window.TickViewChart = (function () {
     // Najetí myší v režimu kurzoru (jako v TradingView): kresba ukáže úchopy
     // (pozice i štítky Target / Stop), čára indikátoru kolečka a zvýrazněný řádek legendy
     mainHost.addEventListener('mousemove', (event) => {
-      if (s.overlay.mode || s.overlay.drag) return;
+      if (s.overlay.mode) return;
+      // Prezentace a magie sledují kurzor i při tažení (každý pohyb, bez throttlingu)
+      const type = cursorType(s);
+      if (hasCursorFx(type)) {
+        const { x, y } = localPoint(s, event);
+        s.cursorFx.pointer = { x: x, y: y };
+        if (type === 'magic') addCursorFx(s, 'trail', x, y);
+        else animateCursorFx(s);
+      }
+      if (s.overlay.drag) return;
       throttleHover(s, () => {
         const { x, y } = localPoint(s, event);
         const replayHit = hitReplay(s, x, y);
@@ -1046,15 +1099,19 @@ window.TickViewChart = (function () {
         // Kurzor: čára replaye (tažení SL / TP / ceny příkazu) a tlačítko ✕
         // mají přednost před kresbou
         const replayCursor = replayHit ? (replayHit.field ? 'ns-resize' : 'pointer') : null;
-        setHostCursor(mainHost, replayCursor || (hit ? hit.cursor : null));
+        // Guma kresbu jen zvýrazní, kurzor zůstává gumou
+        const drawingCursor = hit && type !== 'eraser' ? hit.cursor : null;
+        setHostCursor(mainHost, replayCursor || drawingCursor);
       });
     });
-    mainHost.addEventListener('mouseleave', () =>
+    mainHost.addEventListener('mouseleave', () => {
+      s.cursorFx.pointer = null;
+      animateCursorFx(s);
       throttleHover(s, () => {
         setHover(s, null, null);
         setHostCursor(mainHost, null);
-      })
-    );
+      });
+    });
 
     // Pravý klik v režimu kurzoru (jako v TradingView): nad kresbou ji vybere
     // a nabídne Settings / smazání, nad čárou alertu jeho úpravu a smazání,
@@ -1745,14 +1802,123 @@ window.TickViewChart = (function () {
 
   // Událost výběru nástroje: klik na už aktivní nástroj ho vypne (návrat na kurzor)
   function toolEvent(s, mode) {
-    if (mode === 'cursor') return { type: 'tool', mode: 'cursor' };
+    if (CURSOR_TYPES[mode]) return { type: 'tool', mode: mode };
     return { type: 'tool', mode: s.overlay.mode === mode ? null : mode };
   }
 
-  // Je nástroj právě aktivní? (kurzor = žádný kreslicí režim)
+  // Je nástroj právě aktivní? (bez kreslicího režimu zvolený typ kurzoru)
   function toolActive(s, mode) {
-    return ((s && s.overlay.mode) || 'cursor') === mode;
+    return (s ? s.overlay.mode || s.cursorMode : 'cursor') === mode;
   }
+
+  // Typ kurzoru grafu ('cross', 'dot', 'arrow', 'demo', 'magic', 'eraser')
+  function cursorType(s) {
+    return CURSOR_TYPES[s.cursorMode] || 'cross';
+  }
+
+  // Volby crosshairu podle typu kurzoru: čáry jen u kříže (u ostatních
+  // průhledné, popisky na osách zůstávají)
+  function crosshairLineOptions(s) {
+    const color = cursorType(s) === 'cross' ? CROSSHAIR_LINE_COLOR : 'rgba(0, 0, 0, 0)';
+    return { vertLine: { color: color }, horzLine: { color: color } };
+  }
+
+  // Má typ kurzoru animované efekty (prezentace, magie)?
+  function hasCursorFx(type) {
+    return type === 'demo' || type === 'magic';
+  }
+
+  // Projeví typ kurzoru: atribut data-cursor-type kontejneru (CSS kurzor nad
+  // grafem i panely), čáry crosshairu a vyčištění efektů prezentace / magie
+  function applyCursorType(s) {
+    s.container.dataset.cursorType = cursorType(s);
+    const crosshair = crosshairLineOptions(s);
+    s.chart.applyOptions({ crosshair: crosshair });
+    for (const pane of s.panesMap.values()) pane.chart.applyOptions({ crosshair: crosshair });
+    s.cursorFx.ripples = [];
+    s.cursorFx.trail = [];
+    s.cursorFx.pointer = null;
+    animateCursorFx(s);
+  }
+
+  // Přidá vlnu po kliku (prezentace) nebo bod stopy (magie) a spustí animaci
+  function addCursorFx(s, list, x, y) {
+    s.cursorFx[list].push({ x: x, y: y, t: performance.now() });
+    animateCursorFx(s);
+  }
+
+  // Animace efektů kurzoru: překresluje jejich vrstvu po snímcích, dokud
+  // efekty doznívají (vlny, stopa); kruh prezentace se překreslí s pohybem myši
+  function animateCursorFx(s) {
+    const fx = s.cursorFx;
+    if (fx.frame) return;
+    fx.frame = requestAnimationFrame(() => {
+      fx.frame = 0;
+      if (state.get(s.elementId) !== s) return;
+      const now = performance.now();
+      // Body jsou seřazené podle času – doznělé jsou na začátku pole
+      while (fx.ripples.length && now - fx.ripples[0].t >= DEMO_RIPPLE_MS) fx.ripples.shift();
+      while (fx.trail.length && now - fx.trail[0].t >= MAGIC_TRAIL_MS) fx.trail.shift();
+      renderCursorFx(s, now);
+      if (fx.ripples.length || fx.trail.length) animateCursorFx(s);
+    });
+  }
+
+  // Vykreslí efekty kurzoru do jejich vrstvy (jen plocha grafu, souřadnice
+  // jako kresby): u prezentace průsvitný kruh kolem kurzoru a rozpínající se
+  // vlny po kliku, u magie doznívající stopu (barva jednou, průhlednost přes
+  // globalAlpha – bez parsování barev a rozmazání stínu na každou úsečku)
+  function renderCursorFx(s, now) {
+    const fx = s.cursorFx;
+    if (!fx.canvas.clientWidth || !fx.canvas.clientHeight) return;
+    const { ctx } = prepareCanvas(fx.canvas, fx.ctx);
+    if (!fx.pointer && !fx.ripples.length && !fx.trail.length) return;
+    const pane = getPaneGeometry(s);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(pane.offsetX, pane.offsetY, pane.width, pane.height);
+    ctx.clip();
+    ctx.translate(pane.offsetX, pane.offsetY);
+    ctx.strokeStyle = HANDLE_COLOR;
+    if (cursorType(s) === 'demo' && fx.pointer) {
+      ctx.fillStyle = HANDLE_COLOR;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(fx.pointer.x, fx.pointer.y, DEMO_RADIUS, 0, Math.PI * 2);
+      ctx.globalAlpha = 0.18;
+      ctx.fill();
+      ctx.globalAlpha = 0.5;
+      ctx.stroke();
+    }
+    ctx.lineWidth = 2;
+    for (const ripple of fx.ripples) {
+      const progress = (now - ripple.t) / DEMO_RIPPLE_MS;
+      ctx.globalAlpha = 0.8 * (1 - progress);
+      ctx.beginPath();
+      ctx.arc(ripple.x, ripple.y, DEMO_RADIUS / 2 + (DEMO_RIPPLE_RADIUS - DEMO_RADIUS / 2) * progress, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    // Stopa magie: úsečky mezi body, starší průhlednější a tenčí, pod nimi
+    // širší průsvitná čára jako záře
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = MAGIC_COLOR;
+    for (let k = 1; k < fx.trail.length; k++) {
+      const a = fx.trail[k - 1];
+      const b = fx.trail[k];
+      const life = Math.max(0, 1 - (now - b.t) / MAGIC_TRAIL_MS);
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.globalAlpha = 0.25 * life;
+      ctx.lineWidth = 3 + 6 * life;
+      ctx.stroke();
+      ctx.globalAlpha = life;
+      ctx.lineWidth = 1 + 3 * life;
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
 
   // Flyout nabídka skupiny nástrojů (pozice u tlačítka, jako v TradingView):
   // nadpisy sekcí, nástroje a u každého hvězdička pro oblíbené
@@ -1769,7 +1935,8 @@ window.TickViewChart = (function () {
     const flyout = el('div', 'tool-flyout');
     for (const tool of group.tools) {
       if (!tool.mode) {
-        flyout.appendChild(el('div', 'tool-flyout-section', tool.section || ''));
+        // Sekce bez nadpisu = oddělovač (např. před gumou ve skupině kurzoru)
+        flyout.appendChild(tool.section ? el('div', 'tool-flyout-section', tool.section) : el('div', 'drawing-contextmenu-separator'));
         continue;
       }
       const item = flyoutItem(tool.icon, tool.tooltip, toolActive(s, tool.mode), toolEvent(s, tool.mode), s);
@@ -2791,6 +2958,7 @@ window.TickViewChart = (function () {
       rightPriceScale: { borderColor: theme.border },
       // Časová osa je vidět jen v hlavním grafu; panely se synchronizují rozsahem
       timeScale: { borderColor: theme.border, visible: false },
+      crosshair: crosshairLineOptions(s),
     });
 
     const priceFormat = panePriceFormat(s, pane);
@@ -3344,12 +3512,21 @@ window.TickViewChart = (function () {
   function setDrawingMode(id, mode) {
     const s = state.get(id);
     if (!s) return;
+    // Typ kurzoru (Nitkový kříž, Tečka, …, Guma) = režim bez kreslení; null
+    // (návrat po dokončení kresby) ponechá naposledy zvolený typ
+    if (CURSOR_TYPES[mode]) {
+      if (s.cursorMode !== mode) {
+        s.cursorMode = mode;
+        applyCursorType(s);
+      }
+      mode = null;
+    }
     s.overlay.mode = mode || null;
     s.overlay.pending = null;
     s.overlay.previewPoint = null;
     if (s.overlay.mode !== 'measure') s.measure = null;
     // Aktivní kreslicí nástroj = crosshair kurzor na overlay (v kurzoru je crosshair grafu)
-    s.overlay.canvas.classList.toggle('drawing-active', !!mode && mode !== 'cursor');
+    s.overlay.canvas.classList.toggle('drawing-active', !!mode);
     redrawOverlay(s);
     // Zvýraznění aktivního nástroje v panelu oblíbených (bez přestavby panelu)
     // a lišta kresby (výběr šablony nového objektu)

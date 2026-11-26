@@ -491,6 +491,7 @@
    panelem: průchodné myši, overlay v módě kreslení zachytává kliky.
    Canvas je replaced element, takže inset samo o sobě nenatáhne – je potřeba 100 %. */
 .lwchart-overlay,
+.lwchart-cursor-fx,
 .lwchart-pane-markers {
   position: absolute;
   inset: 0;
@@ -2887,6 +2888,22 @@
 .legend-status.replay {
   background: #9c27b0;
   box-shadow: 0 0 0 3px rgba(156, 39, 176, 0.25);
+}
+
+/* Typ kurzoru grafu (atribut data-cursor-type kontejneru, jako v TradingView):
+   kříž nechává kurzor Lightweight Charts, tečka a guma mají vlastní obrázek,
+   šipka, prezentace a magie běžnou šipku; platí pro hlavní graf i panely,
+   kurzor nad kresbou / úchopem (data-cursor níže) má přednost */
+.chart-container[data-cursor-type="dot"] canvas:not(.drawing-active) {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12'%3E%3Ccircle cx='6' cy='6' r='3' fill='%232962ff' stroke='white' stroke-width='1.2'/%3E%3C/svg%3E") 6 6, crosshair !important;
+}
+
+.chart-container:is([data-cursor-type="arrow"], [data-cursor-type="demo"], [data-cursor-type="magic"]) canvas:not(.drawing-active) {
+  cursor: default !important;
+}
+
+.chart-container[data-cursor-type="eraser"] canvas:not(.drawing-active) {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 28 28' stroke='black' stroke-width='1.4' stroke-linejoin='round'%3E%3Cpath d='M16.5 5.5 23 12 13 22H8.5L5 18.5z' fill='white'/%3E%3Cpath d='M11 11l6.5 6.5' fill='none'/%3E%3C/svg%3E") 5 17, default !important;
 }
 
 /* Kurzor nad grafem v režimu kurzoru (atribut data-cursor): nad kresbou

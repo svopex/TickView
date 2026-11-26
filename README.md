@@ -659,8 +659,15 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   střední linie, u obdélníku uvnitř, u Fibonacci a štětce nad / uprostřed /
   pod jejich ohraničením. Text má popis sám a pozice (Long / Short) mají
   vlastní popisky s výpočtem.
+- Typy kurzoru jako v TradingView (flyout první skupiny lišty): Nitkový
+  kříž (výchozí, čáry crosshairu), Tečka, Šipka, Prezentace (průsvitný kruh
+  kolem kurzoru a vlna po kliku), Magie (doznívající stopa za kurzorem)
+  a Guma (klik na kresbu ji smaže); u typů mimo kříž jsou čáry crosshairu
+  skryté a popisky na osách zůstávají. Všechny typy vybírají a táhnou
+  kresby, po dokončení kresby se vrací naposledy zvolený typ (ukládá se)
+  a tlačítka skupin lišty ukazují ikonu naposledy zvoleného nástroje.
 - Oblíbené nástroje: ve flyout nabídce nástrojů je u každého nástroje
-  hvězdička, u skupin s jediným nástrojem (kurzor, měřič) pravý klik na
+  (i u typů kurzoru) hvězdička, u skupiny s jediným nástrojem pravý klik na
   tlačítko lišty. Oblíbené nástroje se ukazují v plovoucím panelu (výchozí
   pozice nahoře uprostřed grafu), který lze přetáhnout za úchop ⋮⋮ kamkoli
   v okně, i nad horní lištu;

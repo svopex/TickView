@@ -43,7 +43,12 @@ EN = {
     "Všechny zdroje": "All sources",
     # Kreslení
     "Kurzor (výběr a tažení kreseb)": "Cursor (select and drag drawings)",
-    "Kurzor": "Cursor",
+    "Nitkový kříž": "Cross",
+    "Tečka": "Dot",
+    "Šipka": "Arrow",
+    "Prezentace": "Demonstration",
+    "Magie": "Magic",
+    "Guma (klik na kresbu ji smaže)": "Eraser (click a drawing to delete it)",
     "Čáry, kanály a pitchforky": "Lines, channels and pitchforks",
     "Čáry": "Lines",
     "Trendová čára": "Trend line",

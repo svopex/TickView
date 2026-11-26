@@ -313,6 +313,8 @@ async def _build_index(
     state: dict = {
         "dark": dark,
         "drawing_mode": None,
+        # Naposledy zvolený typ kurzoru (režim z CURSOR_MODES)
+        "cursor_mode": "cursor",
         "show_volume": show_volume,
         "chart_style": chart_style,
         # Oblíbené typy grafu a timeframy (tlačítka v horní liště, hvězdičky
@@ -897,8 +899,18 @@ async def _build_index(
     # Skupiny nástrojů lišty (jako v TradingView): id, ikona, tooltip, nástroje;
     # položka {"section": …} je jen nadpis sekce ve flyout nabídce
     DRAWING_GROUPS = [
+        # Typy kurzoru jako v TradingView (všechny vybírají a táhnou kresby,
+        # liší se vzhledem); prázdná sekce = oddělovač před gumou
         {"id": "g_cursor", "icon": "cursor", "tooltip": tr("Kurzor (výběr a tažení kreseb)"),
-         "tools": [{"mode": "cursor", "tooltip": tr("Kurzor"), "icon": "cursor"}]},
+         "tools": [
+             {"mode": "cursor", "tooltip": tr("Nitkový kříž"), "icon": "cursor"},
+             {"mode": "cursor_dot", "tooltip": tr("Tečka"), "icon": "cursor_dot"},
+             {"mode": "cursor_arrow", "tooltip": tr("Šipka"), "icon": "cursor_arrow"},
+             {"mode": "cursor_demo", "tooltip": tr("Prezentace"), "icon": "cursor_demo"},
+             {"mode": "cursor_magic", "tooltip": tr("Magie"), "icon": "cursor_magic"},
+             {"section": ""},
+             {"mode": "eraser", "tooltip": tr("Guma (klik na kresbu ji smaže)"), "icon": "eraser"},
+         ]},
         {"id": "g_lines", "icon": "trend", "tooltip": tr("Čáry, kanály a pitchforky"),
          "tools": [
              {"section": tr("Čáry")},
@@ -941,6 +953,10 @@ async def _build_index(
     ]
     # Režimy všech nástrojů v pořadí lišty (oblíbené v plovoucím panelu)
     TOOL_MODES = [tool["mode"] for group in DRAWING_GROUPS for tool in group["tools"] if "mode" in tool]
+    # Režimy kurzoru (bez kreslení); po dokončení kresby se vrací poslední z nich
+    CURSOR_MODES = [
+        tool["mode"] for group in DRAWING_GROUPS if group["id"] == "g_cursor" for tool in group["tools"] if "mode" in tool
+    ]
     DRAWING_LABELS = {
         "hline": tr("Horizontální linie"),
         "vline": tr("Svislá linie"),
@@ -964,22 +980,28 @@ async def _build_index(
     EMOJIS = ["😀", "🚀", "💰", "📈", "📉", "👍", "⚡", "🎯"]
 
     async def set_drawing_mode(mode) -> None:
-        # Aktivní nástroj zvýrazníme na skupině, do které patří (jako v TradingView);
-        # None (JS po dokončení kresby vrací kurzor) znamená režim kurzoru.
-        # Nástroj platí pro všechny grafy rozložení – kreslit lze do kteréhokoli
-        mode = mode or "cursor"
+        # Aktivní nástroj zvýrazníme na skupině, do které patří, a skupina
+        # převezme jeho ikonu (jako v TradingView); None (JS po dokončení
+        # kresby vrací kurzor) znamená naposledy zvolený typ kurzoru, který se
+        # ukládá. Nástroj platí pro všechny grafy rozložení.
+        mode = mode or state["cursor_mode"]
         state["drawing_mode"] = mode
+        if mode in CURSOR_MODES and mode != state["cursor_mode"]:
+            state["cursor_mode"] = mode
+            await cache.set_setting("cursor_mode", mode)
         for group in DRAWING_GROUPS:
             button = drawing_buttons.get(group["id"])
             if not button:
                 continue
-            group_modes = [tool["mode"] for tool in group["tools"] if "mode" in tool]
+            tool = next((tool for tool in group["tools"] if tool.get("mode") == mode), None)
             button.classes(
-                add="drawing-btn-active" if mode in group_modes else "",
-                remove="" if mode in group_modes else "drawing-btn-active",
+                add="drawing-btn-active" if tool else "",
+                remove="" if tool else "drawing-btn-active",
             )
+            if tool:
+                drawing_icons[group["id"]].content = svg(tool["icon"])
         for pane in panes:
-            await pane.chart.set_drawing_mode(None if mode == "cursor" else mode)
+            await pane.chart.set_drawing_mode(mode)
 
     async def load_drawing_defaults() -> dict:
         # Výchozí styl nových kreseb: uživatelská výchozí šablona typu kresby
@@ -1191,7 +1213,7 @@ async def _build_index(
         if "drawing_config" not in state:
             state["drawing_config"] = await load_drawing_config()
         chart.set_drawing_config(state["drawing_config"])
-        await chart.set_drawing_mode(None if state["drawing_mode"] in (None, "cursor") else state["drawing_mode"])
+        await chart.set_drawing_mode(state["drawing_mode"] or state["cursor_mode"])
         await chart.set_magnet(state["magnet"])
         await chart.set_keep_tool(state.get("keep_tool", False))
         await chart.set_locked(state.get("locked", False))
@@ -2158,7 +2180,9 @@ async def _build_index(
         # společné nastavení kreslení a načte svůj symbol
         if not state.get("page_ready"):
             state["page_ready"] = True
-            await set_drawing_mode("cursor")
+            # Naposledy zvolený typ kurzoru (Nitkový kříž, Tečka, …) přetrvá restart
+            saved_cursor = await cache.get_setting("cursor_mode", "cursor")
+            await set_drawing_mode(saved_cursor if saved_cursor in CURSOR_MODES else None)
             paint_action("magnet", state["magnet"] != "off")
             await restore_favorites()
             mark_active(timezone_items, state["timezone"])
@@ -3592,6 +3616,8 @@ async def _build_index(
                         # Skupinová tlačítka: klik otevře flyout nabídku (JS) a
                         # výběr nástroje přijde zpět přes frontu událostí
                         drawing_buttons = {}
+                        # Ikony skupin (skupina ukazuje ikonu naposledy zvoleného nástroje)
+                        drawing_icons = {}
                         for group in DRAWING_GROUPS:
                             with (
                                 ui.button(color=None)
@@ -3599,7 +3625,7 @@ async def _build_index(
                                 .classes("drawing-btn")
                                 .tooltip(group["tooltip"]) as group_button
                             ):
-                                icon_html(group["icon"])
+                                drawing_icons[group["id"]] = icon_html(group["icon"])
                             drawing_buttons[group["id"]] = group_button
                         ui.separator().props("vertical").classes("toolbar-sep")
                         # Akční tlačítka (zpracovává je on_drawing_finished přes frontu)

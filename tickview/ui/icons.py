@@ -18,6 +18,13 @@ _ICON_PATHS: dict[str, str] = {
     "more": '<circle cx="7" cy="14" r="1.6"/><circle cx="14" cy="14" r="1.6"/><circle cx="21" cy="14" r="1.6"/>',
     # Kurzor: kříž (crosshair)
     "cursor": '<path d="M14 5v7M14 16v7M5 14h7M16 14h7"/>',
+    # Typy kurzoru: tečka, šipka, prezentace (šipka v kruhu), magie (hůlka s
+    # jiskrami) a guma
+    "cursor_dot": '<circle cx="14" cy="14" r="2.2" fill="currentColor"/>',
+    "cursor_arrow": '<path d="M9 5.5v15.5l4.2-4.3 3 6.3 2.6-1.2-3-6.2h6z"/>',
+    "cursor_demo": '<circle cx="14" cy="14" r="9.5"/><path d="M11.5 8.5v10l2.7-2.7 1.9 3.9 1.6-.8-1.9-3.8h3.7z"/>',
+    "cursor_magic": '<path d="M6 22 17.5 10.5M15.5 8.5l4 4"/><path d="M21 4.5v3M19.5 6h3M24 10v2M23 11h2M11 5v2M10 6h2"/>',
+    "eraser": '<path d="M16.5 5.5 23 12 13 22H8.5L5 18.5z"/><path d="M11 11l6.5 6.5M13 22h10"/>',
     # Čáry
     "trend": '<circle cx="7" cy="21" r="1.8"/><circle cx="21" cy="7" r="1.8"/><path d="M8.3 19.7 19.7 8.3"/>',
     "ray": '<circle cx="7" cy="21" r="1.8"/><path d="M8.3 19.7 23.5 4.5"/>',
