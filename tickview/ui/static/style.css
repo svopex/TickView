@@ -2889,15 +2889,38 @@
   box-shadow: 0 0 0 3px rgba(156, 39, 176, 0.25);
 }
 
-/* Kurzor nad čarou replaye (tažení SL / TP / ceny příkazu) a nad tlačítkem ✕ */
-.lwchart-host.replay-line-hover,
-.lwchart-host.replay-line-hover canvas {
+/* Kurzor nad grafem v režimu kurzoru (atribut data-cursor): nad kresbou
+   ruka, nad úchopem posun / změna velikosti podle úchopu, nad čárou replaye
+   ns-resize, nad tlačítkem ✕ ruka; overlay s aktivním kreslicím nástrojem si
+   nechává crosshair */
+.lwchart-host[data-cursor="pointer"],
+.lwchart-host[data-cursor="pointer"] canvas:not(.drawing-active) {
+  cursor: pointer !important;
+}
+
+.lwchart-host[data-cursor="move"],
+.lwchart-host[data-cursor="move"] canvas:not(.drawing-active) {
+  cursor: move !important;
+}
+
+.lwchart-host[data-cursor="ns-resize"],
+.lwchart-host[data-cursor="ns-resize"] canvas:not(.drawing-active) {
   cursor: ns-resize !important;
 }
 
-.lwchart-host.replay-button-hover,
-.lwchart-host.replay-button-hover canvas {
-  cursor: pointer !important;
+.lwchart-host[data-cursor="ew-resize"],
+.lwchart-host[data-cursor="ew-resize"] canvas:not(.drawing-active) {
+  cursor: ew-resize !important;
+}
+
+.lwchart-host[data-cursor="nwse-resize"],
+.lwchart-host[data-cursor="nwse-resize"] canvas:not(.drawing-active) {
+  cursor: nwse-resize !important;
+}
+
+.lwchart-host[data-cursor="nesw-resize"],
+.lwchart-host[data-cursor="nesw-resize"] canvas:not(.drawing-active) {
+  cursor: nesw-resize !important;
 }
 
 /* Tlačítko Replay v horní liště: s otevřenou session zvýrazněné */

@@ -197,7 +197,13 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   position (viz níže), měřič; výběr
   kresby klikem s úchopy a tažením (celá kresba i jednotlivé body; výběr
   zůstává i po uložení); úchopy jsou jako v TradingView kolečka (u pozice
-  Target a Stop čtverečky) a ukážou se už při najetí myší na kresbu; kresby lze umístit i mimo existující svíčky
+  Target a Stop čtverečky), ukážou se už při najetí myší na kresbu a jdou
+  chytit hned prvním klikem (bez předchozího výběru); klik dovnitř plochy
+  (obdélník, kanál, pitchfork, Fibonacci, pozice, text) táhne celou kresbu;
+  obdélník má 8 úchopů – rohy mění oba rozměry, středy hran jen jeden
+  (u prodlouženého obdélníku zůstávají úchopy v jeho bodech); kurzor myši
+  ukazuje, co se tažením stane (ruka nad kresbou, šipky změny velikosti nad
+  úchopy); kresby lze umístit i mimo existující svíčky
   (vpravo do budoucna, přes víkendové mezery), mazání
   přes pravoklikové menu („Smazat objekt“), Del nebo koš, magnet na OHLC,
   tužka (nástroj zůstává aktivní), zámek a skrytí kreseb; text i sticker se

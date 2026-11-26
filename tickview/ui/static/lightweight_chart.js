@@ -1015,21 +1015,13 @@ window.TickViewChart = (function () {
           return;
         }
         if (s.locked) return;
-        const hit = hitHandle(s, x, y);
+        // Úchop táhne bod / hranu, tělo kresby celou kresbu
+        const hit = hitDrawing(s, x, y);
         if (hit) {
           event.stopPropagation();
           event.preventDefault();
           s.overlay.selected = hit.index;
           s.overlay.drag = startDrag(s, hit.index, hit.handle, x, y);
-          redrawOverlay(s);
-          return;
-        }
-        const index = hitTest(s, x, y);
-        if (index >= 0) {
-          event.stopPropagation();
-          event.preventDefault();
-          s.overlay.selected = index;
-          s.overlay.drag = startDrag(s, index, 'body', x, y);
           selectIndicator(s, null);
           redrawOverlay(s);
           return;
@@ -1048,14 +1040,21 @@ window.TickViewChart = (function () {
       throttleHover(s, () => {
         const { x, y } = localPoint(s, event);
         const replayHit = hitReplay(s, x, y);
-        mainHost.classList.toggle('replay-line-hover', !!(replayHit && replayHit.field));
-        mainHost.classList.toggle('replay-button-hover', !!(replayHit && !replayHit.field));
-        const index = s.locked ? -1 : hitTest(s, x, y);
-        const drawing = index >= 0 ? s.overlay.drawings[index] : null;
+        const hit = s.locked ? null : hitDrawing(s, x, y);
+        const drawing = hit ? s.overlay.drawings[hit.index] : null;
         setHover(s, drawing, drawing ? null : hitIndicator(s, x, y));
+        // Kurzor: čára replaye (tažení SL / TP / ceny příkazu) a tlačítko ✕
+        // mají přednost před kresbou
+        const replayCursor = replayHit ? (replayHit.field ? 'ns-resize' : 'pointer') : null;
+        setHostCursor(mainHost, replayCursor || (hit ? hit.cursor : null));
       });
     });
-    mainHost.addEventListener('mouseleave', () => throttleHover(s, () => setHover(s, null, null)));
+    mainHost.addEventListener('mouseleave', () =>
+      throttleHover(s, () => {
+        setHover(s, null, null);
+        setHostCursor(mainHost, null);
+      })
+    );
 
     // Pravý klik v režimu kurzoru (jako v TradingView): nad kresbou ji vybere
     // a nabídne Settings / smazání, nad čárou alertu jeho úpravu a smazání,
@@ -1549,6 +1548,15 @@ window.TickViewChart = (function () {
       s.hoverTask = null;
       if (task && state.get(s.elementId) === s) task();
     });
+  }
+
+  // Kurzor myši nad grafem v režimu kurzoru (nad kresbou pointer, nad úchopem
+  // move / resize, nad čárou replaye ns-resize) – přes atribut data-cursor
+  // a CSS; null = výchozí kurzor grafu; DOM se mění jen při změně kurzoru
+  function setHostCursor(host, cursor) {
+    if ((host.dataset.cursor || null) === cursor) return;
+    if (cursor) host.dataset.cursor = cursor;
+    else delete host.dataset.cursor;
   }
 
   // Kresba a indikátor pod kurzorem; při změně překreslí úchopy, kolečka a legendu
@@ -3659,14 +3667,55 @@ window.TickViewChart = (function () {
     }
   }
 
-  // Úchopy kresby v pixelech [{x, y, handle}] (null = bod mimo graf): body
-  // kresby, u pozice vlastní úchopy (vstup, cíl, stop, šířka)
+  // Úchopy kresby v pixelech [{x, y, handle, cursor?}] (null = bod mimo graf):
+  // body kresby a obdélníku mají úchop {time, price} = index bodu, jehož čas /
+  // cenu tažení mění (null = rozměr se nemění); pozice má vlastní číselné
+  // úchopy (vstup, cíl, stop, šířka)
   function drawingHandles(s, drawing) {
     if (isPosition(drawing)) return positionHandles(s, drawing);
+    if (drawing.kind === 'rect' && drawing.points.length >= 2) return rectHandles(s, drawing);
     return drawing.points.map((point, index) => {
       const pixel = pointToPixel(s, point);
-      return pixel ? { x: pixel.x, y: pixel.y, handle: index } : null;
+      return pixel ? { x: pixel.x, y: pixel.y, handle: { time: index, price: index } } : null;
     });
+  }
+
+  // Úchopy obdélníku jako v TradingView: 4 rohy (mění čas i cenu) a 4 středy
+  // hran (mění jen jeden rozměr); úchopy jsou v bodech kresby i u prodlouženého
+  // obdélníku; cursor = kurzor myši nad úchopem
+  function rectHandles(s, drawing) {
+    const a = pointToPixel(s, drawing.points[0]);
+    const b = pointToPixel(s, drawing.points[1]);
+    if (!a || !b) return [];
+    const midX = (a.x + b.x) / 2;
+    const midY = (a.y + b.y) / 2;
+    // Rohy v bodech a, b leží na jedné úhlopříčce, zbylé dva na druhé: leží-li
+    // a vlevo nahoře / vpravo dole od b, je jejich kurzor nwse, jinak nesw
+    const pointsDiagonal = (a.x <= b.x) === (a.y <= b.y) ? 'nwse-resize' : 'nesw-resize';
+    const otherDiagonal = pointsDiagonal === 'nwse-resize' ? 'nesw-resize' : 'nwse-resize';
+    return [
+      { x: a.x, y: a.y, handle: { time: 0, price: 0 }, cursor: pointsDiagonal },
+      { x: b.x, y: b.y, handle: { time: 1, price: 1 }, cursor: pointsDiagonal },
+      { x: b.x, y: a.y, handle: { time: 1, price: 0 }, cursor: otherDiagonal },
+      { x: a.x, y: b.y, handle: { time: 0, price: 1 }, cursor: otherDiagonal },
+      { x: midX, y: a.y, handle: { time: null, price: 0 }, cursor: 'ns-resize' },
+      { x: midX, y: b.y, handle: { time: null, price: 1 }, cursor: 'ns-resize' },
+      { x: a.x, y: midY, handle: { time: 0, price: null }, cursor: 'ew-resize' },
+      { x: b.x, y: midY, handle: { time: 1, price: null }, cursor: 'ew-resize' },
+    ];
+  }
+
+  // Zda bod (px, py) leží v rovnoběžníku origin + u·e1 + v·e2, kde 0 ≤ u ≤ 1
+  // a 0 ≤ v ≤ vMax (vMax = Infinity → pás nekonečný ve směru e2, pitchfork);
+  // u, v z rozkladu vektoru do báze e1, e2 (Cramerovo pravidlo)
+  function inParallelogram(px, py, origin, e1, e2, vMax) {
+    const det = e1.x * e2.y - e1.y * e2.x;
+    if (Math.abs(det) < 1e-9) return false;
+    const dx = px - origin.x;
+    const dy = py - origin.y;
+    const u = (dx * e2.y - dy * e2.x) / det;
+    const v = (e1.x * dy - e1.y * dx) / det;
+    return u >= 0 && u <= 1 && v >= 0 && v <= vMax;
   }
 
   // Vzdálenost bodu od úsečky (pro test, zda kurzor míří na kresbu)
@@ -3679,14 +3728,40 @@ window.TickViewChart = (function () {
     return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
   }
 
-  // Překrytí: najde koncový bod (úchop) blízko kurzoru u označené kresby
-  function hitHandle(s, x, y) {
-    const index = s.overlay.selected;
-    if (index < 0) return null;
-    const drawing = s.overlay.drawings[index];
-    if (!drawing || drawing.kind === 'brush') return null;
-    const handle = drawingHandles(s, drawing).find((h) => h && Math.hypot(x - h.x, y - h.y) <= 8);
-    return handle ? { index: index, handle: handle.handle } : null;
+  // Poloměr zásahu úchopu v px
+  const HANDLE_HIT_PX = 8;
+
+  // Nejbližší úchop kresby v dosahu HANDLE_HIT_PX od kurzoru, jinak null
+  function nearestHandle(s, drawing, x, y) {
+    let best = null;
+    let bestDistance = HANDLE_HIT_PX;
+    for (const h of drawingHandles(s, drawing)) {
+      if (!h) continue;
+      const distance = Math.hypot(x - h.x, y - h.y);
+      if (distance <= bestDistance) {
+        best = h;
+        bestDistance = distance;
+      }
+    }
+    return best;
+  }
+
+  // Překrytí: co je pod kurzorem – úchop označené kresby, kresby s úchopy
+  // ukázanými najetím nebo kresby pod kurzorem (úchopy jdou chytit hned
+  // prvním klikem, jako v TradingView), jinak tělo kresby pod kurzorem.
+  // Vrací {index, handle (úchop nebo 'body'), cursor} nebo null.
+  function hitDrawing(s, x, y) {
+    const index = hitTest(s, x, y);
+    const checked = new Set();
+    for (const candidate of [s.overlay.selected, s.overlay.drawings.indexOf(s.overlay.hovered), index]) {
+      if (candidate < 0 || checked.has(candidate)) continue;
+      checked.add(candidate);
+      const drawing = s.overlay.drawings[candidate];
+      if (!drawing || drawing.kind === 'brush') continue;
+      const handle = nearestHandle(s, drawing, x, y);
+      if (handle) return { index: candidate, handle: handle.handle, cursor: handle.cursor || 'move' };
+    }
+    return index >= 0 ? { index: index, handle: 'body', cursor: 'pointer' } : null;
   }
 
   // Překrytí: najde kresbu pod kurzorem (index v s.overlay.drawings) nebo -1
@@ -3709,26 +3784,29 @@ window.TickViewChart = (function () {
         const box = textLayout(s, drawing, points[0]);
         if (x >= box.x - 3 && x <= box.x + box.w + 3 && y >= box.y - 3 && y <= box.y + box.h + 3) return i;
       } else if (drawing.kind === 'rect') {
-        const options = drawing.options || {};
-        // Prodloužená strana sahá až k okraji grafu (nekonečno stačí pro rozsah)
-        const box = rectBounds(points[0], points[1], options, Infinity);
-        // Okraje obdélníku (ne vnitřek, aby se dalo kreslit přes něj); svislá
-        // hrana na prodloužené straně není, takže ji nelze zasáhnout
-        const nearSide = (!options.extendLeft && Math.abs(x - box.left) <= threshold) ||
-          (!options.extendRight && Math.abs(x - box.right) <= threshold);
-        if (nearSide && y >= box.top - threshold && y <= box.bottom + threshold) return i;
+        // Okraje i vnitřek obdélníku (klik dovnitř táhne celou kresbu jako
+        // v TradingView); prodloužená strana sahá až k okraji grafu
+        // (nekonečno stačí pro rozsah)
+        if (points.length < 2) continue;
+        const box = rectBounds(points[0], points[1], drawing.options || {}, Infinity);
         if (
-          (Math.abs(y - box.top) <= threshold || Math.abs(y - box.bottom) <= threshold) &&
-          x >= box.left - threshold && x <= box.right + threshold
+          x >= box.left - threshold && x <= box.right + threshold &&
+          y >= box.top - threshold && y <= box.bottom + threshold
         ) return i;
       } else if (drawing.kind === 'fib' || drawing.kind === 'fibext') {
+        // Pás mezi krajními úrovněmi (čáry úrovní i prostor mezi nimi)
+        if (points.length < 2) continue;
         const [a, b] = points;
         const x1 = Math.min(a.x, b.x);
         const x2 = Math.max(a.x, b.x);
-        for (const level of fibLevels(drawing.kind)) {
-          const yLevel = b.y + (a.y - b.y) * level;
-          if (x >= x1 - threshold && x <= x2 + threshold && Math.abs(y - yLevel) <= threshold) return i;
-        }
+        // Úrovně jsou seřazené vzestupně – krajní jsou první a poslední
+        const levels = fibLevels(drawing.kind);
+        const yA = b.y + (a.y - b.y) * levels[0];
+        const yB = b.y + (a.y - b.y) * levels[levels.length - 1];
+        if (
+          x >= x1 - threshold && x <= x2 + threshold &&
+          y >= Math.min(yA, yB) - threshold && y <= Math.max(yA, yB) + threshold
+        ) return i;
       } else if (drawing.kind === 'brush') {
         for (let k = 1; k < points.length; k++) {
           if (distToSegment(x, y, points[k - 1].x, points[k - 1].y, points[k].x, points[k].y) <= threshold) return i;
@@ -3752,6 +3830,7 @@ window.TickViewChart = (function () {
         if (!c) continue;
         const off = channelOffset(a, b, c);
         if (distToSegment(x, y, a.x + off.x, a.y + off.y, b.x + off.x, b.y + off.y) <= threshold) return i;
+        if (inParallelogram(x, y, a, { x: b.x - a.x, y: b.y - a.y }, off, 1)) return i;
       } else if (drawing.kind === 'pitchfork') {
         // Tři linie: A→M(B,C) a rovnoběžky z B a C (testujeme viditelnou část);
         // při dvoubodové (rozpracované) kresbě testujeme jen spojnici A→B
@@ -3764,6 +3843,8 @@ window.TickViewChart = (function () {
           if (distToSegment(x, y, a.x, a.y, midX, midY) <= threshold) return i;
           if (distToSegment(x, y, b.x, b.y, midX + (b.x - a.x), midY + (b.y - a.y)) <= threshold) return i;
           if (distToSegment(x, y, c.x, c.y, midX + (c.x - a.x), midY + (c.y - a.y)) <= threshold) return i;
+          // Prostor mezi krajními linkami (z B a C ve směru A→střed BC)
+          if (inParallelogram(x, y, b, { x: c.x - b.x, y: c.y - b.y }, { x: midX - a.x, y: midY - a.y }, Infinity)) return i;
         }
       } else {
         // trend / ray / extended: vzdálenost k úsečce mezi body
@@ -3775,7 +3856,7 @@ window.TickViewChart = (function () {
   }
 
   // Tažení kresby: úchop = posun koncového bodu, body = posun celé kresby
-  // Začátek tažení: kresba, úchop (index bodu nebo 'body'), výchozí pozice
+  // Začátek tažení: kresba, úchop ({time, price}, číslo u pozice nebo 'body'), výchozí pozice
   // kurzoru a kopie bodů – posun se vždy počítá od začátku tažení (bez driftu)
   function startDrag(s, index, handle, x, y) {
     const drawing = s.overlay.drawings[index];
@@ -3809,16 +3890,19 @@ window.TickViewChart = (function () {
         time: logicalToTime(s, timeToLogical(s, point.time) + dBars),
         price: round(point.price + dPrice),
       }));
-    } else if (isPosition(drawing)) {
-      // Úchop pozice: vstup, cíl, stop nebo pravý okraj (šířka)
+    } else {
       const snapped = snapPoint(s, x, y, magnet);
       if (!snapped) return;
-      dragPositionHandle(s, drawing, drag.handle, snapped);
-    } else {
-      // Posun koncového bodu (úchop) na bar a cenu pod kurzorem
-      const snapped = snapPoint(s, x, y, magnet);
-      if (!snapped || !drawing.points[drag.handle]) return;
-      drawing.points[drag.handle] = cleanPoint(snapped);
+      if (isPosition(drawing)) {
+        // Úchop pozice: vstup, cíl, stop nebo pravý okraj (šířka)
+        dragPositionHandle(s, drawing, drag.handle, snapped);
+      } else {
+        // Úchop bodu: čas a / nebo cena bodů na bar a cenu pod kurzorem (bod
+        // kresby mění obojí, střed hrany obdélníku jen jeden rozměr)
+        const { time, price } = drag.handle;
+        if (time !== null && drawing.points[time]) drawing.points[time] = { ...drawing.points[time], time: snapped.time };
+        if (price !== null && drawing.points[price]) drawing.points[price] = { ...drawing.points[price], price: snapped.price };
+      }
     }
     drag.moved = true;
     redrawOverlay(s);
