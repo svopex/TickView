@@ -503,6 +503,11 @@ def normalize_theme(value) -> str:
     return value if value in THEME_MODES else DEFAULT_THEME
 
 
+def next_theme(value) -> str:
+    """Další motiv v pořadí tmavý → světlý → Auto → tmavý (tlačítko motivu v liště)."""
+    return THEME_MODES[(THEME_MODES.index(normalize_theme(value)) + 1) % len(THEME_MODES)]
+
+
 # Typy grafu jako v TradingView, po sekcích nabídky: (id, popisek, ikona)
 CHART_TYPE_SECTIONS: list[list[tuple[str, str, str]]] = [
     [("bars", "Bars", "chart_bars"), ("candles", "Candles", "chart_candles"), ("hollow", "Hollow candles", "chart_hollow")],

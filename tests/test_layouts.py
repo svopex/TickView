@@ -31,8 +31,10 @@ from tickview.logic.layouts import (
 from tickview.logic.styles import (
     TIMEFRAMES,
     drawing_visible,
+    next_theme,
     normalize_drawing_style,
     normalize_text_options,
+    normalize_theme,
     normalize_visibility,
     timeframe_unit,
 )
@@ -195,6 +197,14 @@ class TextStyleTest(unittest.TestCase):
         self.assertTrue(rect["options"]["extendRight"])
         self.assertFalse(rect["options"]["extendLeft"])
         self.assertNotIn("extendRight", normalize_drawing_style({"options": {"extendRight": True}}, "trend")["options"])
+
+    def test_theme_cycle(self) -> None:
+        # Tlačítko motivu: tmavý → světlý → Auto → tmavý; neznámý motiv = tmavý
+        self.assertEqual(next_theme("dark"), "light")
+        self.assertEqual(next_theme("light"), "auto")
+        self.assertEqual(next_theme("auto"), "dark")
+        self.assertEqual(normalize_theme("blue"), "dark")
+        self.assertEqual(next_theme(None), "light")
 
     def test_frvp_options(self) -> None:
         # FRVP: meze čísel, neplatné volby a barvy = výchozí, čáry s doplněnými hodnotami

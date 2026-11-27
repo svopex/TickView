@@ -123,6 +123,7 @@ from tickview.logic.styles import (
     normalize_chart_style,
     normalize_chart_type,
     normalize_theme,
+    next_theme,
     normalize_color,
     normalize_drawing_style,
     normalize_favorites,
@@ -153,7 +154,6 @@ from tickview.ui.about_dialog import build_about_dialog
 from tickview.ui.chart_pane import ChartPane
 from tickview.ui.color_button import ColorButton
 from tickview.ui.frvp_fields import FrvpFields
-from tickview.ui.icon_toggle import IconToggle
 from tickview.ui.ibkr_data_dialog import build_ibkr_data_dialog
 from tickview.ui.icons import ICONS, svg
 from tickview.ui.param_form import ParamForm
@@ -239,6 +239,11 @@ STATIC_VERSION = _static_version()
 def icon_html(name: str) -> ui.html:
     """SVG piktogram z icons.py jako prvek UI (statický obsah – bez sanitizace)."""
     return ui.html(svg(name), sanitize=False).classes("tv-icon-wrap")
+
+
+# Tlačítko motivu: ikona a popisek (tooltip) aktuálního motivu
+THEME_ICONS = {"dark": "dark_mode", "light": "light_mode", "auto": "brightness_auto"}
+THEME_LABELS = {"dark": N_("Tmavý motiv"), "light": N_("Světlý motiv"), "auto": N_("Motiv podle systému (Auto)")}
 
 
 def theme_dark_value(theme: str) -> bool | None:
@@ -921,10 +926,18 @@ async def _build_index(
         await cache.set_setting(LANGUAGE_SETTING, value)
         ui.navigate.reload()
 
-    async def set_theme(value: str) -> None:
-        # Motiv stránky (Quasar) i všech grafů rozložení; uloží se a přetrvá restart
+    def paint_theme_button() -> None:
+        # Ikona tlačítka ukazuje aktuální motiv, tooltip ho pojmenuje
+        theme_button.props(f"icon={THEME_ICONS[state['theme']]}")
+        theme_tooltip.text = tr("{theme} – klikem přepnete").format(theme=tr(THEME_LABELS[state["theme"]]))
+
+    async def cycle_theme() -> None:
+        # Klik na tlačítko motivu: tmavý → světlý → Auto (podle systému) → tmavý;
+        # motiv stránky (Quasar) i všech grafů rozložení se uloží a přetrvá restart
+        value = next_theme(state["theme"])
         dark_mode.set_value(theme_dark_value(value))
         state["theme"] = value
+        paint_theme_button()
         for pane in panes:
             await pane.chart.set_theme(value)
         await cache.set_setting("theme", value)
@@ -3706,13 +3719,10 @@ async def _build_index(
             ui.toggle({code: code.upper() for code in LANGUAGES}, value=language, on_change=lambda e: change_language(e.value)).props(
                 "dense no-caps unelevated"
             ).classes("language-toggle").tooltip(tr("Jazyk rozhraní"))
-            # Motiv vzhledu: tmavý / světlý / Auto podle systému (ikony šetří místo)
-            IconToggle(
-                {"dark": tr("Tmavý motiv"), "light": tr("Světlý motiv"), "auto": tr("Motiv podle systému (Auto)")},
-                {"dark": "dark_mode", "light": "light_mode", "auto": "brightness_auto"},
-                value=theme,
-                on_change=lambda event: set_theme(event.value),
-            ).props("dense unelevated")
+            # Motiv vzhledu: jedna ikona, klik přepíná tmavý / světlý / Auto podle systému
+            with ui.button(on_click=cycle_theme).props("flat dense") as theme_button:
+                theme_tooltip = ui.tooltip("")
+            paint_theme_button()
             ui.button(icon="settings", on_click=open_settings_dialog).props("flat dense").classes(
                 "settings-button"
             )
