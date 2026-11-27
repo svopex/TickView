@@ -23,6 +23,19 @@ ALL_PROVIDER_IDS: tuple[str, ...] = tuple(
 )
 
 
+# Krátké kódy zdrojů (watchlist, hledání, alerty, legenda grafu – aby štítek nebyl široký)
+PROVIDER_CODES = {"binance": "BIN", "yahoo": "YAH", "alpaca": "ALP", "ibkr": "IBK", "ctrader": "CTR"}
+
+
+def provider_code(source: str) -> str:
+    """Krátký kód zdroje dat; neznámý zdroj = první tři písmena velkými.
+
+    Parametry:
+        source: identifikátor zdroje (např. "yahoo"); zdroj nemusí být aktivní.
+    """
+    return PROVIDER_CODES.get(source, source[:3].upper())
+
+
 def _build_providers() -> list[DataProvider]:
     """Sestaví seznam aktivních zdrojů v pořadí, v jakém se prohledávají."""
     # IBKR se připojuje lazy k TWS (127.0.0.1:7497, clientId 30); když TWS

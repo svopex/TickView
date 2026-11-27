@@ -140,7 +140,7 @@ from tickview.logic.sessions import (
     SESSION_RTH,
     timezone_options,
 )
-from tickview.providers import ALL_PROVIDER_IDS, PROVIDERS, get_provider, provider_symbol
+from tickview.providers import ALL_PROVIDER_IDS, PROVIDERS, get_provider, provider_code, provider_symbol
 from tickview.providers.alpaca import DEFAULT_ENDPOINT as ALPACA_DEFAULT_ENDPOINT
 from tickview.providers.ctrader import CTraderProvider
 from tickview.providers.base import SymbolInfo, utc_now_ms
@@ -258,15 +258,6 @@ def theme_dark_value(theme: str) -> bool | None:
 def drawing_scope(kind: str) -> str:
     """Rozsah šablon Settings kresby daného typu (šablony i výchozí styl nových kreseb)."""
     return f"drawing.{kind}"
-
-
-# Krátké kódy zdrojů (watchlist, hledání, alerty – aby sloupec nebyl široký)
-PROVIDER_CODES = {"binance": "BIN", "yahoo": "YAH", "alpaca": "ALP", "ibkr": "IBK", "ctrader": "CTR"}
-
-
-def provider_code(source: str) -> str:
-    """Krátký kód zdroje dat; neznámý zdroj = první tři písmena velkými."""
-    return PROVIDER_CODES.get(source, source[:3].upper())
 
 
 # Obsahy pravého panelu ("" = panel skrytý, zůstane jen pravá lišta)

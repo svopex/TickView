@@ -494,9 +494,12 @@ window.TickViewChart = (function () {
     legend.innerHTML = '';
     const els = {};
     const main = el('div', 'legend-row legend-main');
+    // Štítek zdroje dat (BIN, YAH…) před nadpisem jako ve watchlistu
+    els.code = el('span', 'legend-code');
     els.title = el('span', 'legend-title');
     els.status = el('span', 'legend-status none');
     els.status.title = STATUS_TITLES.none;
+    main.appendChild(els.code);
     main.appendChild(els.title);
     main.appendChild(els.status);
     const ohlc = el('span', 'legend-ohlc');
@@ -517,10 +520,15 @@ window.TickViewChart = (function () {
     renderLegendTitle(s);
   }
 
-  // Nadpis tickeru: „Název · timeframe · burza“ (title atribut = symbol a zdroj)
+  // Nadpis tickeru: štítek zdroje a „Název · timeframe · burza“ (title
+  // atribut = symbol a zdroj); bez kódu zdroje se štítek skryje
   function renderLegendTitle(s) {
     const info = s.symbolInfo;
     if (!s.legendEls) return;
+    const code = s.legendEls.code;
+    code.textContent = (info && info.code) || '';
+    code.title = (info && info.source) || '';
+    code.hidden = !code.textContent;
     if (!info) {
       s.legendEls.title.textContent = '';
       return;

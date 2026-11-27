@@ -160,6 +160,11 @@
   font-weight: 500;
 }
 
+/* Tooltip štítku zdroje (název zdroje) – legenda jinak myš propouští do grafu */
+.legend-code {
+  pointer-events: auto;
+}
+
 /* Tečka stavu dat (živě / zpožděno / bez dat) */
 .legend-status {
   width: 9px;
@@ -611,7 +616,9 @@
 }
 
 /* Kód zdroje ve watchlistu */
-.watch-code {
+/* Štítek zdroje dat ve watchlistu a v legendě grafu (BIN, YAH…) */
+.watch-code,
+.legend-code {
   font-size: 10px;
   padding: 1px 5px;
   border-radius: 3px;

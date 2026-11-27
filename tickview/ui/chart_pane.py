@@ -17,7 +17,7 @@ from tickview.indicators.compute import compute_indicators, context_for, tail_pa
 from tickview.indicators.registry import get_indicator
 from tickview.logic.sessions import SESSION_RTH, filter_session, in_session
 from tickview.logic.styles import drawing_visible
-from tickview.providers import get_provider
+from tickview.providers import get_provider, provider_code
 from tickview.providers.base import TIMEFRAME_MS, Candle, StreamStatus, is_closed, merge_candle, utc_now_ms
 from tickview.services import datafeeds
 from tickview.services.volume import with_live_volume
@@ -199,7 +199,7 @@ class ChartPane:
         self.chart.set_timezone(self.page.state["timezone"], exchange)
 
     def push_symbol_info(self) -> None:
-        """Nadpis tickeru v legendě grafu: „Název · timeframe · burza“."""
+        """Nadpis tickeru v legendě grafu: štítek zdroje a „Název · timeframe · burza“."""
         if self.provider is None or not self.symbol:
             return
         meta = self.symbol_meta or {}
@@ -210,6 +210,7 @@ class ChartPane:
                 "exchange": meta.get("exchange") or self.provider.name,
                 "timeframe": self.timeframe,
                 "source": self.provider.name,
+                "code": provider_code(self.provider.id),
             }
         )
 
