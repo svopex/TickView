@@ -103,6 +103,7 @@ from tickview.logic.styles import (
     DEFAULT_TEXT_BORDER,
     DRAWING_LINE_STYLES,
     DRAWING_LINE_WIDTHS,
+    FRVP_KIND,
     LABEL_H_ALIGNS,
     LABEL_KINDS,
     LABEL_V_ALIGNS,
@@ -150,6 +151,7 @@ from tickview.services.notify import find_telegram_chat_id, send_telegram, teleg
 from tickview.ui.about_dialog import build_about_dialog
 from tickview.ui.chart_pane import ChartPane
 from tickview.ui.color_button import ColorButton
+from tickview.ui.frvp_fields import FrvpFields
 from tickview.ui.ibkr_data_dialog import build_ibkr_data_dialog
 from tickview.ui.icons import ICONS, svg
 from tickview.ui.param_form import ParamForm
@@ -925,7 +927,7 @@ async def _build_index(
     DRAWING_KINDS = [
         "hline", "vline", "trend", "ray", "extended", "arrow", "hray", "cross",
         "channel", "fib", "fibext", "pitchfork", "rect", "brush", "text", "sticker",
-        "long", "short",
+        "long", "short", FRVP_KIND,
     ]
     # Druhy kreseb s nastavitelným stylem a šablonami (sticker je emoji)
     DRAWING_KINDS_STYLED = [kind for kind in DRAWING_KINDS if kind != "sticker"]
@@ -975,11 +977,14 @@ async def _build_index(
              {"mode": "text", "tooltip": "Text", "icon": "text"},
              {"mode": "sticker", "tooltip": "Sticker (emoji)", "icon": "sticker"},
          ]},
-        {"id": "g_forecast", "icon": "long", "tooltip": tr("Prognózy a měření (Long / Short position, měřič)"),
+        {"id": "g_forecast", "icon": "long",
+         "tooltip": tr("Prognózy, objem a měření (Long / Short position, FRVP, měřič)"),
          "tools": [
              {"section": tr("Prognózy")},
              {"mode": "long", "tooltip": "Long position", "icon": "long"},
              {"mode": "short", "tooltip": "Short position", "icon": "short"},
+             {"section": tr("Objemové")},
+             {"mode": FRVP_KIND, "tooltip": "Fixed range volume profile", "icon": FRVP_KIND},
              {"section": tr("Měření")},
              {"mode": "measure", "tooltip": tr("Měřič (Δcena, %, bary)"), "icon": "measure"},
          ]},
@@ -1009,6 +1014,7 @@ async def _build_index(
         "sticker": "Sticker",
         "long": "Long position",
         "short": "Short position",
+        FRVP_KIND: "FRVP",
     }
     EMOJIS = ["😀", "🚀", "💰", "📈", "📉", "👍", "⚡", "🎯"]
 
@@ -1256,8 +1262,8 @@ async def _build_index(
 
     # ---------- Settings kresby včetně textu (pravý klik / dvojklik / nástroj Text) ----------
 
-    # Kresby bez čáry (šířka a styl nemají smysl)
-    NO_LINE_KINDS = {"text", "sticker"}
+    # Kresby bez čáry (šířka a styl nemají smysl); FRVP má čáry úrovní ve vlastní záložce Style
+    NO_LINE_KINDS = {"text", "sticker", FRVP_KIND}
     # Stav přepínačů tučného písma a kurzívy v dialogu Text a v záložce
     # Text popisku čáry (label_*)
     text_flags: dict = {"bold": False, "italic": False, "label_bold": False, "label_italic": False}
@@ -1307,6 +1313,8 @@ async def _build_index(
         drawing_visibility.fill(options["visibility"])
         rect_extend_left.value = bool(options.get("extendLeft"))
         rect_extend_right.value = bool(options.get("extendRight"))
+        if kind == FRVP_KIND:
+            frvp_fields.fill(options)
         if kind in POSITION_KINDS:
             position_account.value = options["accountSize"]
             position_risk.value = options["risk"]
@@ -1352,6 +1360,8 @@ async def _build_index(
                     "risk": position_risk.value,
                     "riskUnit": position_risk_unit.value,
                     "lotSize": position_lot.value,
+                    # Volby FRVP (jejich Extend Right přepíše prodloužení obdélníku)
+                    **(frvp_fields.values() if current["kind"] == FRVP_KIND else {}),
                 },
             },
             current["kind"],
@@ -1374,10 +1384,15 @@ async def _build_index(
         # Inputs / Style), viditelná pole a šablony; druhá záložka Visibility
         is_position = kind in POSITION_KINDS
         is_text = kind == "text"
+        is_frvp = kind == FRVP_KIND
         drawing_settings_title.text = title
-        style_tab.props(f'label="{"Text" if is_text else "Inputs" if is_position else "Style"}"')
+        style_tab.props(f'label="{"Text" if is_text else "Inputs" if is_position or is_frvp else "Style"}"')
         drawing_tabs.value = style_tab
         label_tab.set_visibility(kind in LABEL_KINDS)
+        # FRVP: Inputs na první záložce, vlastní Style a Coordinates
+        frvp_input_fields.set_visibility(is_frvp)
+        frvp_style_tab.set_visibility(is_frvp)
+        frvp_coords_tab.set_visibility(is_frvp)
         text_fields.set_visibility(is_text)
         line_fields.set_visibility(kind not in NO_LINE_KINDS and not is_position)
         rect_fields.set_visibility(kind == "rect")
@@ -1416,6 +1431,11 @@ async def _build_index(
             position_entry.value = round(points[0]["price"], digits)
             position_target.value = round(points[1]["price"], digits)
             position_stop.value = round(points[2]["price"], digits)
+        if kind == FRVP_KIND:
+            # Čísla barů rozsahu (záložka Coordinates) spočítal graf
+            bars = payload.get("bars")
+            state["drawing_settings"]["bars"] = bars
+            frvp_fields.fill_bars(bars)
         drawing_text.value = payload.get("text") or ""
         label_text.value = payload.get("text") or ""
         await show_drawing_dialog(kind, DRAWING_LABELS.get(kind, kind))
@@ -1469,6 +1489,18 @@ async def _build_index(
             except ValueError as exc:
                 ui.notify(str(exc), type="warning")
                 return
+        # FRVP: změněné bary rozsahu (Coordinates) převede graf na časy (ceny bodů zůstanou)
+        if kind == FRVP_KIND:
+            bars = frvp_fields.bars()
+            if bars is None:
+                ui.notify(tr("Zadejte čísla barů rozsahu."), type="warning")
+                return
+            if bars != current.get("bars"):
+                times = await pane.chart.bars_to_times(bars)
+                if not isinstance(times, list) or len(times) != 2 or len(current["points"]) < 2:
+                    ui.notify(tr("Bary rozsahu nelze převést na čas (graf nemá data)."), type="warning")
+                    return
+                points = [{"time": int(time), "price": point["price"]} for time, point in zip(times, current["points"])]
         # Sticker barvu nemá (emoji) – necháme ji prázdnou jako dosud
         color = values["color"] if kind != "sticker" else None
         options = values["options"]
@@ -3984,6 +4016,8 @@ async def _build_index(
         with ui.tabs().props("dense no-caps align=left indicator-color=primary").classes("tv-tabs w-full") as drawing_tabs:
             style_tab = ui.tab("style", label="Style")
             label_tab = ui.tab("label", label="Text")
+            frvp_style_tab = ui.tab("frvp_style", label="Style")
+            frvp_coords_tab = ui.tab("coords", label="Coordinates")
             visibility_tab = ui.tab("visibility", label="Visibility")
         with ui.tab_panels(drawing_tabs, value=style_tab).props("animated=false").classes("tv-tab-panels w-full"):
             with ui.tab_panel(style_tab).classes("tv-tab-panel"):
@@ -4037,6 +4071,13 @@ async def _build_index(
                     position_entry = ui.number(tr("Vstup (cena)"), format="%.2f").props("outlined dense")
                     position_target = ui.number(tr("Cíl – Profit level (cena)"), format="%.2f").props("outlined dense")
                     position_stop = ui.number(tr("Stop level (cena)"), format="%.2f").props("outlined dense")
+                # FRVP: Inputs (řádky, druh objemu, Value Area)
+                frvp_fields = FrvpFields()
+                frvp_input_fields = frvp_fields.build_inputs()
+            with ui.tab_panel(frvp_style_tab).classes("tv-tab-panel"):
+                frvp_fields.build_style()
+            with ui.tab_panel(frvp_coords_tab).classes("tv-tab-panel"):
+                frvp_fields.build_coordinates()
             with ui.tab_panel(label_tab).classes("tv-tab-panel"):
                 # Popisek čáry / obdélníku (jako v TradingView): barva, velikost,
                 # tučné, kurzíva, obsah a zarovnání vůči čáře

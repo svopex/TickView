@@ -17,6 +17,8 @@ EN = {
     "Přidat alert…": "Add alert…",
     "Smazat objekt": "Delete object",
     "Smazat šablonu": "Delete template",
+    # FRVP bez objemu v rozsahu
+    "Bez dat objemu": "No volume data",
     "Upravit alert…": "Edit alert…",
     "Smazat alert": "Delete alert",
     "Odebrat indikátor": "Remove indicator",

@@ -64,6 +64,9 @@ _ICON_PATHS: dict[str, str] = {
              '<path d="M4 11h20"/>'
              '<circle cx="5.5" cy="23" r="1.8"/><path d="M7.3 23H24"/>'
              '<path d="M15.8 15.1c-.3-.7-1-1.1-1.8-1.1-1 0-1.8.6-1.8 1.4 0 1.9 3.7 1.1 3.7 3.2 0 .9-.8 1.5-1.9 1.5-.9 0-1.6-.4-1.9-1.2"/>',
+    # FRVP: levý a pravý okraj rozsahu s kotevními body, mezi nimi řádky histogramu objemu
+    "frvp": '<circle cx="5" cy="5" r="1.8"/><path d="M5 6.8V24"/><circle cx="23" cy="23" r="1.8"/><path d="M23 4v17.2"/>'
+            '<path d="M7 8h7M7 12h12M7 16h9M7 20h5"/>',
     # Měřič: pravítko s dílky
     "measure": '<path d="M4 19 19 4l5 5L9 24z"/><path d="M7.5 15.5l2 2M10.5 12.5l3 3M13.5 9.5l2 2M16.5 6.5l3 3"/>',
     # Magnet (a vypnutý magnet s přeškrtnutím)

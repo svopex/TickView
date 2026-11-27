@@ -196,6 +196,25 @@ class TextStyleTest(unittest.TestCase):
         self.assertFalse(rect["options"]["extendLeft"])
         self.assertNotIn("extendRight", normalize_drawing_style({"options": {"extendRight": True}}, "trend")["options"])
 
+    def test_frvp_options(self) -> None:
+        # FRVP: meze čísel, neplatné volby a barvy = výchozí, čáry s doplněnými hodnotami
+        options = normalize_drawing_style(
+            {"options": {"rowSize": "150", "valueArea": 0, "profileWidth": 250, "volumeMode": "x",
+                         "rowsLayout": "ticks", "upColor": "red", "poc": {"color": "#ABCDEF", "width": True, "visible": "yes"}}},
+            "frvp",
+        )["options"]
+        self.assertEqual(options["rowSize"], 150)
+        self.assertEqual(options["valueArea"], 1)
+        self.assertEqual(options["profileWidth"], 100)
+        self.assertEqual(options["volumeMode"], "updown")
+        self.assertEqual(options["rowsLayout"], "ticks")
+        self.assertEqual(options["upColor"], "rgba(21, 146, 230, 0.3)")
+        self.assertEqual(options["poc"], {"visible": True, "color": "#abcdef", "width": 1, "lineStyle": "solid"})
+        self.assertFalse(options["devPoc"]["visible"])
+        self.assertTrue(options["profile"])
+        # Jiné kresby volby profilu nemají
+        self.assertNotIn("rowSize", normalize_drawing_style({"options": {"rowSize": 10}}, "rect")["options"])
+
 
 class IndicatorTemplatesTest(unittest.TestCase):
     """Šablony indikátorů: uložení, přepsání, oblíbené, naposledy použité."""

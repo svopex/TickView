@@ -280,6 +280,16 @@ class LightweightChart(ui.element):
         """Smaže označenou kresbu (nebo všechny) – vrací počet smazaných."""
         return int(await self._call_result("trashDrawings") or 0)
 
+    async def bars_to_times(self, bars: list[int]) -> list[int] | None:
+        """Převede pořadová čísla barů (záložka Coordinates FRVP) na časy v s.
+
+        Parametry:
+            bars: čísla barů od první načtené svíčky grafu (i mimo data).
+
+        Vrací seznam časů, nebo None, když graf nemá data.
+        """
+        return await self._call_result("barsToTimes", [int(bar) for bar in bars])
+
     async def set_drawings(self, drawings: list[dict]) -> None:
         """Nahradí zobrazené kresby (načtené z cache při načtení symbolu)."""
         self._call("setDrawings", drawings)

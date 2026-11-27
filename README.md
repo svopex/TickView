@@ -27,9 +27,9 @@ grafy vykresluje open-source knihovna Lightweight Charts™ od TradingView
 - **Indikátory** – 28 vestavěných (SMA, EMA, VWAP, Bollinger, Ichimoku,
   Supertrend, RSI, MACD, ATR, Volume…), COT report a vlastní indikátory
   v Pythonu; Settings se záložkami Inputs / Style / Visibility, šablony.
-- **Kreslení** – nástroje jako v TradingView (čáry, kanály, Fibonacci,
-  pitchfork, obdélník, text, Long / Short position, měřič), magnet, šablony
-  stylu, viditelnost podle timeframu; kresby se ukládají k symbolu.
+- **Kreslení** – nástroje jako v TradingView (čáry, kanály, Fibonacci, pitchfork,
+  obdélník, text, Long / Short position, volume profile FRVP, měřič), magnet,
+  šablony stylu, viditelnost podle timeframu; kresby se ukládají k symbolu.
 - **Watchlist** – více seznamů, sekce, barevné vlaječky, řazení, živé ceny.
 - **Alerty** – na cenu, čáru kresby nebo signál indikátoru; Telegram, webhook,
   toast a zvuk; vyhodnocuje je server i bez otevřené stránky.

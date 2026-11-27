@@ -70,8 +70,19 @@ EN = {
     "Obdélník": "Rectangle",
     "Štětec": "Brush",
     "Text a stickers": "Text and stickers",
-    "Prognózy a měření (Long / Short position, měřič)": "Forecasting and measurement (Long / Short position, measure)",
+    "Prognózy, objem a měření (Long / Short position, FRVP, měřič)": (
+        "Forecasting, volume and measurement (Long / Short position, FRVP, measure)"
+    ),
     "Prognózy": "Forecasting",
+    "Objemové": "Volume-based",
+    # Settings kresby FRVP (Fixed range volume profile)
+    "Profil se počítá ze svíček grafu v rozsahu: objem každé svíčky se rozdělí rovnoměrně mezi cenové řádky od jejího low po high.": (
+        "The profile is computed from the chart candles in the range: each candle's volume is spread evenly "
+        "across the price rows from its low to its high."
+    ),
+    "Bary se číslují od první načtené svíčky grafu.": "Bars are numbered from the first loaded candle of the chart.",
+    "Zadejte čísla barů rozsahu.": "Enter the bar numbers of the range.",
+    "Bary rozsahu nelze převést na čas (graf nemá data).": "The range bars cannot be converted to time (the chart has no data).",
     "Měření": "Measurement",
     "Měřič (Δcena, %, bary)": "Measure (Δprice, %, bars)",
     "Oblíbené nástroje: {count}.": "Favorite tools: {count}.",

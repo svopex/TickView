@@ -1477,6 +1477,8 @@ window.TickViewChart = (function () {
       points: drawing.points,
       // Přesnost cen instrumentu (zaokrouhlení cen pozice v dialogu)
       decimals: s.priceDecimals || 2,
+      // FRVP: čísla barů rozsahu pro záložku Coordinates
+      bars: isFrvp(drawing) ? frvpBars(s, drawing) : null,
     });
   }
 
@@ -3530,7 +3532,7 @@ window.TickViewChart = (function () {
   // ---------- kreslení (modelováno po TradingView) ----------
 
   // Zapne/vypne kreslicí mód (hline | vline | trend | ray | extended | rect |
-  // brush | fib | text | measure | null = kurzor)
+  // brush | fib | text | frvp | measure | null = kurzor)
   function setDrawingMode(id, mode) {
     const s = state.get(id);
     if (!s) return;
@@ -3872,6 +3874,7 @@ window.TickViewChart = (function () {
   // úchopy (vstup, cíl, stop, šířka)
   function drawingHandles(s, drawing) {
     if (isPosition(drawing)) return positionHandles(s, drawing);
+    if (isFrvp(drawing)) return frvpHandles(s, drawing);
     if (drawing.kind === 'rect' && drawing.points.length >= 2) return rectHandles(s, drawing);
     return drawing.points.map((point, index) => {
       const pixel = pointToPixel(s, point);
@@ -3974,6 +3977,16 @@ window.TickViewChart = (function () {
         // Pozice: kdekoli v obdélníku zón cíle a stopu
         const box = positionBox(s, drawing);
         if (box && x >= box.left - 3 && x <= box.right + 3 && y >= box.top - 3 && y <= box.bottom + 3) return i;
+      } else if (isFrvp(drawing)) {
+        // FRVP: kdekoli v boxu profilu; bez svíček v rozsahu jen u svislých okrajů
+        const geometry = frvpGeometry(s, drawing, drawing.points);
+        if (!geometry) continue;
+        if (!geometry.profile) {
+          if (Math.abs(x - geometry.left) <= threshold || Math.abs(x - geometry.right) <= threshold) return i;
+        } else if (
+          x >= geometry.left - threshold && x <= geometry.right + threshold &&
+          y >= geometry.top - threshold && y <= geometry.bottom + threshold
+        ) return i;
       } else if (drawing.kind === 'hline') {
         if (Math.abs(y - points[0].y) <= threshold) return i;
       } else if (drawing.kind === 'vline') {
@@ -4538,6 +4551,11 @@ window.TickViewChart = (function () {
       renderHandles(ctx, s, drawing);
       return;
     }
+    if (isFrvp(drawing)) {
+      drawFrvp(ctx, s, drawing, points, paneWidth, paneHeight);
+      renderHandles(ctx, s, drawing);
+      return;
+    }
     if (drawing.kind === 'hline') {
       const p = toPixel(points[0]);
       if (!p) return;
@@ -5030,6 +5048,341 @@ window.TickViewChart = (function () {
       drawLabelBox(ctx, [levelText('Stop', stats.risk, -1)], centerX, box.yStop, !stats.long, POSITION_LOSS, POSITION_LABEL, paneWidth, paneHeight);
     }
     ctx.restore();
+  }
+
+  // ---------- Fixed range volume profile (FRVP jako v TradingView) ----------
+
+  // Body kresby: [začátek rozsahu {čas, cena kliku}, konec rozsahu {čas, cena
+  // kliku}] – ceny se nepoužívají, svislý rozsah boxu je low–high svíček
+  const FRVP_KIND = 'frvp';
+  // Nejvyšší počet řádků profilu (stejně jako FRVP_MAX_ROWS v Pythonu)
+  const FRVP_MAX_ROWS = 1000;
+  // Písmo hodnot objemu u řádků a nejmenší výška řádku, do které se vejdou (px)
+  const FRVP_VALUE_FONT = '10px ' + LABEL_FONT;
+  const FRVP_VALUE_MIN_ROW = 9;
+
+  function isFrvp(drawing) {
+    return !!drawing && drawing.kind === FRVP_KIND;
+  }
+
+  // Volby FRVP kresby; chybějící doplní výchozí styl typu (normalizuje Python)
+  function frvpOptions(s, drawing) {
+    return Object.assign({}, defaultStyle(s, FRVP_KIND).options, drawing.options || {});
+  }
+
+  // Přidá objem svíčky do řádků profilu: rovnoměrně podle překryvu rozsahu
+  // low–high svíčky s řádkem (svíčka bez rozpětí celá do řádku své ceny);
+  // růstová svíčka (close ≥ open) do up, klesající do down
+  function addFrvpCandle(profile, candle) {
+    const volume = Number(candle.volume) || 0;
+    if (volume <= 0) return;
+    const target = candle.close >= candle.open ? profile.up : profile.down;
+    const { low, rowHeight, count } = profile;
+    const rowOf = (price) => Math.min(count - 1, Math.max(0, Math.floor((price - low) / rowHeight)));
+    const span = candle.high - candle.low;
+    if (!(span > 0)) {
+      target[rowOf(candle.close)] += volume;
+      return;
+    }
+    const last = rowOf(candle.high);
+    for (let row = rowOf(candle.low); row <= last; row++) {
+      const rowLow = low + row * rowHeight;
+      const overlap = Math.min(candle.high, rowLow + rowHeight) - Math.max(candle.low, rowLow);
+      if (overlap > 0) target[row] += (volume * overlap) / span;
+    }
+  }
+
+  // POC a Value Area z řádků profilu: POC = řádek s největším objemem, Value
+  // Area se od POC rozšiřuje vždy o sousední řádek s větším objemem (nad / pod),
+  // dokud nepokryje valueArea % celkového objemu. Vrací ceny {poc, vah, val}
+  // a krajní řádky Value Area {vaLow, vaHigh}; bez objemu null
+  function frvpLevels(profile, valueArea) {
+    const { up, down, low, rowHeight, count } = profile;
+    const volumeAt = (row) => up[row] + down[row];
+    let total = 0;
+    let pocRow = 0;
+    for (let row = 0; row < count; row++) {
+      const volume = volumeAt(row);
+      total += volume;
+      if (volume > volumeAt(pocRow)) pocRow = row;
+    }
+    if (!(total > 0)) return null;
+    const target = (total * valueArea) / 100;
+    let vaLow = pocRow;
+    let vaHigh = pocRow;
+    let covered = volumeAt(pocRow);
+    while (covered < target && (vaLow > 0 || vaHigh < count - 1)) {
+      const above = vaHigh < count - 1 ? volumeAt(vaHigh + 1) : -1;
+      const below = vaLow > 0 ? volumeAt(vaLow - 1) : -1;
+      if (above >= below) covered += volumeAt(++vaHigh);
+      else covered += volumeAt(--vaLow);
+    }
+    return {
+      vaLow, vaHigh,
+      poc: low + (pocRow + 0.5) * rowHeight,
+      vah: low + (vaHigh + 1) * rowHeight,
+      val: low + vaLow * rowHeight,
+    };
+  }
+
+  // Spočítá profil svíček first..last: rozsah low–high, mřížku řádků (počet
+  // řádků, nebo ticky na řádek – nejvýš FRVP_MAX_ROWS), objem up / down po
+  // řádcích, POC a Value Area; s vyvíjejícími se úrovněmi navíc POC / VAH /
+  // VAL po každé svíčce (developing). Rozsah bez svíček = null
+  function computeFrvp(s, first, last, options, developing) {
+    if (last < first) return null;
+    let low = Infinity;
+    let high = -Infinity;
+    for (let index = first; index <= last; index++) {
+      low = Math.min(low, s.candles[index].low);
+      high = Math.max(high, s.candles[index].high);
+    }
+    if (!isFinite(low) || !isFinite(high)) return null;
+    const rowSize = Math.max(1, Math.round(Number(options.rowSize)));
+    let count;
+    let rowHeight;
+    if (options.rowsLayout === 'ticks') {
+      // Ticks Per Row: pevná výška řádku, poslední řádek může přesahovat high
+      rowHeight = rowSize * priceTick(s);
+      count = Math.max(1, Math.ceil((high - low) / rowHeight - 1e-9));
+      if (count > FRVP_MAX_ROWS) {
+        count = FRVP_MAX_ROWS;
+        rowHeight = (high - low) / count;
+      }
+    } else {
+      count = Math.min(FRVP_MAX_ROWS, rowSize);
+      rowHeight = (high - low) / count;
+    }
+    // Svíčky bez rozpětí (high = low) – jeden řádek o velikosti ticku
+    if (!(rowHeight > 0)) {
+      rowHeight = priceTick(s);
+      count = 1;
+    }
+    const profile = { low, high, rowHeight, count, up: new Float64Array(count), down: new Float64Array(count) };
+    const valueArea = Number(options.valueArea);
+    profile.developing = developing ? [] : null;
+    for (let index = first; index <= last; index++) {
+      const candle = s.candles[index];
+      addFrvpCandle(profile, candle);
+      if (developing) {
+        const levels = frvpLevels(profile, valueArea);
+        if (levels) profile.developing.push({ time: candle.time, poc: levels.poc, vah: levels.vah, val: levels.val });
+      }
+    }
+    profile.levels = frvpLevels(profile, valueArea);
+    return profile;
+  }
+
+  // Profil kresby s cache na objektu kresby: přepočet jen při změně rozsahu,
+  // voleb výpočtu nebo dat v rozsahu (živá poslední svíčka, donačtená
+  // historie) – kreslení probíhá při každém pohybu myši a grafu
+  function frvpProfile(s, drawing, points, options) {
+    const from = Math.min(points[0].time, points[1].time);
+    const to = Math.max(points[0].time, points[1].time);
+    const first = firstCandleIndex(s, from);
+    const last = candleIndexAt(s, to);
+    const developing = !!((options.devPoc || {}).visible || (options.devVa || {}).visible);
+    const lastCandle = s.candles[last];
+    const key = [
+      first, last, (s.candles[first] || {}).time, lastCandle ? [lastCandle.time, lastCandle.high, lastCandle.low,
+        lastCandle.close, lastCandle.volume].join(',') : '',
+      options.rowsLayout, options.rowSize, options.valueArea, developing, s.priceDecimals,
+    ].join('|');
+    if (!drawing.frvpCache || drawing.frvpCache.key !== key) {
+      drawing.frvpCache = { key: key, profile: computeFrvp(s, first, last, options, developing) };
+    }
+    return drawing.frvpCache.profile;
+  }
+
+  // Geometrie FRVP v pixelech: x obou bodů, levý / pravý okraj, horní / dolní
+  // okraj boxu (high / low profilu; bez svíček v rozsahu střed grafu) a profil
+  function frvpGeometry(s, drawing, points) {
+    if (points.length < 2) return null;
+    const x1 = timeToX(s, points[0].time);
+    const x2 = timeToX(s, points[1].time);
+    if (x1 === null || x2 === null) return null;
+    const options = frvpOptions(s, drawing);
+    const profile = frvpProfile(s, drawing, points, options);
+    let top = null;
+    let bottom = null;
+    if (profile) {
+      top = s.candleSeries.priceToCoordinate(profile.high);
+      bottom = s.candleSeries.priceToCoordinate(profile.low);
+    }
+    if (top === null || bottom === null) {
+      const middle = getPaneGeometry(s).height / 2;
+      top = middle;
+      bottom = middle;
+    }
+    return { x1, x2, left: Math.min(x1, x2), right: Math.max(x1, x2), top, bottom, profile, options };
+  }
+
+  // Úchopy FRVP jako v TradingView: začátek vlevo nahoře (high), konec vpravo
+  // dole (low); tažení mění jen čas bodu (svislý rozsah určují svíčky)
+  function frvpHandles(s, drawing) {
+    const geometry = frvpGeometry(s, drawing, drawing.points);
+    if (!geometry) return [];
+    return [
+      { x: geometry.x1, y: geometry.top, handle: { time: 0, price: null }, cursor: 'ew-resize' },
+      { x: geometry.x2, y: geometry.bottom, handle: { time: 1, price: null }, cursor: 'ew-resize' },
+    ];
+  }
+
+  // Nastaví tah podle čáry profilu {visible, color, width, lineStyle};
+  // vrátí false, když je čára skrytá
+  function applyFrvpStroke(ctx, line) {
+    if (!line || !line.visible) return false;
+    ctx.strokeStyle = line.color;
+    ctx.lineWidth = Number(line.width) || 1;
+    ctx.setLineDash(LINE_DASHES[line.lineStyle] || []);
+    return true;
+  }
+
+  // Vodorovná čára úrovně profilu (POC, VAH, VAL) podle stylu čáry z voleb
+  function drawFrvpLevel(ctx, s, line, price, left, right) {
+    const y = s.candleSeries.priceToCoordinate(price);
+    if (y === null || !applyFrvpStroke(ctx, line)) return;
+    ctx.beginPath();
+    ctx.moveTo(left, y);
+    ctx.lineTo(right, y);
+    ctx.stroke();
+  }
+
+  // Schodovitá čára vyvíjející se úrovně (POC / VAH / VAL po každé svíčce)
+  // od první svíčky po pravý okraj boxu; xs = x svíček kroků (sdílené čarami)
+  function drawFrvpDeveloping(ctx, s, line, developing, xs, field, right) {
+    if (!developing.length || !applyFrvpStroke(ctx, line)) return;
+    ctx.beginPath();
+    let lastY = null;
+    developing.forEach((step, index) => {
+      const x = xs[index];
+      const y = s.candleSeries.priceToCoordinate(step[field]);
+      if (x === null || y === null) return;
+      if (lastY === null) ctx.moveTo(x, y);
+      else {
+        ctx.lineTo(x, lastY);
+        ctx.lineTo(x, y);
+      }
+      lastY = y;
+    });
+    if (lastY !== null) ctx.lineTo(right, lastY);
+    ctx.stroke();
+  }
+
+  // Histogram profilu: řádek po řádku od levého / pravého okraje boxu; délka
+  // podle objemu řádku vůči největšímu (Delta: |up − down|), barvy růstu
+  // a poklesu (uvnitř Value Area sytější); Up/Down kreslí up a down za sebou
+  function drawFrvpHistogram(ctx, s, geometry) {
+    const { profile, options, left, right } = geometry;
+    const { up, down, low, high, rowHeight, count, levels } = profile;
+    const mode = options.volumeMode;
+    const valueOf = (row) => (mode === 'delta' ? Math.abs(up[row] - down[row]) : up[row] + down[row]);
+    let max = 0;
+    for (let row = 0; row < count; row++) max = Math.max(max, valueOf(row));
+    if (!(max > 0)) return;
+    const histogramWidth = ((right - left) * Number(options.profileWidth)) / 100;
+    const scale = histogramWidth / max;
+    const fromRight = options.placement === 'right';
+    // Úsek řádku [start, start + length) od okraje boxu směrem dovnitř
+    const fillSegment = (start, length, y, height, color) => {
+      if (length <= 0) return;
+      ctx.fillStyle = color;
+      ctx.fillRect(fromRight ? right - start - length : left + start, y, length, height);
+    };
+    ctx.font = FRVP_VALUE_FONT;
+    ctx.textBaseline = 'middle';
+    // Horní hrana řádku je dolní hranou dalšího – převod ceny jednou na hranu
+    let yBottom = s.candleSeries.priceToCoordinate(low);
+    for (let row = 0; row < count; row++) {
+      const yTop = s.candleSeries.priceToCoordinate(Math.min(high, low + (row + 1) * rowHeight));
+      const rowBottom = yBottom;
+      yBottom = yTop;
+      if (yTop === null || rowBottom === null) continue;
+      const rowSpan = rowBottom - yTop;
+      // Mezera 1 px mezi řádky, když jsou dost vysoké (jako v TradingView)
+      const height = Math.max(1, rowSpan > 3 ? rowSpan - 1 : rowSpan);
+      const inValueArea = row >= levels.vaLow && row <= levels.vaHigh;
+      const upColor = inValueArea ? options.vaUpColor : options.upColor;
+      const downColor = inValueArea ? options.vaDownColor : options.downColor;
+      let length;
+      if (mode === 'updown') {
+        fillSegment(0, up[row] * scale, yTop, height, upColor);
+        fillSegment(up[row] * scale, down[row] * scale, yTop, height, downColor);
+        length = (up[row] + down[row]) * scale;
+      } else {
+        length = valueOf(row) * scale;
+        fillSegment(0, length, yTop, height, mode === 'delta' && down[row] > up[row] ? downColor : upColor);
+      }
+      // Hodnota objemu řádku (Values) za koncem sloupce
+      if (options.values && rowSpan >= FRVP_VALUE_MIN_ROW && valueOf(row) > 0) {
+        const value = mode === 'delta' ? up[row] - down[row] : valueOf(row);
+        ctx.fillStyle = options.valuesColor;
+        ctx.textAlign = fromRight ? 'right' : 'left';
+        const text = (value < 0 ? '−' : '') + formatVolume(Math.abs(value));
+        ctx.fillText(text, fromRight ? right - length - 3 : left + length + 3, yTop + rowSpan / 2);
+      }
+    }
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+  }
+
+  // Nakreslí FRVP: box rozsahu, histogram, vyvíjející se POC / VA a čáry
+  // POC, VAH, VAL (Extend Right je prodlouží k pravému okraji grafu); bez
+  // svíček v rozsahu jen svislé okraje, bez objemu box s upozorněním
+  function drawFrvp(ctx, s, drawing, points, paneWidth, paneHeight) {
+    const geometry = frvpGeometry(s, drawing, points);
+    if (!geometry) return;
+    const { profile, options, left, right, top, bottom } = geometry;
+    ctx.save();
+    ctx.setLineDash([]);
+    if (!profile) {
+      ctx.strokeStyle = HANDLE_COLOR;
+      ctx.lineWidth = 1;
+      ctx.setLineDash(LINE_DASHES.dashed);
+      ctx.beginPath();
+      ctx.moveTo(left, 0);
+      ctx.lineTo(left, paneHeight);
+      ctx.moveTo(right, 0);
+      ctx.lineTo(right, paneHeight);
+      ctx.stroke();
+      ctx.restore();
+      return;
+    }
+    ctx.fillStyle = options.boxColor;
+    ctx.fillRect(left, top, Math.max(1, right - left), Math.max(1, bottom - top));
+    const levels = profile.levels;
+    if (!levels) {
+      ctx.fillStyle = POSITION_NEUTRAL;
+      ctx.font = FRVP_VALUE_FONT;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(tvTr('Bez dat objemu'), (left + right) / 2, (top + bottom) / 2);
+      ctx.restore();
+      return;
+    }
+    if (options.profile) drawFrvpHistogram(ctx, s, geometry);
+    if (profile.developing) {
+      // x svíček jednou pro všechny tři vyvíjející se čáry
+      const xs = profile.developing.map((step) => timeToX(s, step.time));
+      for (const [line, field] of [['devVa', 'vah'], ['devVa', 'val'], ['devPoc', 'poc']]) {
+        drawFrvpDeveloping(ctx, s, options[line], profile.developing, xs, field, right);
+      }
+    }
+    const lineEnd = options.extendRight ? paneWidth : right;
+    for (const field of ['vah', 'val', 'poc']) drawFrvpLevel(ctx, s, options[field], levels[field], left, lineEnd);
+    ctx.restore();
+  }
+
+  // Pořadová čísla barů bodů FRVP (záložka Coordinates) od první načtené svíčky
+  function frvpBars(s, drawing) {
+    return drawing.points.slice(0, 2).map((point) => Math.round(timeToLogical(s, point.time)));
+  }
+
+  // Čísla barů → časy bodů (Python je uloží z dialogu Settings); bez dat null
+  function barsToTimes(id, bars) {
+    const s = state.get(id);
+    if (!s || !s.candles.length || !Array.isArray(bars)) return null;
+    return bars.map((bar) => logicalToTime(s, Math.round(Number(bar) || 0)));
   }
 
   // ---------- replay (obchody a příkazy session, výběr startu) ----------
@@ -5556,6 +5909,7 @@ window.TickViewChart = (function () {
     prependCandles: prependCandles,
     updateCandles: updateCandles,
     assignDrawingId: assignDrawingId,
+    barsToTimes: barsToTimes,
     setTheme: setTheme,
     setIndicators: setIndicators,
     setOverview: setOverview,

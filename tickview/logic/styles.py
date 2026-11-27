@@ -324,6 +324,98 @@ def normalize_indicator_style(data) -> dict:
     return style
 
 
+# Fixed range volume profile (FRVP jako v TradingView): rozvržení řádků
+# (počet řádků / ticků na řádek), druh objemu, umístění histogramu v boxu
+FRVP_KIND = "frvp"
+FRVP_ROWS_LAYOUTS = {"count": "Number Of Rows", "ticks": "Ticks Per Row"}
+FRVP_VOLUME_MODES = {"updown": "Up/Down", "total": "Total", "delta": "Delta"}
+FRVP_PLACEMENTS = {"left": "Left", "right": "Right"}
+# Nejvyšší počet řádků profilu (i u Ticks Per Row – výpočet a kreslení
+# probíhají při každém pohybu grafu)
+FRVP_MAX_ROWS = 1000
+# Čáry profilu: úrovně VAH, VAL, POC a vyvíjející se POC a Value Area;
+# každá má zobrazení, barvu, tloušťku a styl čáry
+FRVP_LINES = ("vah", "val", "poc", "devPoc", "devVa")
+FRVP_LINE_DEFAULTS: dict[str, dict] = {
+    "vah": {"visible": False, "color": "#2962ff", "width": 1, "lineStyle": "solid"},
+    "val": {"visible": False, "color": "#2962ff", "width": 1, "lineStyle": "solid"},
+    "poc": {"visible": True, "color": "#ff0000", "width": 1, "lineStyle": "solid"},
+    "devPoc": {"visible": False, "color": "#ff0000", "width": 1, "lineStyle": "solid"},
+    "devVa": {"visible": False, "color": "#2962ff", "width": 1, "lineStyle": "solid"},
+}
+# Tovární hodnoty Inputs a Style (barvy histogramu jako ve výchozím FRVP
+# TradingView: růst modrý, pokles žlutý, Value Area sytější)
+FRVP_DEFAULTS: dict = {
+    "rowsLayout": "count",
+    "rowSize": 80,
+    "volumeMode": "updown",
+    "valueArea": 70,
+    "extendRight": False,
+    "profile": True,
+    "values": False,
+    "valuesColor": "#787b86",
+    "profileWidth": 30,
+    "placement": "left",
+    "upColor": "rgba(21, 146, 230, 0.3)",
+    "downColor": "rgba(251, 193, 35, 0.3)",
+    "vaUpColor": "rgba(21, 146, 230, 0.7)",
+    "vaDownColor": "rgba(251, 193, 35, 0.7)",
+    "boxColor": "rgba(41, 98, 255, 0.06)",
+}
+
+
+def _normalize_frvp_line(value, default: dict) -> dict:
+    """Čára profilu (VAH, POC…): zobrazení, barva, tloušťka a styl s výchozími hodnotami.
+
+    Parametry:
+        value: {"visible", "color", "width", "lineStyle"} – může být neúplný.
+        default: výchozí hodnoty čáry (FRVP_LINE_DEFAULTS).
+    """
+    # Kontrola barvy, tloušťky a stylu jako u výstupů indikátoru; neplatné klíče = výchozí
+    return {**default, **{key: item for key, item in normalize_plot_style(value).items() if key in default}}
+
+
+def normalize_frvp_options(options) -> dict:
+    """Volby FRVP (záložky Inputs a Style) s doplněnými výchozími hodnotami.
+
+    Velikost řádku je 1–FRVP_MAX_ROWS (počet řádků nebo ticků na řádek),
+    Value Area 1–100 % objemu a šířka histogramu 1–100 % šířky boxu.
+
+    Parametry:
+        options: volby kresby (klíče FRVP_DEFAULTS a čáry FRVP_LINES) – může být neúplný.
+    """
+    source = options if isinstance(options, dict) else {}
+    defaults = FRVP_DEFAULTS
+
+    def choice(key: str, allowed: dict) -> str:
+        # Výčtová hodnota jen z povolených voleb
+        return source.get(key) if source.get(key) in allowed else defaults[key]
+
+    def color(key: str) -> str:
+        return normalize_color(source.get(key)) or defaults[key]
+
+    result = {
+        "rowsLayout": choice("rowsLayout", FRVP_ROWS_LAYOUTS),
+        "rowSize": _bounded_int(source.get("rowSize"), 1, FRVP_MAX_ROWS, defaults["rowSize"]),
+        "volumeMode": choice("volumeMode", FRVP_VOLUME_MODES),
+        "valueArea": _bounded_int(source.get("valueArea"), 1, 100, defaults["valueArea"]),
+        "extendRight": bool(source.get("extendRight")),
+        "profile": source.get("profile", True) is not False,
+        "values": bool(source.get("values")),
+        "valuesColor": color("valuesColor"),
+        "profileWidth": _bounded_int(source.get("profileWidth"), 1, 100, defaults["profileWidth"]),
+        "placement": choice("placement", FRVP_PLACEMENTS),
+        "upColor": color("upColor"),
+        "downColor": color("downColor"),
+        "vaUpColor": color("vaUpColor"),
+        "vaDownColor": color("vaDownColor"),
+        "boxColor": color("boxColor"),
+    }
+    for name in FRVP_LINES:
+        result[name] = _normalize_frvp_line(source.get(name), FRVP_LINE_DEFAULTS[name])
+    return result
+
+
 def normalize_drawing_style(values, kind: str | None = None) -> dict:
     """Styl kresby (šablona, dialog, výchozí styl nových kreseb) s doplněnými výchozími hodnotami.
 
@@ -333,7 +425,8 @@ def normalize_drawing_style(values, kind: str | None = None) -> dict:
         kind: druh kresby; pozice (POSITION_KINDS) mají v options navíc
             parametry výpočtu (velikost účtu, riziko, lot), text vzhled písma,
             pozadí a rámečku, čáry a obdélník vzhled popisku (LABEL_KINDS),
-            obdélník prodloužení doleva / doprava.
+            obdélník prodloužení doleva / doprava, FRVP volby profilu
+            (normalize_frvp_options).
 
     Vrací {"color", "options"} s platnou barvou, šířkou, stylem čáry, písmem
     a viditelností podle timeframu.
@@ -361,6 +454,8 @@ def normalize_drawing_style(values, kind: str | None = None) -> dict:
     if kind == "rect":
         style["options"]["extendLeft"] = bool(options.get("extendLeft"))
         style["options"]["extendRight"] = bool(options.get("extendRight"))
+    if kind == FRVP_KIND:
+        style["options"].update(normalize_frvp_options(options))
     return style
 
 
