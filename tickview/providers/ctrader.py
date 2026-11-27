@@ -12,8 +12,11 @@ bary) se rozdělují odběratelům. Protokol: https://help.ctrader.com/open-api/
 """
 
 import asyncio
+import contextlib
 import itertools
 import json
+import logging
+import math
 import time as time_module
 from typing import Any, AsyncIterator, Iterable, Optional
 
@@ -30,9 +33,13 @@ from tickview.providers.base import (
     StreamItem,
     StreamStatus,
     SymbolInfo,
+    is_closed,
+    merge_candle,
     utc_now_ms,
 )
 from tickview.providers.ibkr import forex_parts
+
+logger = logging.getLogger(__name__)
 
 # Servery JSON protokolu (WebSocket); demo a živé účty mají oddělené servery
 DEMO_URL = "wss://demo.ctraderapi.com:5036"
@@ -81,6 +88,11 @@ CONNECT_COOLDOWN_S = 60.0
 RECONNECT_MAX_BACKOFF_S = 30.0
 # Nejvýš kolik stránek trendbarů jeden úsek historie stáhne (pojistka proti smyčce)
 MAX_PAGES = 200
+# Rozpracovaný bar pro doplnění historie: nejdelší čekání na první spot událost
+# po přihlášení odběru (zavřený trh ji nemusí poslat) a jak dlouho odběr držet
+# od posledního dotazu (scanner a watchlist se ptají zhruba každou minutu)
+LIVE_BAR_WAIT_S = 2.0
+LIVE_BAR_HOLD_S = 300.0
 # Chybové kódy, po kterých se zkusí obnovit přístupový token
 TOKEN_ERRORS = ("OA_AUTH_TOKEN_EXPIRED", "CH_ACCESS_TOKEN_INVALID", "ACCESS_TOKEN_INVALID")
 
@@ -213,6 +225,60 @@ def decode_trendbar(bar: dict, digits: int) -> Candle:
     )
 
 
+def complete_live_bar(bar: dict, bid: Optional[int]) -> dict:
+    """Živý bar ze spot události doplněný o close.
+
+    Živé bary ve spot událostech nemají deltaClose (decode_trendbar by dal
+    close = low) – aktuální cena baru je bid symbolu. Bid mimo rozsah baru
+    (bar se na serveru aktualizuje se zpožděním) rozsah rozšíří.
+
+    Parametry:
+        bar: trendbar ze spot události.
+        bid: poslední bid symbolu v jednotkách 1/100000 (None = zatím neznámý).
+    """
+    if bid is None or "deltaClose" in bar:
+        return bar
+    low = int(bar.get("low", 0))
+    open_price = low + int(bar.get("deltaOpen", 0))
+    high = low + int(bar.get("deltaHigh", 0))
+    new_low = min(low, bid)
+    return {
+        **bar,
+        "low": new_low,
+        "deltaOpen": open_price - new_low,
+        "deltaHigh": max(high, bid) - new_low,
+        "deltaClose": bid - new_low,
+    }
+
+
+class HeldLiveBar:
+    """Odběratel drženého odběru: místo fronty si pamatuje jen poslední živý bar.
+
+    Do odběrů klienta se vkládá místo fronty (stačí mu put_nowait), takže
+    odběr, který nikdo průběžně nečte, nehromadí zprávy.
+
+    Atributy:
+        bar: poslední živý bar (None = zatím žádný).
+        expires: konec držení odběru (time.monotonic, s).
+    """
+
+    def __init__(self, expires: float) -> None:
+        self.bar: Optional[dict] = None
+        self.expires = expires
+        self._arrived = asyncio.Event()
+
+    def put_nowait(self, item) -> None:
+        # Stavové zprávy spojení se přeskakují
+        if not isinstance(item, StreamStatus):
+            self.bar = item
+            self._arrived.set()
+
+    async def wait(self, timeout: float) -> None:
+        """Počká na první bar, nejvýš timeout sekund (zavřený trh ho nemusí poslat)."""
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(self._arrived.wait(), timeout)
+
+
 class CTraderClient:
     """Sdílené spojení s cTrader Open API: přihlášení, požadavky, živé odběry.
 
@@ -252,6 +318,10 @@ class CTraderClient:
         self._digits: dict[int, int] = {}
         # Živé odběry: (symbolId, perioda) -> fronty odběratelů
         self._subscribers: dict[tuple[int, int], set[asyncio.Queue]] = {}
+        # Poslední bid symbolu (symbolId -> cena v 1/100000)
+        self._last_bid: dict[int, int] = {}
+        # Odběry držené kvůli rozpracovanému baru historie (symbolId, perioda) -> odběratel
+        self._held: dict[tuple[int, int], HeldLiveBar] = {}
 
     @property
     def configured(self) -> bool:
@@ -365,6 +435,8 @@ class CTraderClient:
             self._reconnect.cancel()
             self._reconnect = None
         await self._drop_connection()
+        # Držené odběry se odeberou jen lokálně (spojení už je zavřené)
+        await self._release_held(math.inf)
 
     async def _heartbeat_loop(self, ws: Any) -> None:
         # Server spojení bez provozu ukončí – heartbeat každých 10 s
@@ -492,12 +564,17 @@ class CTraderClient:
 
     # ---------- živé odběry ----------
 
-    async def subscribe(self, symbol: str, period: int) -> tuple[tuple[int, int], asyncio.Queue, int]:
-        """Přihlásí odběr živého baru symbolu; vrací (klíč odběru, frontu, přesnost cen)."""
+    async def subscribe(self, symbol: str, period: int,
+                        queue: Optional[asyncio.Queue] = None) -> tuple[tuple[int, int], asyncio.Queue, int]:
+        """Přihlásí odběr živého baru symbolu; vrací (klíč odběru, frontu, přesnost cen).
+
+        Parametry:
+            queue: fronta odběratele (None = nová neomezená fronta); stačí objekt s put_nowait.
+        """
         symbol_id = await self.symbol_id(symbol)
         digits = await self.digits(symbol_id)
         key = (symbol_id, period)
-        queue: asyncio.Queue = asyncio.Queue()
+        queue = queue if queue is not None else asyncio.Queue()
         is_new = key not in self._subscribers
         self._subscribers.setdefault(key, set()).add(queue)
         if is_new:
@@ -513,12 +590,16 @@ class CTraderClient:
         if subscribers:
             return
         del self._subscribers[key]
+        symbol_id, period = key
+        last_of_symbol = not any(other_id == symbol_id for other_id, _ in self._subscribers)
+        if last_of_symbol:
+            # Bez odběru spotů by bid zastaral
+            self._last_bid.pop(symbol_id, None)
         if self._ws is None:
             return
-        symbol_id, period = key
         try:
             await self._account_request(UNSUBSCRIBE_LIVE_TRENDBAR_REQ, {"period": period, "symbolId": symbol_id}, connect=False)
-            if not any(other_id == symbol_id for other_id, _ in self._subscribers):
+            if last_of_symbol:
                 await self._account_request(UNSUBSCRIBE_SPOTS_REQ, {"symbolId": [symbol_id]}, connect=False)
         except Exception:
             # Spojení padá nebo odběr už neexistuje – nic dalšího není potřeba
@@ -538,12 +619,52 @@ class CTraderClient:
                     raise
 
     def _dispatch_spot(self, payload: dict) -> None:
-        """Živé bary ze spot události rozdělí odběratelům (symbol + perioda)."""
+        """Živé bary ze spot události doplní o close (bid) a rozdělí odběratelům (symbol + perioda)."""
         symbol_id = int(payload.get("symbolId", 0))
-        for bar in payload.get("trendbar") or []:
+        # Událost může nést jen ask – platí poslední známý bid
+        if "bid" in payload:
+            self._last_bid[symbol_id] = int(payload["bid"])
+        bid = self._last_bid.get(symbol_id)
+        for raw_bar in payload.get("trendbar") or []:
+            bar = complete_live_bar(raw_bar, bid)
             key = (symbol_id, int(bar.get("period", 1)))
             for queue in self._subscribers.get(key, ()):
                 queue.put_nowait(bar)
+
+    async def live_bar(self, symbol: str, period: int) -> Optional[Candle]:
+        """Rozpracovaný bar symbolu a periody ze živého odběru (None = zatím žádný).
+
+        Trendbary historie jsou jen uzavřené bary, rozpracovaný bar posílá
+        server jen ve spot událostech. Odběr se proto přihlásí a drží
+        LIVE_BAR_HOLD_S od posledního dotazu, takže opakované dotazy (scanner,
+        watchlist) jsou okamžité. Po přihlášení se na první bar čeká nejvýš
+        LIVE_BAR_WAIT_S.
+        """
+        now = time_module.monotonic()
+        await self._release_held(now)
+        symbol_id = await self.symbol_id(symbol)
+        key = (symbol_id, period)
+        held = self._held.get(key)
+        if held is not None:
+            held.expires = now + LIVE_BAR_HOLD_S
+        else:
+            # Držení se zapíše před přihlášením, aby souběžný dotaz nepřihlásil druhý odběr
+            held = self._held[key] = HeldLiveBar(now + LIVE_BAR_HOLD_S)
+            try:
+                await self.subscribe(symbol, period, held)
+            except Exception:
+                self._held.pop(key, None)
+                await self.unsubscribe(key, held)
+                raise
+            await held.wait(LIVE_BAR_WAIT_S)
+        return decode_trendbar(held.bar, await self.digits(symbol_id)) if held.bar else None
+
+    async def _release_held(self, now: float) -> None:
+        """Odhlásí držené odběry, kterým k času now vypršelo držení (math.inf = všechny)."""
+        for key, held in list(self._held.items()):
+            if held.expires <= now:
+                del self._held[key]
+                await self.unsubscribe(key, held)
 
     def _broadcast_status(self, status: StreamStatus) -> None:
         # Stavová zpráva (výpadek / obnovení) všem odběratelům
@@ -665,11 +786,37 @@ class CTraderProvider(DataProvider):
         return results
 
     async def history(self, symbol: str, timeframe: str, start_ms: int, end_ms: int) -> list[Candle]:
-        """Svíčky s tick volume z trendbarů brokera."""
-        return await self.client.trendbars(symbol, PERIODS[timeframe], start_ms, end_ms)
+        """Svíčky s tick volume z trendbarů brokera včetně rozpracované svíčky.
+
+        Trendbary jsou jen uzavřené bary; sahá-li interval do současnosti,
+        doplní se rozpracovaná svíčka ze živého odběru (scanner a watchlist
+        jinak počítají s poslední uzavřenou svíčkou jako s běžící).
+        """
+        period = PERIODS[timeframe]
+        step_ms = TIMEFRAME_MS[timeframe]
+        now_ms = utc_now_ms()
+        if end_ms < now_ms - step_ms:
+            return await self.client.trendbars(symbol, period, start_ms, end_ms)
+        # Historie a živý bar na sobě nezávisí – čekání na první bar se nepřičte ke stahování
+        candles, live = await asyncio.gather(
+            self.client.trendbars(symbol, period, start_ms, end_ms), self._live_bar(symbol, timeframe),
+        )
+        # Bar z doby před uzavřením (bez nové spot události) nebo mimo interval se nepřidá
+        if live is not None and start_ms <= live.open_time <= end_ms and not is_closed(live, step_ms, now_ms):
+            merge_candle(candles, live)
+        return candles
+
+    async def _live_bar(self, symbol: str, timeframe: str) -> Optional[Candle]:
+        """Rozpracovaný bar; při chybě None (graf ho doplní ze streamu, historie nesmí selhat)."""
+        try:
+            return await self.client.live_bar(symbol, PERIODS[timeframe])
+        except Exception as exc:
+            logger.warning("cTrader: živý bar %s %s selhal: %s", symbol, timeframe, exc)
+            return None
 
     async def tickers(self, symbols: list[str]) -> dict[str, dict]:
-        """Poslední cena a denní změna z posledních dvou denních barů (pro watchlist; 60 s v paměti)."""
+        """Poslední cena a denní změna z posledních dvou denních barů včetně rozpracovaného
+        (pro watchlist; 60 s v paměti)."""
         result: dict[str, dict] = {}
         now_ms = utc_now_ms()
         for symbol in symbols:
@@ -678,7 +825,7 @@ class CTraderProvider(DataProvider):
                 result[symbol] = cached[1]
                 continue
             try:
-                bars = await self.client.trendbars(symbol, PERIODS["1D"], now_ms - 7 * TIMEFRAME_MS["1D"], now_ms)
+                bars = await self.history(symbol, "1D", now_ms - 7 * TIMEFRAME_MS["1D"], now_ms)
             except Exception:
                 continue
             if not bars:
