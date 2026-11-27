@@ -755,11 +755,29 @@ window.TickViewChart = (function () {
     }
   }
 
+  // Systémový motiv pro volbu Auto (prefers-color-scheme prohlížeče)
+  const systemDarkQuery = window.matchMedia('(prefers-color-scheme: dark)');
+
+  // Název motivu grafu ('dark' / 'light') z volby motivu 'dark' | 'light' |
+  // 'auto' (Auto = podle systému)
+  function themeNameOf(mode) {
+    if (mode === 'auto') return systemDarkQuery.matches ? 'dark' : 'light';
+    return mode === 'light' ? 'light' : 'dark';
+  }
+
+  // Změna systémového motivu přepne grafy s volbou Auto
+  systemDarkQuery.addEventListener('change', () => {
+    for (const s of state.values()) {
+      if (s.themeMode === 'auto') applyTheme(s);
+    }
+  });
+
   // Vytvoří graf v kontejneru: hlavní panel se svíčkami + objem jako překryv
   function init(id, options) {
     const container = document.querySelector('[data-chart-id="' + id + '"]');
     if (!container || state.has(id)) return;
-    const themeName = options && options.dark ? 'dark' : 'light';
+    const themeMode = (options && options.theme) || 'dark';
+    const themeName = themeNameOf(themeMode);
     const theme = THEMES[themeName];
 
     container.innerHTML = '';
@@ -858,6 +876,7 @@ window.TickViewChart = (function () {
       // Pozorovatelé velikosti (odpojí se při odstranění grafu z rozložení)
       observers: [],
       themeName,
+      themeMode,
       candles: [],
       byTime: new Map(),
       lastCandle: null,
@@ -3507,11 +3526,19 @@ window.TickViewChart = (function () {
     for (const candle of candles) updateCandle(id, candle);
   }
 
-  // Přepnutí tmavého/světlého motivu grafu
-  function setTheme(id, dark) {
+  // Volba motivu grafu: 'dark' | 'light' | 'auto' (podle systému)
+  function setTheme(id, mode) {
     const s = state.get(id);
     if (!s) return;
-    s.themeName = dark ? 'dark' : 'light';
+    s.themeMode = mode;
+    applyTheme(s);
+  }
+
+  // Použije motiv podle volby grafu (u Auto podle aktuálního systémového motivu)
+  function applyTheme(s) {
+    const themeName = themeNameOf(s.themeMode);
+    if (themeName === s.themeName) return;
+    s.themeName = themeName;
     const theme = THEMES[s.themeName];
     s.chart.applyOptions({
       layout: theme.layout,

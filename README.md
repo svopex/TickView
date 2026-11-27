@@ -20,8 +20,8 @@ grafy vykresluje open-source knihovna Lightweight Charts™ od TradingView
 ## Funkce
 
 - **Grafy** – 11 typů (svíčky, Heikin Ashi, Line, Area, Baseline…), timeframy
-  1m–1W, tmavý / světlý motiv, časová pásma, seance RTH / ETH, donačítání
-  historie při posunu doleva, snímek grafu (Download / Copy image).
+  1m–1W, motiv tmavý / světlý / podle systému, časová pásma, seance RTH / ETH,
+  donačítání historie při posunu doleva, snímek grafu (Download / Copy image).
 - **Více grafů** – rozložení 1–16 grafů se synchronizací symbolu, intervalu,
   crosshairu a času.
 - **Indikátory** – 28 vestavěných (SMA, EMA, VWAP, Bollinger, Ichimoku,

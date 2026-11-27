@@ -4,6 +4,8 @@ EN = {
     # Horní lišta a společné prvky
     "Jazyk rozhraní": "Interface language",
     "Tmavý motiv": "Dark theme",
+    "Světlý motiv": "Light theme",
+    "Motiv podle systému (Auto)": "System theme (Auto)",
     "O aplikaci TickView": "About TickView",
     "Hledat symbol (nebo začněte psát nad grafem)": "Search symbol (or start typing over the chart)",
     "Všechny timeframy": "All timeframes",

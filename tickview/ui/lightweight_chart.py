@@ -16,7 +16,7 @@ class LightweightChart(ui.element):
     ze souboru static/lightweight_chart.js.
 
     Parametry:
-        dark: počáteční motiv grafu.
+        theme: počáteční motiv grafu ("dark" / "light" / "auto" podle systému).
         on_ready: async callback volaný po inicializaci grafu v prohlížeči.
         chart_style: styl svíček (Settings grafu, viz CHART_DEFAULTS).
         chart_type: typ grafu (viz CHART_TYPES – svíčky, čára, …).
@@ -24,7 +24,7 @@ class LightweightChart(ui.element):
 
     def __init__(
         self,
-        dark: bool = True,
+        theme: str = "dark",
         on_ready=None,
         chart_style: dict | None = None,
         chart_type: str = "candles",
@@ -35,7 +35,7 @@ class LightweightChart(ui.element):
         # NiceGUI, které ho používá pro mapování DOM uzlů a eventy)
         self.props(f"data-chart-id={self._js_id}")
         self.classes("chart-container")
-        self._dark = dark
+        self._theme = theme
         self._chart_style = chart_style or dict(CHART_DEFAULTS)
         self._chart_type = chart_type
         self._on_ready = on_ready
@@ -73,7 +73,7 @@ class LightweightChart(ui.element):
         self._call(
             "init",
             {
-                "dark": self._dark,
+                "theme": self._theme,
                 "chartStyle": self._chart_style,
                 "chartType": self._chart_type,
             },
@@ -120,10 +120,10 @@ class LightweightChart(ui.element):
         """Inkrementální doplnění/aktualizace posledních svíček (živá data, doplněná díra)."""
         self._call("updateCandles", [self._candle_payload(candle) for candle in candles])
 
-    async def set_theme(self, dark: bool) -> None:
-        """Přepne motiv grafu v prohlížeči."""
-        self._dark = dark
-        self._call("setTheme", dark)
+    async def set_theme(self, theme: str) -> None:
+        """Přepne motiv grafu v prohlížeči ("dark" / "light" / "auto" podle systému)."""
+        self._theme = theme
+        self._call("setTheme", theme)
 
     async def set_indicators(self, payload: dict) -> None:
         """Nahradí indikátory (overlay čáry + panely); payload s "tail" jen doplní poslední body."""

@@ -492,6 +492,17 @@ def normalize_position_points(
     ]
 
 
+# Motiv vzhledu aplikace a grafů: tmavý, světlý, nebo Auto podle systému
+# (prefers-color-scheme prohlížeče)
+THEME_MODES = ("dark", "light", "auto")
+DEFAULT_THEME = "dark"
+
+
+def normalize_theme(value) -> str:
+    """Platný motiv vzhledu (THEME_MODES); neznámá hodnota = tmavý."""
+    return value if value in THEME_MODES else DEFAULT_THEME
+
+
 # Typy grafu jako v TradingView, po sekcích nabídky: (id, popisek, ikona)
 CHART_TYPE_SECTIONS: list[list[tuple[str, str, str]]] = [
     [("bars", "Bars", "chart_bars"), ("candles", "Candles", "chart_candles"), ("hollow", "Hollow candles", "chart_hollow")],
