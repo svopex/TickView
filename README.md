@@ -53,8 +53,8 @@ Stažení bez gitu – macOS / Linux, resp. Windows 10/11:
 S gitem: `git clone https://github.com/svopex/TickView.git`. Aktualizace =
 stejné příkazy znovu (nebo `git pull`); `data/` ani `config.yaml` se nepřepíšou.
 
-- **macOS / Linux:** `./run.sh` – najde vhodný Python, vytvoří `.venv`,
-  doinstaluje závislosti a spustí aplikaci.
+- **macOS / Linux:** `./run.sh` – najde vhodný Python (chybí-li, stáhne ho do
+  `.python/`), vytvoří `.venv`, doinstaluje závislosti a spustí aplikaci.
 - **Windows:** dvojklik na `run-windows.bat` – navíc chybějící Python
   nainstaluje (bez administrátorských práv) a otevře prohlížeč.
 - **Ručně:** `python3 -m venv .venv`, aktivace, `pip install -r requirements.txt`, `python main.py`.

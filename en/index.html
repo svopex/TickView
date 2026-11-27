@@ -128,7 +128,7 @@
         "name": "Which operating systems does TickView run on?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "Windows, macOS and Linux with Python 3.12 or 3.13. The launch script sets up the environment by itself and, on Windows, installs Python if needed. The app opens in your browser on localhost, or optionally in a native window."
+          "text": "Windows, macOS and Linux with Python 3.12 or 3.13. The launch script sets up the environment by itself and installs Python if needed. The app opens in your browser on localhost, or optionally in a native window."
         }
       },
       {
@@ -549,7 +549,7 @@ INDICATOR = EmaCross()</code></pre>
       <div class="container">
         <header class="section-head">
           <h2>Installation</h2>
-          <p>All you need is Python 3.12 or 3.13 – the script picks the right version on its own and, on Windows, installs it for you if needed. The app opens in your browser at <code>http://localhost:8095</code>, or optionally in a native window.</p>
+          <p>All you need is Python 3.12 or 3.13 – the script picks the right version on its own and, if it's missing, installs it for you (Windows, macOS and Linux, no admin rights required). The app opens in your browser at <code>http://localhost:8095</code>, or optionally in a native window.</p>
         </header>
 
         <div class="tabs">
@@ -568,7 +568,8 @@ cd TickView-main
             </div>
             <p class="hint">
               Downloads the latest version into a <code>TickView-main</code> folder – all it takes is <code>curl</code>
-              and <code>tar</code>, which both macOS and Linux ship with. The <code>run.sh</code> script creates
+              and <code>tar</code>, which both macOS and Linux ship with. The <code>run.sh</code> script finds Python
+              (if it's missing, it downloads it just for this project, no admin rights or Homebrew required), creates
               a <code>.venv</code>, installs the dependencies and starts the app.
             </p>
           </div>
@@ -655,7 +656,7 @@ cd TickView-main
           </details>
           <details class="faq-item">
             <summary><h3>Which operating systems does TickView run on?</h3></summary>
-            <p>Windows, macOS and Linux with Python 3.12 or 3.13. The launch script sets up the environment by itself and, on Windows, installs Python if needed. The app opens in your browser on localhost, or optionally in a native window.</p>
+            <p>Windows, macOS and Linux with Python 3.12 or 3.13. The launch script sets up the environment by itself and installs Python if needed. The app opens in your browser on localhost, or optionally in a native window.</p>
           </details>
           <details class="faq-item">
             <summary><h3>Where are my data and API keys stored?</h3></summary>

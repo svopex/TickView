@@ -1,6 +1,9 @@
 __pycache__/
 *.py[cod]
 .venv/
+# Python stažený skriptem run.sh (když v systému chybí 3.12/3.13)
+.python/
+.python-download.*/
 venv/
 data/
 .zwork/

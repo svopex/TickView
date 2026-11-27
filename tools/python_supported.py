@@ -10,7 +10,8 @@ import sys
 # Od 3.12 (vyžaduje pandas-ta) do 3.13 včetně – pandas-ta pinuje numba==0.61.2,
 # která Python 3.14 nepodporuje. Horní mez zvednout, až pandas-ta pin uvolní
 # (pip show pandas-ta); zároveň upravit seznamy kandidátů v run.sh
-# a run-windows.bat a v něm i PY_VERSION (verze k automatické instalaci).
+# a run-windows.bat a verze k automatické instalaci (PY_VERSION
+# v run-windows.bat, PBS_PYTHON a PBS_RELEASE v run.sh).
 MIN_PYTHON = (3, 12)
 MAX_PYTHON_EXCLUSIVE = (3, 14)
 

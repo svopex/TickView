@@ -131,7 +131,7 @@
         "name": "Na jakých systémech TickView běží?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "Na Windows, macOS i Linuxu s Pythonem 3.12 nebo 3.13. Spouštěcí skript si připraví prostředí sám, na Windows Python v případě potřeby i nainstaluje. Aplikace se otevře v prohlížeči na localhost, volitelně v nativním okně."
+          "text": "Na Windows, macOS i Linuxu s Pythonem 3.12 nebo 3.13. Spouštěcí skript si připraví prostředí sám a Python v případě potřeby i nainstaluje. Aplikace se otevře v prohlížeči na localhost, volitelně v nativním okně."
         }
       },
       {
@@ -552,7 +552,7 @@ INDICATOR = EmaCross()</code></pre>
       <div class="container">
         <header class="section-head">
           <h2>Instalace a spuštění</h2>
-          <p>Stačí Python 3.12 nebo 3.13 – skript si sám vybere správnou verzi a na Windows ji v případě potřeby i nainstaluje. Aplikace se otevře v prohlížeči na <code>http://localhost:8095</code>, volitelně i v nativním okně.</p>
+          <p>Stačí Python 3.12 nebo 3.13 – skript si sám vybere správnou verzi, a když chybí, sám ho nainstaluje (Windows, macOS i Linux, bez administrátorských práv). Aplikace se otevře v prohlížeči na <code>http://localhost:8095</code>, volitelně i v nativním okně.</p>
         </header>
 
         <div class="tabs">
@@ -571,7 +571,8 @@ cd TickView-main
             </div>
             <p class="hint">
               Stáhne aktuální verzi do složky <code>TickView-main</code> – stačí <code>curl</code> a <code>tar</code>,
-              které macOS i Linux mají. Skript <code>run.sh</code> vytvoří <code>.venv</code>, doinstaluje závislosti
+              které macOS i Linux mají. Skript <code>run.sh</code> najde Python (když chybí, stáhne ho jen pro tento projekt,
+              bez administrátorských práv a bez Homebrew), vytvoří <code>.venv</code>, doinstaluje závislosti
               a spustí aplikaci.
             </p>
           </div>
@@ -658,7 +659,7 @@ cd TickView-main
           </details>
           <details class="faq-item">
             <summary><h3>Na jakých systémech TickView běží?</h3></summary>
-            <p>Na Windows, macOS i Linuxu s Pythonem 3.12 nebo 3.13. Spouštěcí skript si připraví prostředí sám, na Windows Python v případě potřeby i nainstaluje. Aplikace se otevře v prohlížeči na localhost, volitelně v nativním okně.</p>
+            <p>Na Windows, macOS i Linuxu s Pythonem 3.12 nebo 3.13. Spouštěcí skript si připraví prostředí sám a Python v případě potřeby i nainstaluje. Aplikace se otevře v prohlížeči na localhost, volitelně v nativním okně.</p>
           </details>
           <details class="faq-item">
             <summary><h3>Kde jsou uložená moje data a API klíče?</h3></summary>
