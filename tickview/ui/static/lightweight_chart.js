@@ -5422,9 +5422,133 @@ window.TickViewChart = (function () {
     ctx.restore();
   }
 
+  // ---------- snímek grafu (Chart snapshot: Download image / Copy image) ----------
+
+  // Prvky HTML překryvu, které do snímku nepatří (tlačítka řádků legendy – ikony Material)
+  const SNAPSHOT_SKIP = '.legend-ind-actions, .material-icons';
+
+  // Vykreslí canvas source do snímku na místo prvku node (CSS px vůči origin);
+  // bitmapa se přeškáluje na velikost prvku, takže nezáleží na pixel ratio
+  function drawSnapshotCanvas(ctx, source, node, origin) {
+    if (!source || !node) return;
+    const rect = node.getBoundingClientRect();
+    if (!rect.width || !rect.height || !source.width || !source.height) return;
+    ctx.drawImage(source, rect.left - origin.left, rect.top - origin.top, rect.width, rect.height);
+  }
+
+  // Překreslí HTML překryv grafu (legenda, titulky panelů, tabulky indikátorů)
+  // do snímku: podbarvení prvků (i kulatá tečka stavu dat) a jejich přímé
+  // texty na stejném místě s barvou a písmem z CSS. Rekurze předává
+  // průhlednost předků; skrytý nebo vynechaný prvek přeskočí celý podstrom
+  function drawSnapshotDom(ctx, node, origin, parentOpacity = 1, range = document.createRange()) {
+    if (!node || node.matches(SNAPSHOT_SKIP)) return;
+    const style = getComputedStyle(node);
+    const opacity = parentOpacity * (parseFloat(style.opacity) || 0);
+    if (style.display === 'none' || !opacity) return;
+    // visibility se dědí, ale potomek ji může vrátit na visible – proto jen
+    // přeskočí kreslení prvku, ne jeho podstrom
+    if (style.visibility === 'visible') {
+      ctx.save();
+      ctx.globalAlpha = opacity;
+      // Podbarvení se zaoblením rohů (roundRect zmenší příliš velký poloměr, 50 % = kruh)
+      const background = window.TickViewColorPicker.parseColor(style.backgroundColor);
+      const rect = background && background.a ? node.getBoundingClientRect() : null;
+      if (rect && rect.width && rect.height) {
+        ctx.fillStyle = style.backgroundColor;
+        ctx.beginPath();
+        const x = rect.left - origin.left;
+        const y = rect.top - origin.top;
+        if (ctx.roundRect) ctx.roundRect(x, y, rect.width, rect.height, parseFloat(style.borderTopLeftRadius) || 0);
+        else ctx.rect(x, y, rect.width, rect.height);
+        ctx.fill();
+      }
+      // Texty: pozici každého textového uzlu změří Range (svislý střed řádku)
+      ctx.font = [style.fontStyle, style.fontWeight, style.fontSize, style.fontFamily].join(' ');
+      ctx.fillStyle = style.color;
+      ctx.textBaseline = 'middle';
+      for (const child of node.childNodes) {
+        if (child.nodeType !== Node.TEXT_NODE || !child.textContent.trim()) continue;
+        range.selectNodeContents(child);
+        const box = range.getBoundingClientRect();
+        if (!box.width) continue;
+        ctx.fillText(child.textContent.replace(/\s+/g, ' ').trim(), box.left - origin.left, box.top + box.height / 2 - origin.top);
+      }
+      ctx.restore();
+    }
+    for (const child of node.children) drawSnapshotDom(ctx, child, origin, opacity, range);
+  }
+
+  // Kolik grafů rozložení se jmenovitě uvede v názvu souboru snímku
+  const SNAPSHOT_NAME_CHARTS = 4;
+
+  // Část názvu souboru bez znaků nevhodných pro soubory („GC=F“ → „GC-F“, „^VIX“ → „VIX“)
+  function fileNamePart(text) {
+    return String(text || '').replace(/[^A-Za-z0-9.]+/g, '-').replace(/^-+|-+$/g, '');
+  }
+
+  // Název souboru snímku podle obsahu a času (místní čas):
+  // jeden graf  TickView_BTCUSDT_1D_Binance_2026-11-27_10-34-09.png,
+  // více grafů  TickView_BTCUSDT-1D_XAUUSD-1h_2026-11-27_10-34-09.png
+  // (aktivní graf první, nad SNAPSHOT_NAME_CHARTS jen počet zbylých „+N“)
+  function snapshotName(charts) {
+    const active = activeState();
+    const ordered = [active, ...charts.filter((s) => s !== active)].filter((s) => s && s.symbolInfo);
+    let content;
+    if (ordered.length === 1) {
+      const info = ordered[0].symbolInfo;
+      content = [info.symbol, info.timeframe, info.exchange].map(fileNamePart);
+    } else {
+      // Stejný symbol a timeframe ve více grafech se uvede jen jednou
+      const labels = [...new Set(ordered.map((s) => [s.symbolInfo.symbol, s.symbolInfo.timeframe].map(fileNamePart).join('-')))];
+      content = labels.slice(0, SNAPSHOT_NAME_CHARTS);
+      if (labels.length > SNAPSHOT_NAME_CHARTS) content.push('+' + (labels.length - SNAPSHOT_NAME_CHARTS));
+    }
+    const now = new Date();
+    const pad = (value) => String(value).padStart(2, '0');
+    const date = now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate());
+    const time = pad(now.getHours()) + '-' + pad(now.getMinutes()) + '-' + pad(now.getSeconds());
+    return ['TickView', ...content.filter(Boolean), date, time].join('_') + '.png';
+  }
+
+  // Sestaví snímek všech viditelných grafů rozložení jako v TradingView:
+  // svíčky, osy a panely indikátorů (LWC takeScreenshot), kresby, legendy
+  // a tabulky; vrací {canvas, name} (canvas v rozlišení obrazovky) nebo null
+  function snapshot() {
+    const charts = Array.from(state.values()).filter((s) => s.container.offsetWidth && s.container.offsetHeight);
+    if (!charts.length) return null;
+    // Obdélník kolem všech grafů (rozložení více grafů v okně)
+    const rects = charts.map((s) => s.container.getBoundingClientRect());
+    const origin = { left: Math.min(...rects.map((r) => r.left)), top: Math.min(...rects.map((r) => r.top)) };
+    const width = Math.max(...rects.map((r) => r.right)) - origin.left;
+    const height = Math.max(...rects.map((r) => r.bottom)) - origin.top;
+    const dpr = window.devicePixelRatio || 1;
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    // Pozadí podle motivu (i mezery mezi grafy rozložení; motiv mají všechny grafy stejný)
+    ctx.fillStyle = THEMES[charts[0].themeName].layout.background.color;
+    ctx.fillRect(0, 0, width, height);
+    charts.forEach((s) => {
+      // Pořadí vrstev jako na obrazovce: graf, kresby, panely, HTML překryvy nahoře
+      drawSnapshotCanvas(ctx, s.chart.takeScreenshot(), s.chart.chartElement(), origin);
+      drawSnapshotCanvas(ctx, s.overlay.canvas, s.overlay.canvas, origin);
+      for (const pane of s.panesMap.values()) {
+        drawSnapshotCanvas(ctx, pane.chart.takeScreenshot(), pane.chart.chartElement(), origin);
+        drawSnapshotCanvas(ctx, pane.markers, pane.markers, origin);
+        drawSnapshotDom(ctx, pane.title, origin);
+      }
+      for (const table of s.indicatorTables.values()) drawSnapshotDom(ctx, table.el, origin);
+      drawSnapshotDom(ctx, s.legend, origin);
+    });
+    return { canvas, name: snapshotName(charts) };
+  }
+
   return {
     init: init,
     destroy: destroy,
+    snapshot: snapshot,
     setActive: markActive,
     setLayoutSync: setLayoutSync,
     popAllEvents: popAllEvents,

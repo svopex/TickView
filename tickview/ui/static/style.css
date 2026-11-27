@@ -1526,12 +1526,13 @@
   color: inherit;
 }
 
-/* Nabídky šablon, seznamů symbolů, typů grafu a timeframů */
+/* Nabídky šablon, seznamů symbolů, typů grafu, timeframů a snímku grafu */
 .tpl-menu,
 .wl-menu,
 .alerts-menu,
 .chart-type-menu,
-.tf-menu {
+.tf-menu,
+.snapshot-menu {
   min-width: 220px;
 }
 
@@ -2227,6 +2228,12 @@
 .layout-12r { grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(4, 1fr); }
 .layout-14 { grid-template-columns: repeat(7, 1fr); grid-template-rows: repeat(2, 1fr); }
 .layout-16 { grid-template-columns: repeat(4, 1fr); grid-template-rows: repeat(4, 1fr); }
+
+/* Zkratka položky nabídky snímku grafu (vpravo, šedě) */
+.snapshot-shortcut {
+  font-size: 12px;
+  color: #808080;
+}
 
 /* Nabídka Layout setup: řádky podle počtu grafů s piktogramy a synchronizace */
 .layout-menu {

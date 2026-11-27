@@ -190,7 +190,30 @@ STATIC_SCRIPTS = (
     "watchlist_dnd.js",
     "watchlist_flags.js",
     "lightweight_chart.js",
+    "chart_snapshot.js",
 )
+
+
+# Položky nabídky snímku grafu (akce pro static/chart_snapshot.js, ikona, popisek
+# jako v TradingView) a jejich klávesové zkratky na macOS a ostatních systémech
+SNAPSHOT_ACTIONS = (
+    ("download", "download", "Download image"),
+    ("copy", "content_copy", "Copy image"),
+)
+SNAPSHOT_SHORTCUTS = {
+    "mac": {"download": "⌥⌘S", "copy": "⇧⌘S"},
+    "other": {"download": "Ctrl+Alt+S", "copy": "Ctrl+Shift+S"},
+}
+
+
+def snapshot_shortcut_labels(user_agent: str) -> dict[str, str]:
+    """Vrátí popisky zkratek snímku grafu (akce download / copy → text) podle prohlížeče.
+
+    Parametry:
+        user_agent: hlavička User-Agent požadavku na stránku.
+    """
+    # Na zařízeních Apple (User-Agent obsahuje „Mac OS“) se zkratky píšou symboly ⌥⇧⌘, jinde Ctrl+…
+    return SNAPSHOT_SHORTCUTS["mac" if "Mac OS" in user_agent else "other"]
 
 
 def _static_version() -> str:
@@ -264,6 +287,9 @@ async def _build_index(
         + f'<link rel="stylesheet" href="/static/style.css?v={STATIC_VERSION}">'
         + "".join(f'<script src="/static/{name}?v={STATIC_VERSION}"></script>' for name in STATIC_SCRIPTS)
     )
+
+    # Zkratky snímku grafu v nabídce podle systému prohlížeče (macOS ⌥⌘S, jinde Ctrl+Alt+S)
+    snapshot_shortcuts = snapshot_shortcut_labels(context.client.request.headers.get("user-agent", ""))
 
     # Nastavení z minula: motiv, poslední symbol a timeframe (starší nastavení
     # jediného grafu – použijí se pro první graf, dokud není uložené rozložení)
@@ -3622,6 +3648,20 @@ async def _build_index(
                                 sync_switches[sync_key] = ui.switch(
                                     value=state["sync"][sync_key], on_change=make_sync_change(sync_key)
                                 ).props("dense size=sm")
+            # Snímek grafu jako v TradingView (Chart snapshot): stažení PNG a kopie
+            # do schránky; kliky i zkratky obsluhuje static/chart_snapshot.js
+            # v prohlížeči (zápis do schránky musí proběhnout v gestu uživatele)
+            with ui.button(icon="photo_camera", color=None).props("flat dense").classes(
+                "topbar-btn snapshot-button"
+            ).tooltip(tr("Snímek grafu")):
+                with ui.menu().props("auto-close").classes("snapshot-menu"):
+                    ui.label("Chart snapshot").classes("menu-section")
+                    for action, icon, label in SNAPSHOT_ACTIONS:
+                        with ui.menu_item(auto_close=False).classes(f"tpl-menu-item snapshot-{action}"):
+                            ui.icon(icon).classes("tpl-menu-icon")
+                            ui.label(label)
+                            ui.space()
+                            ui.label(snapshot_shortcuts[action]).classes("snapshot-shortcut")
             # Přepínač jazyka rozhraní (CS / EN); změna znovu načte stránku
             ui.toggle({code: code.upper() for code in LANGUAGES}, value=language, on_change=lambda e: change_language(e.value)).props(
                 "dense no-caps unelevated"

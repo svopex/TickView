@@ -21,6 +21,7 @@ EN = {
     "Místní čas": "Local time",
     "Časové pásmo grafu": "Chart time zone",
     "Nastavení": "Settings",
+    "Snímek grafu": "Take a snapshot",
     "Nastavení beze změny.": "Settings unchanged.",
     # Hledání symbolu
     "Vše": "All",

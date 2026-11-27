@@ -324,6 +324,14 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   timeframe a typ aktivního grafu. Rozložení, synchronizace, aktivní graf
   a stav všech grafů se ukládají (nastavení `layout`) a přetrvají restart;
   styl svíček, časové pásmo a seance jsou společné všem grafům.
+- Snímek grafu (Chart snapshot jako v TradingView): tlačítko fotoaparátu
+  v horní liště nabízí Download image (uloží PNG) a Copy image (zkopíruje PNG
+  do schránky); zkratky ⌥⌘S / ⇧⌘S na macOS, jinde Ctrl+Alt+S / Ctrl+Shift+S.
+  Snímek obsahuje všechny grafy rozložení v rozlišení obrazovky – svíčky, osy,
+  panely indikátorů, kresby, legendu a tabulky indikátorů. Soubor se jmenuje
+  podle obsahu, např. `TickView_BTCUSDT_1D_Binance_2026-11-27_10-34-09.png`
+  (u více grafů symboly a timeframy všech grafů). Kopie do schránky vyžaduje
+  https nebo localhost.
 - Alerty jako v TradingView: tlačítko Alert v horní liště (poslední cena),
   pravý klik do grafu „Přidat alert na <cena>“ nebo pravý klik na čáru
   (horizontální linie / polopřímka, trendová čára, polopřímka, přímka)
@@ -1021,6 +1029,8 @@ Ruční spuštění na všech systémech (Windows, macOS, Linux):
   čáry alertů a zvuk alertu, plovoucí panel oblíbených
   nástrojů, styl svíček; více grafů na stránce – aktivní graf, společná
   lišta a klávesnice, synchronizace crosshairu a času)
+- `tickview/ui/static/chart_snapshot.js` – snímek grafu: Download image
+  a Copy image (nabídka fotoaparátu a klávesové zkratky)
 - `tickview/ui/static/color_picker.js` – výběr barvy ve stylu TradingView
   (paleta, vlastní barvy, průhlednost, u výstupu indikátoru i tloušťka
   a styl čáry)

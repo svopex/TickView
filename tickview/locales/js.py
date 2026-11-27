@@ -21,6 +21,12 @@ EN = {
     "Smazat alert": "Delete alert",
     "Odebrat indikátor": "Remove indicator",
     "Přidat alert na {price}": "Add alert on {price}",
+    # Snímek grafu (static/chart_snapshot.js)
+    "Snímek grafu se nepodařilo vytvořit: {error}": "Could not create the chart snapshot: {error}",
+    "Schránka pro obrázky není dostupná (vyžaduje https nebo localhost)": (
+        "Image clipboard is not available (requires https or localhost)"
+    ),
+    "Obrázek grafu zkopírován do schránky": "Chart image copied to clipboard",
     # Lišta nástrojů kreslení a oblíbené
     "Odebrat z oblíbených": "Remove from favorites",
     "Přidat do oblíbených": "Add to favorites",
