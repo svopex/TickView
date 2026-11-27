@@ -3628,7 +3628,10 @@ async def _build_index(
 
     with ui.column().classes("page-root w-full") as page_root:
         with ui.row().classes("topbar w-full"):
-            ui.label("TickView").classes("brand").on("click", about_dialog.open).tooltip(about_tooltip)
+            # Logo (stejná ikona jako v dialogu O aplikaci) a název; klik otevře O aplikaci
+            with ui.row().classes("brand").on("click", about_dialog.open).tooltip(about_tooltip):
+                ui.icon("candlestick_chart").classes("brand-logo")
+                ui.label("TickView")
             # Pilulka s aktuálním symbolem (jako v TradingView): klik otevře hledání
             with (
                 ui.button(color=None, on_click=lambda: open_symbol_search())

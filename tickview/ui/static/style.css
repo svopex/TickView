@@ -46,11 +46,20 @@
 
 /* Název aplikace vlevo nahoře; klik otevře dialog O aplikaci */
 .brand {
+  align-items: center;
+  gap: 4px !important;
+  flex-wrap: nowrap !important;
   font-size: 1.25rem;
   font-weight: 700;
   letter-spacing: 0.5px;
   cursor: pointer;
   user-select: none;
+}
+
+/* Logo v horní liště: stejná ikona a barva jako v dialogu O aplikaci */
+.brand-logo {
+  font-size: 1.5rem;
+  color: #2962ff;
 }
 
 /* Pilulka s aktuálním symbolem v horní liště (klik otevře hledání symbolu) */
