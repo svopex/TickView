@@ -531,8 +531,10 @@ async def _build_index(
         search_state["highlight"] = 0
 
         async def search_one(provider) -> None:
+            # Nepřipojený zdroj (neběžící TWS, cTrader bez spojení) se vůbec
+            # nenabízí – nehlásí se ani jako nedostupný
             try:
-                found = await provider.search(query)
+                found = await provider.search(query) if await provider.available() else []
             except Exception:
                 found = None
             if seq != search_state["seq"]:
@@ -702,9 +704,20 @@ async def _build_index(
         symbol_search_input.value = (active().symbol or "") if text is None else text
         search_state["category"] = "all"
         symbol_search_dialog.open()
-        await run_symbol_search()
+        await asyncio.gather(run_symbol_search(), refresh_search_sources())
         if text is None:
             symbol_search_input.run_method("select")
+
+    async def refresh_search_sources() -> None:
+        # Výběr zdroje v hledání nabízí jen připojené zdroje (zjišťuje se při
+        # každém otevření – TWS se mohla mezitím spustit nebo ukončit)
+        ready = await asyncio.gather(*(provider.available() for provider in PROVIDERS))
+        options = {"all": tr("Všechny zdroje")}
+        options.update({provider.id: provider.name for provider, ok in zip(PROVIDERS, ready) if ok})
+        if search_state["source"] not in options:
+            # Zvolený zdroj se odpojil – hledá se znovu ve všech (on_change výběru)
+            search_state["source"] = "all"
+        search_source_select.set_options(options, value=search_state["source"])
 
     async def add_key_to_watchlist(key: str, section_id: int | None = None) -> None:
         """Přidá symbol "zdroj:symbol" do aktivního seznamu, jen když tam ještě není.
@@ -4356,8 +4369,9 @@ async def _build_index(
                 for key, label in SEARCH_CATEGORIES.items()
             }
             ui.space()
-            ui.select(
-                {"all": tr("Všechny zdroje"), **{provider.id: provider.name for provider in PROVIDERS}},
+            # Zdroje doplní refresh_search_sources při otevření (jen připojené)
+            search_source_select = ui.select(
+                {"all": tr("Všechny zdroje")},
                 value="all",
                 on_change=set_search_source,
             ).props("dense borderless options-dense").classes("sym-source-select")

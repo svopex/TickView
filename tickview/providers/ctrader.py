@@ -762,6 +762,14 @@ class CTraderProvider(DataProvider):
         exchange = f"cTrader · {self.client.broker}" if self.client.broker else self.name
         return {"name": item.get("description") or item.get("symbolName") or symbol, "exchange": exchange}
 
+    async def available(self) -> bool:
+        """Spojení s Open API je navázané a účet přihlášený (po selhání s cooldownem)."""
+        try:
+            await self.client.ensure_connected()
+        except Exception:
+            return False
+        return True
+
     async def search(self, query: str, limit: int = 30) -> list[SymbolInfo]:
         """Symboly účtu podle začátku symbolu, pak podle výskytu v symbolu nebo popisu."""
         symbols = await self.client.symbols()

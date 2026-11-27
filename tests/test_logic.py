@@ -643,6 +643,20 @@ def make_bar(minute: int, close: float) -> BarData:
     return BarData(date=date, open=close, high=close + 1, low=close - 1, close=close, volume=10)
 
 
+class ProviderAvailableTest(unittest.IsolatedAsyncioTestCase):
+    """Dostupnost zdroje pro hledání: IBKR jen s navázaným spojením k TWS."""
+
+    async def test_ibkr_available(self) -> None:
+        provider = IbkrProvider()
+        # Neběžící TWS (selhané připojení) = zdroj se v hledání nenabízí
+        with mock.patch.object(provider, "_ensure_connected", side_effect=RuntimeError("TWS neběží")):
+            self.assertFalse(await provider.available())
+        with mock.patch.object(provider, "_ensure_connected", return_value=object()):
+            self.assertTrue(await provider.available())
+        # Zdroje bez trvalého spojení jsou dostupné vždy
+        self.assertTrue(await YahooProvider().available())
+
+
 class IbkrStreamTest(unittest.IsolatedAsyncioTestCase):
     """Průběžné bary IBKR (keepUpToDate): stav, změny svíček a ukončení odběru."""
 

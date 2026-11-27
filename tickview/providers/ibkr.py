@@ -565,6 +565,14 @@ class IbkrProvider(DataProvider):
             return f"{math.ceil(days / 365)} Y"
         return f"{days} D"
 
+    async def available(self) -> bool:
+        """TWS / IB Gateway běží a spojení je navázané (po výpadku zkusí reconnect s cooldownem)."""
+        try:
+            await self._ensure_connected()
+        except Exception:
+            return False
+        return True
+
     async def search(self, query: str, limit: int = 30) -> list[SymbolInfo]:
         """Vyhledá forexové páry, kovy, CFD a futures z tabulky (podle dotazu,
         bez TWS) a akcie/ETF a další futures přes TWS matching symbols

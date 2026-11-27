@@ -57,8 +57,7 @@ stejné příkazy znovu (nebo `git pull`); `data/` ani `config.yaml` se nepřep�
   doinstaluje závislosti a spustí aplikaci.
 - **Windows:** dvojklik na `run-windows.bat` – navíc chybějící Python
   nainstaluje (bez administrátorských práv) a otevře prohlížeč.
-- **Ručně:** `python3 -m venv .venv`, aktivace, `pip install -r
-  requirements.txt`, `python main.py`.
+- **Ručně:** `python3 -m venv .venv`, aktivace, `pip install -r requirements.txt`, `python main.py`.
 
 Aplikace běží na http://localhost:8095. Parametry (předávají je i skripty):
 `--port 8090`, `--open` (otevře prohlížeč), `--native` (nativní okno;
@@ -72,6 +71,7 @@ se upravit i v aplikaci přes ozubené kolečko → Settings.
 ## Zdroje dat
 
 Přehled zdrojů ukáže aplikace po instalaci a kdykoli v Settings → Přehled zdrojů dat.
+Hledání symbolu nabízí jen připojené zdroje (IBKR s běžící TWS, cTrader se spojením).
 
 | Zdroj | Trhy | Živá data | Potřebuje |
 |---|---|---|---|

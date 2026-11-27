@@ -425,6 +425,14 @@ class DataProvider(ABC):
 
         return poll_latest_candles(fetch_latest, poll_seconds_for(timeframe))
 
+    async def available(self) -> bool:
+        """Zda je zdroj připojený a smí se nabízet v hledání symbolu.
+
+        Zdroje bez trvalého spojení (Binance, Yahoo, Alpaca přes REST) jsou
+        dostupné vždy; zdroje se spojením (IBKR, cTrader) metodu přepisují.
+        """
+        return True
+
     @abstractmethod
     async def search(self, query: str, limit: int = 30) -> list[SymbolInfo]:
         """Vyhledá symboly podle dotazu (prázdný dotaz = nabídka na začátek)."""
