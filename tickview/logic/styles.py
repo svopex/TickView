@@ -346,8 +346,8 @@ FRVP_LINE_DEFAULTS: dict[str, dict] = {
 # Tovární hodnoty Inputs a Style (barvy histogramu jako ve výchozím FRVP
 # TradingView: růst modrý, pokles žlutý, Value Area sytější)
 FRVP_DEFAULTS: dict = {
-    "rowsLayout": "count",
-    "rowSize": 80,
+    "rowsLayout": "ticks",
+    "rowSize": 20,
     "volumeMode": "updown",
     "valueArea": 70,
     "extendRight": False,

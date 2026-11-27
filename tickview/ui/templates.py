@@ -32,8 +32,20 @@ def settings_header(dialog: ui.dialog, title: str = "") -> ui.label:
     return title_label
 
 
-def settings_buttons(dialog: ui.dialog, on_ok, ok_text: str = "Ok") -> None:
-    """Tlačítka Cancel a Ok zarovnaná vpravo (volá se uvnitř řádku patičky).
+# Enter v dialogu potvrdí formulář (jako Ok), kromě víceřádkového textu
+# (nový řádek), rozbalovací nabídky (výběr volby), tlačítka (vlastní akce)
+# a psaní přes IME; Quasar dialog předává posluchače svému prvku v body
+_ENTER_SUBMIT_JS = """(event) => {
+  const target = event.target;
+  if (event.key !== 'Enter' || event.isComposing || event.shiftKey) return;
+  if (target.tagName === 'TEXTAREA' || target.closest('button, .q-select, .q-menu')) return;
+  event.preventDefault();
+  emit();
+}"""
+
+
+def settings_buttons(dialog: ui.dialog, on_ok, ok_text: str = "Ok") -> ui.button:
+    """Tlačítka Cancel a Ok zarovnaná vpravo (volá se uvnitř řádku patičky); Enter v dialogu = Ok.
 
     Tlačítka nemají barvu Quasaru (color=None) – vzhled podle motivu řeší CSS.
 
@@ -41,10 +53,14 @@ def settings_buttons(dialog: ui.dialog, on_ok, ok_text: str = "Ok") -> None:
         dialog: dialog, který Cancel zavře.
         on_ok: handler potvrzovacího tlačítka.
         ok_text: popisek potvrzovacího tlačítka.
+
+    Vrací tlačítko Ok (dialog může měnit jeho popisek a vzhled).
     """
     ui.space()
     ui.button("Cancel", on_click=dialog.close, color=None).props("outline no-caps").classes("tv-btn-cancel")
-    ui.button(ok_text, on_click=on_ok, color=None).props("unelevated no-caps").classes("tv-btn-ok")
+    ok_button = ui.button(ok_text, on_click=on_ok, color=None).props("unelevated no-caps").classes("tv-btn-ok")
+    dialog.on("keydown", on_ok, js_handler=_ENTER_SUBMIT_JS)
+    return ok_button
 
 
 async def load_default_template(cache: KlineCache, scope: str) -> dict | None:
@@ -158,7 +174,6 @@ class TemplateMenu:
                 .props("outlined dense autofocus")
                 .classes("w-full")
             )
-            self.name_input.on("keydown.enter", self._save_named)
             with ui.row().classes("tv-settings-actions w-full"):
                 settings_buttons(self.name_dialog, self._save_named, "Save")
 

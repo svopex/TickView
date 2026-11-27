@@ -3909,7 +3909,6 @@ async def _build_index(
     with ui.dialog() as watchlist_name_dialog, ui.card().classes("tpl-name-dialog"):
         watchlist_name_title = settings_header(watchlist_name_dialog, tr("Nový seznam"))
         watchlist_name_input = ui.input(tr("Název seznamu")).props("outlined dense autofocus").classes("w-full")
-        watchlist_name_input.on("keydown.enter", submit_watchlist_name)
         with ui.row().classes("tv-settings-actions w-full"):
             settings_buttons(watchlist_name_dialog, submit_watchlist_name, "Save")
 
@@ -4124,7 +4123,6 @@ async def _build_index(
     with ui.dialog() as save_template_dialog, ui.card().classes("tpl-name-dialog"):
         settings_header(save_template_dialog, "Save indicator template")
         template_name_input = ui.input(tr("Název šablony")).props("outlined dense autofocus").classes("w-full")
-        template_name_input.on("keydown.enter", submit_save_template)
         template_remember_symbol = ui.checkbox("Remember symbol")
         template_remember_interval = ui.checkbox("Remember interval")
         with ui.row().classes("tv-settings-actions w-full"):
@@ -4355,9 +4353,7 @@ async def _build_index(
                 alert_notify_webhook = ui.checkbox("Webhook URL")
                 alert_webhook_url = ui.input(placeholder="https://…").props("outlined dense").classes("w-full")
         with ui.row().classes("tv-settings-actions w-full"):
-            ui.space()
-            ui.button("Cancel", on_click=alert_dialog.close, color=None).props("outline no-caps").classes("tv-btn-cancel")
-            alert_submit = ui.button("Create", on_click=submit_alert, color=None).props("unelevated no-caps").classes("tv-btn-ok")
+            alert_submit = settings_buttons(alert_dialog, submit_alert, "Create")
     # Zdroj podmínky mění nabídky podmínek a spouštění, spouštění viditelnost minut
     alert_source.on_value_change(lambda _event: (apply_alert_source(), refresh_alert_message()))
     alert_condition.on_value_change(lambda _event: apply_alert_condition())

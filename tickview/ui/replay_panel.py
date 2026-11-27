@@ -727,7 +727,6 @@ class ReplayUI:
         with ui.dialog() as self.rename_dialog, ui.card().classes("tpl-name-dialog"):
             settings_header(self.rename_dialog, tr("Přejmenovat session"))
             self.rename_input = ui.input(tr("Název")).props("outlined dense autofocus").classes("w-full")
-            self.rename_input.on("keydown.enter", self.submit_rename)
             with ui.row().classes("tv-settings-actions w-full"):
                 settings_buttons(self.rename_dialog, self.submit_rename, "Save")
 
@@ -1026,11 +1025,9 @@ class ReplayUI:
                 self.order_tag = ui.input(tr("Štítek setupu")).props("outlined dense")
                 self.order_note = ui.input(tr("Poznámka")).props("outlined dense")
             with ui.row().classes("tv-settings-actions w-full"):
-                ui.space()
-                ui.button("Cancel", on_click=self.order_dialog.close, color=None).props("outline no-caps").classes(
-                    "tv-btn-cancel")
-                self.order_submit = ui.button(tr("Odeslat"), on_click=self.submit_order, color=None).props(
-                    "unelevated no-caps").classes("replay-buy")
+                # Tlačítko odeslání má barvu strany příkazu (buy / sell) místo vzhledu Ok
+                self.order_submit = settings_buttons(self.order_dialog, self.submit_order, tr("Odeslat")).classes(
+                    replace="replay-buy")
         for field in (self.order_side, self.order_type, self.order_price, self.order_qty_mode, self.order_qty,
                       self.order_sl, self.order_tp):
             field.on_value_change(lambda _e: self._paint_order())
