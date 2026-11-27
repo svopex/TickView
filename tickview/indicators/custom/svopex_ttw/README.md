@@ -30,9 +30,8 @@ indikátorů), takže funguje se scannerem, alertem na signál i automatickou
 pauzou replaye při signálu. Proti obecným výchozím hodnotám:
 
 - alert scanneru před zavřením svíčky je ve výchozím stavu zapnutý,
-- pole symbolů jsou předvyplněná symboly z Pine skriptu (forex, kovy,
-  indexová CFD a ropa z Interactive Brokers, bitcoin z Binance); seznam je
-  v `DEFAULT_SCAN_SYMBOLS` v `indicator.py`.
+- pole symbolů jsou předvyplněná symboly z Pine skriptu (většinou z cTrader);
+  seznam a zdroje jsou v `DEFAULT_SCAN_SYMBOLS` v `indicator.py`.
 
 Tabulka scanneru má hlavičku „Svopex TTW (1h) | Signál (svíčka)“, zástupný
 text `{{signal}}` alertu na signál dává např. „LONG ENG“.

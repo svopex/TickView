@@ -43,50 +43,49 @@ TIMEZONE_OPTIONS = [
 ]
 
 # Výchozí symboly scanneru – symboly 1–37 z Pine skriptu (OANDA) ve zdrojích
-# TickView: forex, kovy, indexová a ropná CFD z Interactive Brokers (páry ve
-# tvaru IB, základní měna podle konvence IB; CFD obchodují téměř nonstop jako
-# OANDA), Russell 2000 jako ETF IWM z IB (CFD na Russell IB nemá, CFD na IWM
-# nevrací přes API historii – cena je stejná, obchoduje se jen 4:00–20:00
-# New York), bitcoin z Binance; pole 38 je navíc ropa Brent, 39–40 prázdná
+# TickView: forex, kovy, indexová a ropná CFD z cTrader (názvy symbolů brokera
+# Spotware; u jiného cTrader brokera se mohou lišit), Russell 2000 jako ETF IWM
+# z IB (cTrader broker ho nemá; obchoduje se jen 4:00–20:00 New York), bitcoin
+# z Binance; pole 38 je navíc ropa Brent, 39–40 prázdná
 DEFAULT_SCAN_SYMBOLS = (
-    "ibkr:IBUST100",     # NAS100USD
-    "ibkr:XAUUSD",
-    "ibkr:EUR.USD",
-    "ibkr:IBUS30",       # US30USD
-    "ibkr:IBUS500",      # SPX500USD
-    "ibkr:IWM",          # US2000USD
-    "ibkr:IBDE40",       # DE30EUR
-    "ibkr:IBUSOIL",      # WTICOUSD
-    "ibkr:XAGUSD",
-    "binance:BTCUSDT",   # BTCUSD
-    "ibkr:GBP.USD",
-    "ibkr:USD.JPY",
-    "ibkr:USD.CHF",
-    "ibkr:AUD.USD",
-    "ibkr:USD.CAD",
-    "ibkr:NZD.USD",
-    "ibkr:EUR.GBP",
-    "ibkr:EUR.JPY",
-    "ibkr:EUR.CHF",
-    "ibkr:EUR.AUD",
-    "ibkr:EUR.CAD",
-    "ibkr:EUR.NZD",
-    "ibkr:GBP.JPY",
-    "ibkr:GBP.CHF",
-    "ibkr:GBP.AUD",
-    "ibkr:GBP.CAD",
-    "ibkr:GBP.NZD",
-    "ibkr:AUD.JPY",
-    "ibkr:AUD.CHF",
-    "ibkr:AUD.CAD",
-    "ibkr:AUD.NZD",
-    "ibkr:CAD.JPY",
-    "ibkr:CAD.CHF",
-    "ibkr:NZD.JPY",
-    "ibkr:NZD.CHF",
-    "ibkr:NZD.CAD",
-    "ibkr:CHF.JPY",
-    "ibkr:IBUKOIL",      # Brent (navíc proti Pine)
+    "ctrader:USTECH100",  # NAS100USD
+    "ctrader:XAUUSD",
+    "ctrader:EURUSD",
+    "ctrader:US30",       # US30USD
+    "ctrader:US500",      # SPX500USD
+    "ibkr:IWM",           # US2000USD
+    "ctrader:GERMANY40",  # DE30EUR
+    "ctrader:XTIUSD",     # WTICOUSD
+    "ctrader:XAGUSD",
+    "binance:BTCUSDT",    # BTCUSD
+    "ctrader:GBPUSD",
+    "ctrader:USDJPY",
+    "ctrader:USDCHF",
+    "ctrader:AUDUSD",
+    "ctrader:USDCAD",
+    "ctrader:NZDUSD",
+    "ctrader:EURGBP",
+    "ctrader:EURJPY",
+    "ctrader:EURCHF",
+    "ctrader:EURAUD",
+    "ctrader:EURCAD",
+    "ctrader:EURNZD",
+    "ctrader:GBPJPY",
+    "ctrader:GBPCHF",
+    "ctrader:GBPAUD",
+    "ctrader:GBPCAD",
+    "ctrader:GBPNZD",
+    "ctrader:AUDJPY",
+    "ctrader:AUDCHF",
+    "ctrader:AUDCAD",
+    "ctrader:AUDNZD",
+    "ctrader:CADJPY",
+    "ctrader:CADCHF",
+    "ctrader:NZDJPY",
+    "ctrader:NZDCHF",
+    "ctrader:NZDCAD",
+    "ctrader:CHFJPY",
+    "ctrader:XBRUSD",     # Brent (navíc proti Pine)
 )
 
 # Skupiny parametrů (sekce dialogu) – pořadí jako v Pine; texty pro uživatele
