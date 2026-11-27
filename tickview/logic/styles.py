@@ -495,11 +495,11 @@ def normalize_position_points(
 # Motiv vzhledu aplikace a grafů: tmavý, světlý, nebo Auto podle systému
 # (prefers-color-scheme prohlížeče)
 THEME_MODES = ("dark", "light", "auto")
-DEFAULT_THEME = "dark"
+DEFAULT_THEME = "auto"
 
 
 def normalize_theme(value) -> str:
-    """Platný motiv vzhledu (THEME_MODES); neznámá hodnota = tmavý."""
+    """Platný motiv vzhledu (THEME_MODES); neznámá hodnota = Auto (podle systému)."""
     return value if value in THEME_MODES else DEFAULT_THEME
 
 

@@ -199,12 +199,12 @@ class TextStyleTest(unittest.TestCase):
         self.assertNotIn("extendRight", normalize_drawing_style({"options": {"extendRight": True}}, "trend")["options"])
 
     def test_theme_cycle(self) -> None:
-        # Tlačítko motivu: tmavý → světlý → Auto → tmavý; neznámý motiv = tmavý
+        # Tlačítko motivu: tmavý → světlý → Auto → tmavý; neznámý motiv = Auto
         self.assertEqual(next_theme("dark"), "light")
         self.assertEqual(next_theme("light"), "auto")
         self.assertEqual(next_theme("auto"), "dark")
-        self.assertEqual(normalize_theme("blue"), "dark")
-        self.assertEqual(next_theme(None), "light")
+        self.assertEqual(normalize_theme("blue"), "auto")
+        self.assertEqual(next_theme(None), "dark")
 
     def test_frvp_options(self) -> None:
         # FRVP: meze čísel, neplatné volby a barvy = výchozí, čáry s doplněnými hodnotami
