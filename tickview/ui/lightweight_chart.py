@@ -294,6 +294,15 @@ class LightweightChart(ui.element):
         """Nahradí zobrazené kresby (načtené z cache při načtení symbolu)."""
         self._call("setDrawings", drawings)
 
+    def preview_drawing(self, drawing_id: int, values: dict) -> None:
+        """Živý náhled nastavení kresby (dialog Settings před Ok) jen v grafu, bez uložení.
+
+        Parametry:
+            drawing_id: id kresby v databázi.
+            values: {"color" (None = beze změny, sticker), "options", "text" (None = bez textu)}.
+        """
+        self._call("previewDrawing", int(drawing_id), values)
+
     def set_active(self) -> None:
         """Označí graf jako aktivní v rozložení více grafů (rámeček, lišta, klávesnice)."""
         self._call("setActive")

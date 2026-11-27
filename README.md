@@ -24,12 +24,12 @@ grafy vykresluje open-source knihovna Lightweight Charts™ od TradingView
   donačítání historie při posunu doleva, snímek grafu (Download / Copy image).
 - **Více grafů** – rozložení 1–16 grafů se synchronizací symbolu, intervalu,
   crosshairu a času.
-- **Indikátory** – 28 vestavěných (SMA, EMA, VWAP, Bollinger, Ichimoku,
-  Supertrend, RSI, MACD, ATR, Volume…), COT report a vlastní indikátory
-  v Pythonu; Settings se záložkami Inputs / Style / Visibility, šablony.
+- **Indikátory** – 29 vestavěných (SMA, EMA, VWAP, Bollinger, RSI, MACD, Volume,
+  TPO – profily sbalit / rozložit pravým tlačítkem…), COT report a vlastní v Pythonu;
+  Settings (Inputs / Style / Visibility) s živým náhledem v grafu, šablony.
 - **Kreslení** – nástroje jako v TradingView (čáry, kanály, Fibonacci, pitchfork,
-  obdélník, text, Long / Short position, volume profile FRVP, měřič), magnet,
-  šablony stylu, viditelnost podle timeframu; kresby se ukládají k symbolu.
+  obdélník, text, Long / Short position, FRVP, měřič), magnet, šablony stylu,
+  Settings s živým náhledem, viditelnost podle timeframu; ukládají se k symbolu.
 - **Watchlist** – více seznamů, sekce, barevné vlaječky, řazení, živé ceny.
 - **Alerty** – na cenu, čáru kresby nebo signál indikátoru; Telegram, webhook,
   toast a zvuk; vyhodnocuje je server i bez otevřené stránky.
@@ -104,7 +104,7 @@ a proměnná `INDICATOR`), `README.md` s popisem a testy v `tests/` (včetně
 `__init__.py`; `python -m unittest` je najde). Indikátor importuje jen
 `tickview.indicators.api` a pandas / numpy, dostane svíčky, parametry
 a `Context` a vrací `Result` – čáry, úsečky, značky, signály pro scanner
-a alerty, tabulky a pozadí panelu. Externí data (COT) si vyžádá
+a alerty, tabulky, pozadí panelu a profily TPO. Externí data (COT) si vyžádá
 v `data_requirements`. Nový indikátor = nový adresář; chyba importu nebo jiná
 `API_VERSION` se ukáže v kategorii Vlastní a ostatní indikátory fungují dál.
 

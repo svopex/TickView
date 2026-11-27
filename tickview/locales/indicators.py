@@ -289,4 +289,67 @@ EN = {
     "Barva double bottom": "Double bottom color",
     "Barva double top": "Double top color",
     "Barva prostřední části dvoubarevné linky": "Two-color line middle part color",
+    # TPO (tickview/indicators/tpo.py)
+    "Market Profile: čas strávený na cenových úrovních (bloky A–Z), POC a Value Area.": (
+        "Market Profile: time spent at price levels (blocks A–Z), POC and Value Area."
+    ),
+    "Den": "Day",
+    "Týden": "Week",
+    "Měsíc": "Month",
+    "Neprodlužovat": "Don't extend",
+    "Prodloužit do protnutí": "Extend until crossed",
+    "Vlevo": "Left",
+    "Vpravo": "Right",
+    "Vzhled": "Appearance",
+    "Čáry a popisky": "Lines and labels",
+    "Profil objemu": "Volume profile",
+    "Perioda": "Period",
+    "Jednotka periody": "Period unit",
+    "Velikost bloku": "Block size",
+    "Blok kratší než timeframe grafu se prodlouží na délku svíčky.": (
+        "A block shorter than the chart timeframe is extended to the candle length."
+    ),
+    "Velikost řádku": "Row size",
+    "Ticků na řádek": "Ticks per row",
+    "Jen při ručně zadané velikosti řádku; Auto rozdělí rozpětí posledních 300 svíček na 80 řádků.": (
+        "Only with a manual row size; Auto splits the range of the last 300 candles into 80 rows."
+    ),
+    "Value Area (%)": "Value area percent",
+    "Barva bloku A": "Block A color",
+    "Barva bloku Z": "Block Z color",
+    "Barva bloku a": "Block a color",
+    "Barva bloku z": "Block z color",
+    "Bloky": "Blocks",
+    "Písmena": "Letters",
+    "Písmena se ukážou, jen když je v grafu dost místa (jinak bloky).": (
+        "Letters are shown only when the chart has enough space (blocks otherwise)."
+    ),
+    "Krytí mimo Value Area (%)": "Opacity outside VA (%)",
+    "Rozložit bloky v čase": "Expand blocks",
+    "Blok se nakreslí v čase svého vzniku místo u levého okraje profilu.": (
+        "A block is drawn at the time it was formed instead of at the left edge of the profile."
+    ),
+    "POC – prodloužení": "POC – extend",
+    "Poor high – prodloužení": "Poor high – extend",
+    "Poor high – barva": "Poor high – color",
+    "Poor low – prodloužení": "Poor low – extend",
+    "Poor low – barva": "Poor low – color",
+    "Single prints – prodloužení": "Single prints – extend",
+    "Single prints – barva": "Single prints – color",
+    "VAH – prodloužení": "VAH – extend",
+    "VAL – prodloužení": "VAL – extend",
+    "Střed TPO": "TPO midpoint",
+    "Otevření": "Open",
+    "Uzavření": "Close",
+    "Počáteční rovnováha (IBR)": "Initial balance range (IBR)",
+    "Počet bloků IBR": "IBR blocks",
+    "Zobrazit profil objemu": "Show volume profile",
+    "Hodnoty": "Values",
+    "Barva hodnot": "Values color",
+    "Barva VAH a VAL": "VAH and VAL color",
+    "Barva POC": "POC color",
+    "Umístění": "Placement",
+    "TPO: příliš mnoho řádků – zvětšete počet ticků na řádek.": (
+        "TPO: too many rows – increase the ticks per row."
+    ),
 }

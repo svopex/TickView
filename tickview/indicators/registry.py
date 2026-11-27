@@ -16,6 +16,7 @@ from tickview.i18n import N_, tr
 from tickview.indicators.api import API_VERSION, CATEGORIES, Indicator
 from tickview.indicators.builtin import BUILTIN_INDICATORS
 from tickview.indicators.cot import COT_INDICATORS
+from tickview.indicators.tpo import TPO_INDICATORS
 
 logger = logging.getLogger(__name__)
 
@@ -94,8 +95,8 @@ def _ensure_loaded() -> None:
     if _loaded:
         return
     _loaded = True
-    # Vestavěné indikátory (pandas-ta) a indikátory COT reportu, pak vlastní
-    for indicator in BUILTIN_INDICATORS + COT_INDICATORS:
+    # Vestavěné indikátory (pandas-ta), TPO a indikátory COT reportu, pak vlastní
+    for indicator in BUILTIN_INDICATORS + TPO_INDICATORS + COT_INDICATORS:
         _registry[indicator.id] = indicator
     _load_custom()
 

@@ -544,35 +544,42 @@ def normalize_chart_type(value) -> str:
 CHART_COLOR_KEYS = ("body_up", "body_down", "border_up", "border_down", "wick_up", "wick_down")
 
 
-def normalize_color(value) -> str | None:
-    """Vrátí barvu v jednotném tvaru, jinak None (neplatný vstup z dialogu / nastavení).
-
-    Plně krycí barva se vrací jako #rrggbb (malými písmeny), průhledná jako
-    „rgba(r, g, b, a)“ s průhledností zaokrouhlenou na 2 desetinná místa –
-    takový zápis přijímá CSS, canvas i Lightweight Charts.
-
-    Parametry:
-        value: barva #rrggbb nebo rgb()/rgba() (např. z výběru barev).
-    """
+def color_channels(value) -> tuple[int, int, int, float] | None:
+    """Rozloží barvu #rrggbb nebo rgb()/rgba() na (r, g, b, průhlednost 0–1); neplatná = None."""
     if not isinstance(value, str):
         return None
     text = value.strip()
     if _HEX_PATTERN.match(text):
-        return text.lower()
+        return int(text[1:3], 16), int(text[3:5], 16), int(text[5:7], 16), 1.0
     match = _RGBA_PATTERN.match(text)
     if not match:
         return None
     red, green, blue = (int(part) for part in match.group(1, 2, 3))
-    if max(red, green, blue) > 255:
-        return None
     alpha = float(match.group(4)) if match.group(4) is not None else 1.0
-    if alpha > 1:
+    if max(red, green, blue) > 255 or alpha > 1:
         return None
+    return red, green, blue, alpha
+
+
+def format_color(red: float, green: float, blue: float, alpha: float = 1.0) -> str:
+    """Barva v jednotném tvaru: plně krycí jako #rrggbb, průhledná jako „rgba(r, g, b, a)“
+    s průhledností zaokrouhlenou na 2 desetinná místa (zápis pro CSS, canvas i Lightweight Charts)."""
+    red, green, blue = (round(channel) for channel in (red, green, blue))
     alpha = round(alpha, 2)
     # Plná krytí ukládáme jako hex – kratší a stejný zápis jako výchozí barvy
     if alpha >= 1:
         return f"#{red:02x}{green:02x}{blue:02x}"
     return f"rgba({red}, {green}, {blue}, {alpha:g})"
+
+
+def normalize_color(value) -> str | None:
+    """Vrátí barvu v jednotném tvaru (format_color), jinak None (neplatný vstup z dialogu / nastavení).
+
+    Parametry:
+        value: barva #rrggbb nebo rgb()/rgba() (např. z výběru barev).
+    """
+    channels = color_channels(value)
+    return format_color(*channels) if channels else None
 
 
 def normalize_chart_style(values) -> dict:

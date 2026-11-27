@@ -909,6 +909,11 @@ window.TickViewChart = (function () {
       // Úsečky a značky indikátorů (kreslí se pod kresbami uživatele)
       indicatorSegments: [],
       indicatorMarkers: [],
+      // Profily TPO, jejich těla v px z posledního překreslení (hit-test menu)
+      // a ručně přepnuté profily (id instance → začátek profilu → rozložený v čase)
+      indicatorProfiles: [],
+      profileBoxes: [],
+      profileExpanded: new Map(),
       // Čas posledního bodu sérií indikátorů (živé doplňování přes update())
       indicatorLastTime: -Infinity,
       finishedQueue: [],
@@ -1125,8 +1130,8 @@ window.TickViewChart = (function () {
 
     // Pravý klik v režimu kurzoru (jako v TradingView): nad kresbou ji vybere
     // a nabídne Settings / smazání, nad čárou alertu jeho úpravu a smazání,
-    // nad čárou indikátoru jeho Settings, skrytí a odebrání, jinde Settings
-    // grafu (např. zobrazení objemu)
+    // nad čárou indikátoru jeho Settings, skrytí a odebrání, nad profilem TPO
+    // navíc sbalení / rozložení, jinde Settings grafu (např. zobrazení objemu)
     mainHost.addEventListener(
       'contextmenu',
       (event) => {
@@ -1145,10 +1150,12 @@ window.TickViewChart = (function () {
           showContextMenu(event.clientX, event.clientY, alertMenuItems(s, alertLine));
           return;
         }
-        const group = hitIndicator(s, x, y);
+        const profile = hitProfile(s, x, y);
+        const group = profile ? profile.group : hitIndicator(s, x, y);
         selectIndicator(s, group);
         if (group) {
-          showContextMenu(event.clientX, event.clientY, indicatorMenuItems(s, group));
+          const items = indicatorMenuItems(s, group);
+          showContextMenu(event.clientX, event.clientY, profile ? profileMenuItems(s, profile).concat([null], items) : items);
           return;
         }
         showContextMenu(event.clientX, event.clientY, chartMenuItems(s, s.candleSeries.coordinateToPrice(y)));
@@ -3152,15 +3159,19 @@ window.TickViewChart = (function () {
     s.candleSeries.setMarkers(markers);
   }
 
-  // Úsečky viditelných indikátorů na překryvném canvasu (pod kresbami uživatele;
-  // skrytí kreseb je neskrývá – patří indikátoru, ne kresbám)
-  function drawIndicatorSegments(ctx, s) {
-    const segments = s.indicatorSegments || [];
-    if (!segments.length) return;
-    // Skryté skupiny jednou za překreslení (ne hledání skupiny pro každou úsečku)
-    const hidden = new Set(
+  // Id skrytých instancí indikátorů – jednou za překreslení overlaye (ne
+  // hledání skupiny pro každou úsečku či profil)
+  function hiddenIndicatorGroups(s) {
+    return new Set(
       ((s.lastIndicatorPayload || {}).groups || []).filter((group) => group.visible === false).map((group) => group.id)
     );
+  }
+
+  // Úsečky viditelných indikátorů na překryvném canvasu (pod kresbami uživatele;
+  // skrytí kreseb je neskrývá – patří indikátoru, ne kresbám)
+  function drawIndicatorSegments(ctx, s, hidden) {
+    const segments = s.indicatorSegments || [];
+    if (!segments.length) return;
     ctx.save();
     for (const segment of segments) {
       if (hidden.has(segment.group)) continue;
@@ -3292,9 +3303,10 @@ window.TickViewChart = (function () {
       rebuilt = applyIndicatorPayload(s, payload, structure, lastTime);
     });
     if (!rebuilt) return;
-    // Úsečky a značky indikátorů přicházejí vždy celé (i v živém přepočtu)
+    // Úsečky, značky a profily TPO indikátorů přicházejí vždy celé (i v živém přepočtu)
     s.indicatorSegments = payload.segments || [];
     s.indicatorMarkers = payload.markers || [];
+    s.indicatorProfiles = payload.profiles || [];
     applyIndicatorMarkers(s);
     renderIndicatorTables(s, payload);
     redrawOverlay(s);
@@ -3432,6 +3444,8 @@ window.TickViewChart = (function () {
     s.olderLoading = false;
     s.olderExhausted = false;
     s.olderRetryAt = 0;
+    // Ruční přepnutí profilů TPO patří předchozím datům (stejný začátek = jiný profil)
+    s.profileExpanded.clear();
     // Přesnost cenové osy podle instrumentu (forex 1.10025 místo 1.10)
     s.priceDecimals = detectPriceDecimals(clean);
     s.candleSeries.applyOptions(mainSeriesOptions(s));
@@ -3679,6 +3693,19 @@ window.TickViewChart = (function () {
     s.overlay.selected = selectedId ? s.overlay.drawings.findIndex((d) => d.id === selectedId) : -1;
     s.overlay.drag = null;
     s.overlay.hovered = null;
+    redrawOverlay(s);
+  }
+
+  // Živý náhled nastavení kresby (dialog Settings před Ok): barva, volby a text
+  // ({color, options, text}) kresby s daným id jen v grafu, bez uložení (zavření
+  // bez Ok vrátí uložený stav novým načtením kreseb); color null = beze změny (sticker)
+  function previewDrawing(id, drawingId, values) {
+    const s = state.get(id);
+    const drawing = s && s.overlay.drawings.find((item) => item.id === drawingId);
+    if (!drawing) return;
+    if (values.color) drawing.color = values.color;
+    drawing.options = values.options || {};
+    drawing.text = values.text || null;
     redrawOverlay(s);
   }
 
@@ -5085,6 +5112,278 @@ window.TickViewChart = (function () {
     ctx.restore();
   }
 
+  // ---------- Profily TPO indikátorů (Market Profile jako v TradingView) ----------
+
+  // Největší šířka bloku v px, nejmenší blok s písmenem a největší písmo bloku
+  const TPO_MAX_CELL_PX = 40;
+  const TPO_LETTER_MIN_PX = 8;
+  const TPO_LETTER_MAX_PX = 16;
+  // Písmena bloků podle pořadí (po vyčerpání znovu od A)
+  const TPO_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+  // Podíl šířky období pro profil objemu (vpravo v období)
+  const TPO_VOLUME_WIDTH = 0.3;
+  // Písmo popisků úrovní (POC ▸, VAH ▸…), jejich odstup od profilu a šířka
+  // svislé čáry počáteční rovnováhy (IBR) vlevo od profilu
+  const TPO_LABEL_FONT = '10px ' + LABEL_FONT;
+  const TPO_LABEL_GAP = 4;
+  const TPO_IB_WIDTH = 3;
+
+  // Položky menu profilu TPO (pravý klik na tělo profilu): sbalit / rozložit
+  // tento profil (volba zobrazení podle začátku profilu – přežije přepočet),
+  // nebo všechny profily instance – to změní parametr expand indikátoru
+  // (Rozložit bloky v čase; uloží Python) a zruší ruční volby profilů instance
+  function profileMenuItems(s, profile) {
+    const setOne = (expanded) => () => {
+      if (!s.profileExpanded.has(profile.group)) s.profileExpanded.set(profile.group, new Map());
+      s.profileExpanded.get(profile.group).set(profile.start, expanded);
+      redrawOverlay(s);
+    };
+    const setAll = (expanded) => () => {
+      s.profileExpanded.delete(profile.group);
+      s.finishedQueue.push({ type: 'indicator', action: 'param', id: profile.group, name: 'expand', value: expanded });
+      redrawOverlay(s);
+    };
+    return [
+      [tvTr('Sbalit profil'), setOne(false), 'unfold_less'],
+      [tvTr('Rozložit profil'), setOne(true), 'unfold_more'],
+      [tvTr('Sbalit všechny profily'), setAll(false), 'compress'],
+      [tvTr('Rozložit všechny profily'), setAll(true), 'expand'],
+    ];
+  }
+
+  // Rozložení profilu v čase: ruční volba profilu, jinak nastavení indikátoru
+  // (Rozložit bloky v čase)
+  function profileExpand(s, profile, style) {
+    const chosen = s.profileExpanded.get(profile.group);
+    return chosen && chosen.has(profile.start) ? chosen.get(profile.start) : style.expand;
+  }
+
+  // Profil TPO, jehož tělo (px plochy grafu, z posledního překreslení) je pod bodem, nebo null
+  function hitProfile(s, x, y) {
+    const box = s.profileBoxes.find((item) => x >= item.left && x <= item.right && y >= item.top && y <= item.bottom);
+    return box ? box.profile : null;
+  }
+
+  // Velikost buňky bez mezery 1 px k sousední (jen u buněk větších než 4 px)
+  function cellInset(px) {
+    return Math.max(1, px > 4 ? px - 1 : px);
+  }
+
+  // Pořadí bloků v každém řádku profilu (zdola nahoru) z rozsahů řádků bloků
+  // a délka nejdelšího řádku; počítá se jednou pro každý profil z payloadu
+  function profileRows(profile) {
+    if (!profile.rowBlocks) {
+      const count = profile.blockRows.reduce((max, range) => Math.max(max, range[1] + 1), 0);
+      const rows = Array.from({ length: count }, () => []);
+      profile.blockRows.forEach(([bottom, top], rank) => {
+        for (let row = bottom; row <= top; row++) rows[row].push(rank);
+      });
+      profile.rowBlocks = rows;
+      profile.longestRow = rows.reduce((max, ranks) => Math.max(max, ranks.length), 1);
+    }
+    return profile.rowBlocks;
+  }
+
+  // Geometrie profilu v px: y hran řádků, šířka bloku (čtverec podle výšky
+  // řádku, nejvýš tolik, aby se nejdelší řádek vešel do období vedle profilu
+  // objemu) a u rozložených bloků x a šířka každého bloku podle jeho času
+  function profileGeometry(s, profile, expand, startX, endX, paneHeight) {
+    const rows = profileRows(profile);
+    if (!rows.length) return null;
+    const edges = [];
+    for (let row = 0; row <= rows.length; row++) {
+      const y = s.candleSeries.priceToCoordinate(profile.rowLow + row * profile.rowHeight);
+      if (y === null) return null;
+      edges.push(y);
+    }
+    const width = Math.max(0, endX - startX);
+    const blocksWidth = profile.volumes ? width * (1 - TPO_VOLUME_WIDTH) : width;
+    const rowPx = Math.abs(edges[0] - edges[rows.length]) / rows.length;
+    const cell = Math.max(1, Math.min(rowPx, TPO_MAX_CELL_PX, blocksWidth / profile.longestRow));
+    let blockX = null;
+    let blockWidth = null;
+    // Pravý okraj bloků (tělo profilu pro menu): sbalený nejdelší řádek, rozložený poslední blok
+    let right = startX + profile.longestRow * cell;
+    if (expand) {
+      blockX = profile.blockTimes.map((time) => timeToX(s, time));
+      blockWidth = profile.blockTimes.map((time, rank) => {
+        const blockRight = timeToX(s, time + profile.blockSeconds);
+        return blockRight === null || blockX[rank] === null ? 0 : blockRight - blockX[rank];
+      });
+      right = blockX.reduce((max, x, rank) => (x === null ? max : Math.max(max, x + blockWidth[rank])), startX);
+    }
+    const box = {
+      left: startX,
+      right: right,
+      top: Math.min(edges[0], edges[rows.length]),
+      bottom: Math.max(edges[0], edges[rows.length]),
+    };
+    return { rows, edges, startX, endX, width, cell, blockX, blockWidth, paneHeight, box };
+  }
+
+  // Svislý rozsah řádku v px (horní hrana, výška) z hran řádků
+  function profileRowSpan(edges, row) {
+    const top = Math.min(edges[row], edges[row + 1]);
+    return { top: top, height: Math.abs(edges[row] - edges[row + 1]) };
+  }
+
+  // Bloky s písmeny po řádcích: barva podle pořadí bloku, řádek POC barvou
+  // textu grafu, řádky mimo Value Area průhledněji. Písmena jen při dost
+  // velkém bloku – jinak (i s vypnutými bloky) barevné bloky jako v TradingView
+  function drawProfileBlocks(ctx, profile, style, geometry, theme) {
+    const { rows, edges, startX, cell, blockX, blockWidth, paneHeight } = geometry;
+    const [vaLow, vaHigh] = profile.valueArea;
+    let font = '';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    rows.forEach((ranks, row) => {
+      const { top, height } = profileRowSpan(edges, row);
+      if (top > paneHeight || top + height < 0) return;
+      const cellHeight = cellInset(height);
+      const isPoc = row === profile.poc;
+      ctx.globalAlpha = row >= vaLow && row <= vaHigh ? 1 : style.outside_opacity;
+      ranks.forEach((rank, column) => {
+        const x = blockX ? blockX[rank] : startX + column * cell;
+        const width = blockX ? blockWidth[rank] : cell;
+        if (x === null || width <= 0) return;
+        const cellWidth = cellInset(width);
+        const letters = style.letters && cellWidth >= TPO_LETTER_MIN_PX && cellHeight >= TPO_LETTER_MIN_PX;
+        const color = isPoc ? theme.text : profile.colors[rank];
+        if (style.blocks || (style.letters && !letters)) {
+          ctx.fillStyle = color;
+          ctx.fillRect(x, top, cellWidth, cellHeight);
+        }
+        if (!letters) return;
+        // Písmo podle velikosti bloku (nastaví se jen při změně)
+        const size = Math.min(TPO_LETTER_MAX_PX, Math.floor(Math.min(cellWidth, cellHeight) * 0.62));
+        const nextFont = size + 'px ' + LABEL_FONT;
+        if (nextFont !== font) ctx.font = font = nextFont;
+        ctx.fillStyle = style.blocks ? (isPoc ? theme.background : '#ffffff') : color;
+        ctx.fillText(TPO_LETTERS[rank % TPO_LETTERS.length], x + cellWidth / 2, top + cellHeight / 2 + 0.5);
+      });
+    });
+    ctx.globalAlpha = 1;
+  }
+
+  // Vodorovná čára úrovně profilu od x1 do x2 (styl LINE_* jako u úseček indikátorů)
+  function strokeProfileLine(ctx, y, x1, x2, color, style) {
+    const crisp = Math.round(y) + 0.5;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1;
+    ctx.setLineDash(SEGMENT_DASHES[style] || []);
+    ctx.beginPath();
+    ctx.moveTo(x1, crisp);
+    ctx.lineTo(x2, crisp);
+    ctx.stroke();
+  }
+
+  // Profil objemu v pravé části období: sloupce řádků od levého / pravého
+  // okraje boxu podle objemu vůči největšímu, Value Area sytější barvou,
+  // volitelně hodnoty objemu a čáry POC / VAH / VAL přes box
+  function drawProfileVolume(ctx, s, profile, style, geometry) {
+    const { edges, endX, width, paneHeight } = geometry;
+    const max = profile.volumes.reduce((top, volume) => Math.max(top, volume), 0);
+    if (!(max > 0)) return;
+    const boxWidth = width * TPO_VOLUME_WIDTH;
+    const boxLeft = endX - boxWidth;
+    const fromRight = style.volume_placement === 'right';
+    const [vaLow, vaHigh] = profile.volumeValueArea || [-1, -1];
+    ctx.font = FRVP_VALUE_FONT;
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = fromRight ? 'right' : 'left';
+    profile.volumes.forEach((volume, row) => {
+      const { top, height } = profileRowSpan(edges, row);
+      if (!(volume > 0) || top > paneHeight || top + height < 0) return;
+      const length = (volume / max) * boxWidth;
+      const x = fromRight ? endX - length : boxLeft;
+      ctx.fillStyle = row >= vaLow && row <= vaHigh ? style.volume_va_color : style.volume_color;
+      ctx.fillRect(x, top, length, cellInset(height));
+      if (style.volume_values && height >= FRVP_VALUE_MIN_ROW) {
+        ctx.fillStyle = style.volume_values_color;
+        ctx.fillText(formatVolume(volume), fromRight ? x - 3 : x + length + 3, top + height / 2);
+      }
+    });
+    for (const level of profile.volumeLevels) {
+      const y = s.candleSeries.priceToCoordinate(level.price);
+      if (y !== null) strokeProfileLine(ctx, y, boxLeft, endX, level.color, level.style);
+    }
+  }
+
+  // Pásma profilu (single prints) od začátku období po konec (prodloužená
+  // až k protnutí cenou, neprotnutá k pravému okraji grafu)
+  function drawProfileZones(ctx, s, profile, startX, paneWidth) {
+    for (const zone of profile.zones) {
+      const right = zone.end === null ? paneWidth : timeToX(s, zone.end);
+      if (right === null || right <= Math.max(startX, 0)) continue;
+      const top = s.candleSeries.priceToCoordinate(zone.high);
+      const bottom = s.candleSeries.priceToCoordinate(zone.low);
+      if (top === null || bottom === null) continue;
+      ctx.fillStyle = zone.color;
+      ctx.fillRect(startX, Math.min(top, bottom), right - startX, Math.abs(bottom - top));
+    }
+  }
+
+  // Úrovně profilu (POC, VAH, VAL, poor high / low…) s popiskem vlevo od
+  // profilu a svislá čára počáteční rovnováhy (IBR) těsně před profilem;
+  // úroveň celá vlevo mimo obraz (čára i popisek) se přeskočí
+  function drawProfileLevels(ctx, s, profile, startX, paneWidth, theme) {
+    const labelX = startX - TPO_LABEL_GAP - (profile.initialBalance ? TPO_IB_WIDTH + 1 : 0);
+    ctx.font = TPO_LABEL_FONT;
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    for (const level of profile.levels) {
+      const right = level.end === null ? paneWidth : timeToX(s, level.end);
+      if ((right === null || right < 0) && labelX < 0) continue;
+      const y = s.candleSeries.priceToCoordinate(level.price);
+      if (y === null) continue;
+      const color = level.color || theme.text;
+      if (right !== null && right > startX) strokeProfileLine(ctx, y, startX, right, color, level.style);
+      if (!level.label) continue;
+      ctx.fillStyle = color;
+      ctx.fillText(level.label + ' ▸', labelX, y);
+    }
+    if (!profile.initialBalance) return;
+    const top = s.candleSeries.priceToCoordinate(profile.initialBalance[1]);
+    const bottom = s.candleSeries.priceToCoordinate(profile.initialBalance[0]);
+    if (top === null || bottom === null) return;
+    ctx.fillStyle = theme.text;
+    ctx.fillRect(startX - TPO_IB_WIDTH - 1, Math.min(top, bottom), TPO_IB_WIDTH, Math.max(1, Math.abs(bottom - top)));
+  }
+
+  // Profily TPO viditelných indikátorů na překryvném canvasu (pod úsečkami
+  // indikátorů a kresbami): pásma, bloky, profil objemu a úrovně; tělo
+  // profilu mimo obraz se přeskočí, prodloužené úrovně a pásma se kreslí vždy.
+  // Vzhled profilů je ve skupině instance (profileStyle), rozložení podle
+  // voleb z menu profilu (profileExpand)
+  function drawIndicatorProfiles(ctx, s, hidden, paneWidth, paneHeight) {
+    const profiles = s.indicatorProfiles;
+    s.profileBoxes = [];
+    if (!profiles.length) return;
+    const styles = new Map(((s.lastIndicatorPayload || {}).groups || []).map((group) => [group.id, group.profileStyle]));
+    const layout = THEMES[s.themeName].layout;
+    const theme = { text: layout.textColor, background: layout.background.color };
+    ctx.save();
+    for (const profile of profiles) {
+      const style = styles.get(profile.group);
+      if (!style || hidden.has(profile.group)) continue;
+      const startX = timeToX(s, profile.start);
+      const endX = timeToX(s, profile.end);
+      if (startX === null || endX === null || startX > paneWidth) continue;
+      drawProfileZones(ctx, s, profile, startX, paneWidth);
+      if (endX >= 0) {
+        const geometry = profileGeometry(s, profile, profileExpand(s, profile, style), startX, endX, paneHeight);
+        if (geometry) {
+          geometry.box.profile = profile;
+          s.profileBoxes.push(geometry.box);
+          drawProfileBlocks(ctx, profile, style, geometry, theme);
+          if (profile.volumes) drawProfileVolume(ctx, s, profile, style, geometry);
+        }
+      }
+      drawProfileLevels(ctx, s, profile, startX, paneWidth, theme);
+    }
+    ctx.restore();
+  }
+
   // ---------- Fixed range volume profile (FRVP jako v TradingView) ----------
 
   // Body kresby: [začátek rozsahu {čas, cena kliku}, konec rozsahu {čas, cena
@@ -5776,7 +6075,9 @@ window.TickViewChart = (function () {
     ctx.rect(pane.offsetX, pane.offsetY, pane.width, pane.height);
     ctx.clip();
     ctx.translate(pane.offsetX, pane.offsetY);
-    drawIndicatorSegments(ctx, s);
+    const hiddenGroups = hiddenIndicatorGroups(s);
+    drawIndicatorProfiles(ctx, s, hiddenGroups, pane.width, pane.height);
+    drawIndicatorSegments(ctx, s, hiddenGroups);
     drawReplay(ctx, s, pane.width);
     drawReplayPick(ctx, s, pane.width, pane.height);
     if (highlightedGroups(s).length) drawSelectionMarkers(ctx, s, s.chart, pane.width, overlayMarkerEntries(s));
@@ -5953,6 +6254,7 @@ window.TickViewChart = (function () {
     setLegendStatus: setLegendStatus,
     setDrawingMode: setDrawingMode,
     setDrawings: setDrawings,
+    previewDrawing: previewDrawing,
     setDrawingDefaults: setDrawingDefaults,
     setMagnet: setMagnet,
     setDrawingsHidden: setDrawingsHidden,

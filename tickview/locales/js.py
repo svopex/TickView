@@ -42,4 +42,9 @@ EN = {
     # Štítky v grafu a výběr barvy
     "Start replaye": "Replay start",
     "Vlastní barva": "Custom color",
+    # Menu profilu TPO (pravý klik na profil)
+    "Sbalit profil": "Collapse profile",
+    "Rozložit profil": "Expand profile",
+    "Sbalit všechny profily": "Collapse all profiles",
+    "Rozložit všechny profily": "Expand all profiles",
 }

@@ -3,7 +3,7 @@
 Indikátor je třída odvozená od Indicator: popis pro nabídku (název,
 kategorie, popis), schéma parametrů (seznam Param) a metoda compute, která
 nad svíčkami jednoho symbolu a timeframu vrátí Result – čáry, úrovně panelu,
-úsečky, značky a signály. Indikátor nezná UI, cache ani zdroje dat; vše, co
+úsečky, značky, signály a profily TPO. Indikátor nezná UI, cache ani zdroje dat; vše, co
 potřebuje vědět o instrumentu, dostane v Context.
 
 Vestavěné indikátory jsou v tickview/indicators/builtin.py, vlastní mají
@@ -387,6 +387,117 @@ class Table:
 
 
 @dataclass
+class ProfileLevel:
+    """Vodorovná úroveň profilu (POC, VAH, VAL, poor high…) od začátku období.
+
+    Atributy:
+        price: cena úrovně.
+        color: barva čáry a popisku (None = barva textu grafu podle motivu).
+        label: popisek vlevo od profilu ("POC", "VAH"…); prázdný = bez popisku.
+        end: konec čáry (čas v s UTC); None = až k pravému okraji grafu
+            (prodloužená úroveň, kterou cena zatím neprotnula).
+        style: styl čáry (LINE_*).
+    """
+
+    price: float
+    color: Optional[str] = None
+    label: str = ""
+    end: Optional[int] = None
+    style: int = LINE_DOTTED
+
+
+@dataclass
+class ProfileZone:
+    """Cenové pásmo profilu od začátku období (single prints).
+
+    Atributy:
+        low, high: dolní a horní cena pásma.
+        color: barva výplně (obvykle průhledná).
+        end: konec pásma (čas v s UTC); None = až k pravému okraji grafu.
+    """
+
+    low: float
+    high: float
+    color: str
+    end: Optional[int] = None
+
+
+@dataclass
+class Profile:
+    """Profil TPO (Market Profile) jednoho období: bloky s písmeny po cenových
+    řádcích, Value Area, úrovně, pásma a volitelný profil objemu.
+
+    Řádek i pokrývá ceny row_low + i × row_height až row_low + (i + 1) × row_height;
+    řádky jsou zdola nahoru. Blok = časový úsek období; jeho pořadí je index
+    do block_rows, block_times a block_colors a určuje písmeno (A–Z, a–z, pak
+    znovu od A). Blok leží ve všech řádcích svého rozsahu, v řádku jsou bloky
+    podle pořadí. Vzhled všech profilů indikátoru určuje Result.profile_style.
+
+    Atributy:
+        start, end: začátek a konec období (čas v s UTC).
+        row_low: dolní cena nejnižšího řádku.
+        row_height: výška řádku v ceně.
+        block_rows: (dolní, horní) řádek každého bloku – ceny, kterými trh
+            během bloku prošel.
+        block_times: začátek každého bloku (s UTC).
+        block_seconds: délka bloku v sekundách (rozložení bloků v čase).
+        block_colors: barva bloku.
+        value_area: (nejnižší, nejvyšší) řádek Value Area.
+        poc: řádek POC zvýrazněný barvou textu grafu (None = bez zvýraznění).
+        levels: úrovně s popisky (POC, VAH, VAL, poor high / low, střed…).
+        zones: pásma (single prints).
+        initial_balance: (dolní, horní) cena počáteční rovnováhy – svislá čára
+            barvou textu grafu vlevo od profilu (None = nekreslí se).
+        volumes: objem v každém řádku (None = bez profilu objemu).
+        volume_value_area: (nejnižší, nejvyšší) řádek Value Area objemu.
+        volume_levels: čáry přes profil objemu (POC, VAH, VAL objemu).
+    """
+
+    start: int
+    end: int
+    row_low: float
+    row_height: float
+    block_rows: list[tuple[int, int]]
+    block_times: list[int]
+    block_seconds: int
+    block_colors: list[str]
+    value_area: tuple[int, int]
+    poc: Optional[int] = None
+    levels: list[ProfileLevel] = field(default_factory=list)
+    zones: list[ProfileZone] = field(default_factory=list)
+    initial_balance: Optional[tuple[float, float]] = None
+    volumes: Optional[list[float]] = None
+    volume_value_area: Optional[tuple[int, int]] = None
+    volume_levels: list[ProfileLevel] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ProfileStyle:
+    """Vzhled profilů TPO jednoho indikátoru (záložky Style a Volume profile v TradingView).
+
+    Atributy:
+        letters: písmena v blocích (jen při dost velkém bloku, jinak bloky).
+        blocks: barevné bloky.
+        outside_opacity: krytí řádků mimo Value Area (0–1).
+        expand: bloky v čase svého vzniku místo u levého okraje profilu.
+        volume_color, volume_va_color: barva řádků profilu objemu mimo / ve Value Area.
+        volume_placement: zarovnání sloupců profilu objemu – "left" nebo "right".
+        volume_values: hodnoty objemu u řádků.
+        volume_values_color: barva hodnot objemu.
+    """
+
+    letters: bool = True
+    blocks: bool = True
+    outside_opacity: float = 0.4
+    expand: bool = False
+    volume_color: str = "rgba(41, 98, 255, 0.3)"
+    volume_va_color: str = "rgba(41, 98, 255, 0.7)"
+    volume_placement: str = "left"
+    volume_values: bool = False
+    volume_values_color: str = "#26a69a"
+
+
+@dataclass
 class Result:
     """Výstup výpočtu indikátoru.
 
@@ -400,6 +511,8 @@ class Result:
         background: barva pozadí panelu u každé svíčky (jako bgcolor v Pine;
             stejná délka jako svíčky, None = bez barvy); jen u indikátoru
             ve vlastním panelu.
+        profiles: profily TPO v hlavním grafu.
+        profile_style: vzhled profilů.
     """
 
     lines: list[Line] = field(default_factory=list)
@@ -409,6 +522,8 @@ class Result:
     signals: list[Signal] = field(default_factory=list)
     tables: list[Table] = field(default_factory=list)
     background: Optional[Sequence[Optional[str]]] = None
+    profiles: list[Profile] = field(default_factory=list)
+    profile_style: ProfileStyle = field(default_factory=ProfileStyle)
 
 
 class Indicator:

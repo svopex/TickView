@@ -79,6 +79,10 @@ class ChartPane:
         self.stream_task: asyncio.Task | None = None
         # Monotonic čas posledního přepočtu indikátorů ze živých svíček
         self.indicators_refreshed_at = 0.0
+        # Pořadí přepočtů indikátorů: číslo posledního přepočtu a posledního úplného
+        # (výsledek staršího přepočtu, než je novější úplný, se zahodí)
+        self._push_seq = 0
+        self._full_push_seq = 0
         # Graf zobrazuje data replaye (ne živá); kotva svíček grafu pro skládání
         # ze základních svíček replaye (None = graf má základní timeframe)
         self.replay_shown = False
@@ -276,8 +280,13 @@ class ChartPane:
         """Přepočítá indikátory nad svíčkami grafu a pošle je do grafu.
 
         Výpočet běží ve vlákně (pandas nad tisíci svíček by zdržel smyčku
-        událostí); tail=True pošle jen poslední body (živý přepočet).
+        událostí); tail=True pošle jen poslední body (živý přepočet). Pomalejší
+        starší výpočet nepřepíše novější úplný (živý náhled nastavení, Cancel).
         """
+        self._push_seq += 1
+        seq = self._push_seq
+        if not tail:
+            self._full_push_seq = seq
         self.indicators_refreshed_at = time.monotonic()
         candles = list(self.candles or [])
         indicators = list(self.indicators)
@@ -289,7 +298,7 @@ class ChartPane:
         if pending:
             datafeeds.load_in_background(pending, self._indicator_data_loaded)
         payload = await asyncio.to_thread(compute_indicators, indicators, candles, ctx)
-        if not self.closed:
+        if not self.closed and seq >= self._full_push_seq:
             await self.chart.set_indicators(tail_payload(payload) if tail else payload)
 
     async def _indicator_data_loaded(self) -> None:

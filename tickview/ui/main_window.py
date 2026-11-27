@@ -153,6 +153,7 @@ from tickview.services.notify import find_telegram_chat_id, send_telegram, teleg
 from tickview.ui.about_dialog import build_about_dialog
 from tickview.ui.chart_pane import ChartPane
 from tickview.ui.color_button import ColorButton
+from tickview.ui.dialog_preview import DialogPreview
 from tickview.ui.frvp_fields import FrvpFields
 from tickview.ui.ibkr_data_dialog import build_ibkr_data_dialog
 from tickview.ui.icons import ICONS, svg
@@ -1409,6 +1410,40 @@ async def _build_index(
             current["kind"],
         )
 
+    def drawing_text_value(kind: str) -> str | None:
+        # Text kresby z dialogu: u textu pole Text, u čar a obdélníku volitelný
+        # popisek (prázdný = bez popisku), ostatní kresby text nemají
+        if kind == "text":
+            return (drawing_text.value or "").strip()
+        if kind in LABEL_KINDS:
+            return (label_text.value or "").strip() or None
+        return None
+
+    def collect_drawing_values() -> dict | None:
+        # Vzhled a text kresby z dialogu pro Ok i živý náhled: {"color" (sticker
+        # barvu nemá – None), "options", "text"}; None = bez upravované kresby
+        current = state.get("drawing_settings")
+        values = collect_drawing_settings()
+        if not current or values is None:
+            return None
+        kind = current["kind"]
+        color = values["color"] if kind != "sticker" else None
+        return {"color": color, "options": values["options"], "text": drawing_text_value(kind)}
+
+    def collect_drawing_preview() -> dict | None:
+        # Hodnoty pro živý náhled existující kresby (nový text z nástroje Text ani
+        # prázdný text se nenáhledují); body pozice a bary FRVP až po Ok
+        current = state.get("drawing_settings")
+        values = collect_drawing_values()
+        if values is None or current["id"] is None or (current["kind"] == "text" and not values["text"]):
+            return None
+        return values
+
+    def preview_drawing(values: dict) -> None:
+        # Náhled nastavení kresby v grafu, ze kterého se dialog otevřel (bez uložení)
+        current = state["drawing_settings"]
+        current["pane"].chart.preview_drawing(current["id"], values)
+
     def set_price_decimals(decimals) -> None:
         # Ceny pozice s přesností instrumentu (529.95, forex 1.10025) místo
         # dlouhých desetinných čísel; krok šipek = jeden tick
@@ -1507,19 +1542,16 @@ async def _build_index(
     async def submit_drawing_settings() -> None:
         # Uloží nastavení kresby do databáze (nový text vytvoří) a promítne ho do grafů
         current = state.get("drawing_settings")
-        values = collect_drawing_settings()
+        values = collect_drawing_values()
         pane = (current or {}).get("pane")
         if not current or values is None or pane is None or pane.closed or not pane.key:
             drawing_settings_dialog.close()
             return
         kind = current["kind"]
-        # Popisek čáry / obdélníku je volitelný (prázdný = bez popisku)
-        text = ((label_text.value or "").strip() or None) if kind in LABEL_KINDS else None
-        if kind == "text":
-            text = (drawing_text.value or "").strip()
-            if not text:
-                ui.notify(tr("Text nesmí být prázdný."), type="warning")
-                return
+        color, options, text = values["color"], values["options"], values["text"]
+        if kind == "text" and not text:
+            ui.notify(tr("Text nesmí být prázdný."), type="warning")
+            return
         # Pozice: ceny vstupu, cíle a stopu z dialogu (časy zůstanou)
         points = None
         if kind in POSITION_KINDS:
@@ -1543,9 +1575,7 @@ async def _build_index(
                     ui.notify(tr("Bary rozsahu nelze převést na čas (graf nemá data)."), type="warning")
                     return
                 points = [{"time": int(time), "price": point["price"]} for time, point in zip(times, current["points"])]
-        # Sticker barvu nemá (emoji) – necháme ji prázdnou jako dosud
-        color = values["color"] if kind != "sticker" else None
-        options = values["options"]
+        drawing_preview.confirm()
         drawing_settings_dialog.close()
         if current["id"] is None:
             # Nový text z nástroje Text: graf ho přidá a pošle k uložení
@@ -2502,6 +2532,21 @@ async def _build_index(
         spec["visible"] = not spec.get("visible", True)
         await indicators_changed()
 
+    async def set_indicator_param(indicator_id, name: str, value) -> None:
+        # Jeden parametr instance z grafu (menu profilu TPO „Sbalit / Rozložit
+        # všechny profily“); neplatná hodnota se ignoruje
+        spec = find_indicator(indicator_id)
+        if not spec or not isinstance(name, str):
+            return
+        try:
+            params = normalize_params(spec["kind"], {**spec["params"], name: value})
+        except ValueError:
+            return
+        if params == spec["params"]:
+            return
+        replace_indicator(active(), {**spec, "params": params})
+        await indicators_changed()
+
     async def move_indicator_pane(indicator_id, before_id) -> None:
         # Přetažení panelu indikátoru za titulek: nové pořadí instancí = nové
         # pořadí panelů (uloží se s rozložením, graf panely přestaví)
@@ -2513,6 +2558,7 @@ async def _build_index(
 
     async def on_indicator_event(payload: dict) -> None:
         # Tlačítka řádku indikátoru v legendě grafu (oko, nastavení, odebrání)
+        # a kontextové menu indikátoru v grafu (alert, parametr z menu profilu TPO)
         action = payload.get("action")
         indicator_id = payload.get("id")
         if action == "toggle":
@@ -2525,6 +2571,8 @@ async def _build_index(
             await open_alert_dialog(indicator_id=indicator_id)
         elif action == "move":
             await move_indicator_pane(indicator_id, payload.get("before"))
+        elif action == "param":
+            await set_indicator_param(indicator_id, payload.get("name"), payload.get("value"))
 
     # Stav nabídky indikátorů: zvolená kategorie a hledaný text
     menu_state = {"category": "all", "query": ""}
@@ -2656,7 +2704,9 @@ async def _build_index(
 
     # Upravovaná instance indikátoru (pole parametrů drží settings_form): id,
     # barva instance (výchozí barva výstupů bez vlastní barvy) a výstupy indikátoru
-    settings_state: dict = {"id": None, "color": None, "lines": []}
+    # Pro živý náhled (DialogPreview) i graf z otevření dialogu a instance před
+    # otevřením (vrátí se při zavření bez Ok)
+    settings_state: dict = {"id": None, "color": None, "lines": [], "pane": None, "original": None}
 
     def fill_indicator_settings(kind: str, params: dict, options: dict | None = None) -> None:
         """Vyplní záložky Inputs / Style / Visibility dialogu nastavení indikátoru.
@@ -2714,6 +2764,7 @@ async def _build_index(
         settings_ind_tabs.value = inputs_tab
         fill_indicator_settings(spec["kind"], spec["params"], spec)
         await indicator_templates.refresh()
+        settings_state.update(pane=active(), original=spec)
         indicator_settings_dialog.open()
 
     def apply_indicator_template(values: dict) -> None:
@@ -2731,15 +2782,17 @@ async def _build_index(
         # „Apply defaults“ bez uložené výchozí šablony: tovární parametry a barva
         apply_indicator_template({})
 
-    def collect_indicator_settings() -> dict | None:
-        # Parametry a barva z dialogu; neplatný parametr ohlásí a vrátí None
+    def collect_indicator_settings(quiet: bool = False) -> dict | None:
+        # Parametry a barva z dialogu; neplatný parametr ohlásí (quiet = jen
+        # vrátí None – živý náhled během psaní) a vrátí None
         spec = find_indicator(settings_state["id"])
         if not spec:
             return None
         try:
             params = normalize_params(spec["kind"], settings_form.values())
         except ValueError as exc:
-            ui.notify(str(exc), type="warning")
+            if not quiet:
+                ui.notify(str(exc), type="warning")
             return None
         # Styl a viditelnost jen se změnou proti výchozímu stavu (jako v instanci)
         style = {key: check.value for key, check in settings_style_checks.items()} | plot_fields.values()
@@ -2757,18 +2810,40 @@ async def _build_index(
         values = collect_indicator_settings()
         if values is None:
             return
-        spec["params"] = values["params"]
-        # Styl a viditelnost: v hodnotách jsou jen změněné, výchozí se z instance odeberou
-        for key in ("style", "visibility"):
-            spec.pop(key, None)
-            if key in values:
-                spec[key] = values[key]
-        # Vlastní barva jen v platném tvaru, jinak zůstane barva z palety
-        if "color" in values:
-            spec["color"] = values["color"]
+        spec = replace_indicator(settings_state["pane"], with_indicator_values(settings_state["original"], values))
+        indicator_preview.confirm()
         indicator_settings_dialog.close()
         await indicators_changed()
         show_status(tr("Indikátor {indicator} upraven.").format(indicator=indicator_title(spec)))
+
+    def with_indicator_values(spec: dict, values: dict) -> dict:
+        # Nová instance s hodnotami dialogu: parametry, styl a viditelnost (v hodnotách
+        # jen změněné, výchozí se z instance odeberou) a vlastní barva (jen v platném
+        # tvaru, jinak zůstane barva z palety)
+        updated = {key: value for key, value in spec.items() if key not in ("style", "visibility")}
+        return updated | values
+
+    def replace_indicator(pane: ChartPane, spec: dict) -> dict:
+        # Nahradí instanci se stejným id novým slovníkem v tomtéž seznamu grafu
+        # (seznam sdílí i replay) – výpočet běžící ve vlákně nad kopií seznamu
+        # tak nikdy neuvidí napůl přepsanou instanci
+        for index, item in enumerate(pane.indicators):
+            if item["id"] == spec["id"]:
+                pane.indicators[index] = spec
+        return spec
+
+    async def preview_indicator(values: dict) -> None:
+        # Náhled hodnot dialogu: instance s nimi v grafu (bez uložení rozložení)
+        pane = settings_state["pane"]
+        replace_indicator(pane, with_indicator_values(settings_state["original"], values))
+        await pane.ensure_history()
+        await pane.push_indicators()
+
+    async def restore_indicator() -> None:
+        # Zavření bez Ok: instance před otevřením dialogu
+        pane = settings_state["pane"]
+        replace_indicator(pane, settings_state["original"])
+        await pane.push_indicators()
 
     # ---------- alerty (jako v TradingView; vyhodnocuje je AlertEngine na serveru) ----------
 
@@ -4054,6 +4129,9 @@ async def _build_index(
                 allow_default=True,
             )
             settings_buttons(indicator_settings_dialog, submit_indicator_settings)
+    indicator_preview = DialogPreview(
+        indicator_settings_dialog, lambda: collect_indicator_settings(quiet=True), preview_indicator, restore_indicator
+    )
 
     # Dialog Settings kresby jako v TradingView (pravý klik → Settings…, dvojklik
     # na kresbu, nástroj Text): záložka Text / Style / Inputs podle druhu kresby
@@ -4166,6 +4244,11 @@ async def _build_index(
                 on_templates_change=push_drawing_config,
             )
             settings_buttons(drawing_settings_dialog, submit_drawing_settings)
+    drawing_preview = DialogPreview(
+        drawing_settings_dialog, collect_drawing_preview, preview_drawing,
+        # Zavření bez Ok: uložené kresby znovu z databáze (i s viditelností podle timeframu)
+        lambda: state["drawing_settings"]["pane"].reload_drawings(),
+    )
 
     # Uložení šablony indikátorů (Save indicator template) – aktuální indikátory aktivního grafu
     with ui.dialog() as save_template_dialog, ui.card().classes("tpl-name-dialog"):

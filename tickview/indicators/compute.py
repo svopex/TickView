@@ -12,6 +12,7 @@ import logging
 import math
 import random
 import uuid
+from dataclasses import asdict
 from typing import Optional
 
 import pandas as pd
@@ -27,6 +28,8 @@ from tickview.indicators.api import (
     Context,
     Indicator,
     Line,
+    Profile,
+    ProfileLevel,
     Result,
     Table,
 )
@@ -489,6 +492,39 @@ def _background_payload(times, colors) -> list[dict]:
     ]
 
 
+# Platné číslice cen a objemů profilů TPO v payloadu (kratší JSON bez ztráty přesnosti grafu)
+PROFILE_DIGITS = 10
+
+
+def _round(value: float, digits: int = PROFILE_DIGITS) -> float:
+    """Číslo zaokrouhlené na digits platných číslic (68.52000000000001 → 68.52)."""
+    return float(f"{value:.{digits}g}")
+
+
+def _profile_payload(profile: Profile, group: str) -> dict:
+    """Profil TPO pro JS graf (popisky úrovní se překládají až zde)."""
+
+    def level(item: ProfileLevel) -> dict:
+        return {"price": _round(item.price), "color": item.color, "label": tr(item.label), "end": item.end,
+                "style": item.style}
+
+    return {
+        "group": group, "start": int(profile.start), "end": int(profile.end),
+        "rowLow": _round(profile.row_low), "rowHeight": _round(profile.row_height),
+        "blockRows": [list(rows) for rows in profile.block_rows],
+        "blockTimes": profile.block_times, "blockSeconds": profile.block_seconds,
+        "colors": profile.block_colors,
+        "valueArea": list(profile.value_area), "poc": profile.poc,
+        "levels": [level(item) for item in profile.levels],
+        "zones": [{"low": _round(zone.low), "high": _round(zone.high), "color": zone.color, "end": zone.end}
+                  for zone in profile.zones],
+        "initialBalance": [_round(price) for price in profile.initial_balance] if profile.initial_balance else None,
+        "volumes": [_round(volume, 4) for volume in profile.volumes] if profile.volumes else None,
+        "volumeValueArea": list(profile.volume_value_area) if profile.volume_value_area else None,
+        "volumeLevels": [level(item) for item in profile.volume_levels],
+    }
+
+
 def _finite(*values: float) -> bool:
     return all(isinstance(value, (int, float)) and math.isfinite(value) for value in values)
 
@@ -498,7 +534,8 @@ def compute_indicators(indicators: list[dict], candles: list[Candle], ctx: Optio
 
     overlays = čáry přes hlavní graf, panes = samostatné panely s úrovněmi
     (a pozadím background), segments / markers = úsečky a značky indikátorů
-    v hlavním grafu, tables = tabulky indikátorů (v panelu nebo v hlavním grafu),
+    v hlavním grafu, profiles = profily TPO v hlavním grafu (vzhled ve skupině
+    jako profileStyle), tables = tabulky indikátorů (v panelu nebo v hlavním grafu),
     groups = jedna položka na instanci pro legendu (název, viditelnost,
     panel, signals = lze nastavit alert na signál). Instance bez dat, nenačteného indikátoru, s chybou výpočtu
     nebo skrytá na timeframu grafu (záložka Visibility, ctx.timeframe) v legendě zůstane, jen bez čar;
@@ -515,6 +552,7 @@ def compute_indicators(indicators: list[dict], candles: list[Candle], ctx: Optio
     segments: list[dict] = []
     markers: list[dict] = []
     tables: list[dict] = []
+    profiles: list[dict] = []
     ctx = ctx or Context()
     df = candles_frame(candles)
 
@@ -573,16 +611,21 @@ def compute_indicators(indicators: list[dict], candles: list[Candle], ctx: Optio
              "shape": marker.shape, "color": marker.color, "text": marker.text}
             for marker in result.markers
         )
+        # Profily TPO v hlavním grafu, jejich společný vzhled ve skupině instance
+        if result.profiles:
+            group["profileStyle"] = asdict(result.profile_style)
+            profiles.extend(_profile_payload(profile, spec["id"]) for profile in result.profiles)
 
     return {"overlays": overlays, "panes": panes, "groups": groups, "segments": segments, "markers": markers,
-            "tables": tables}
+            "tables": tables, "profiles": profiles}
 
 
 def tail_payload(payload: dict, points: int = TAIL_POINTS) -> dict:
     """Zkrátí payload na poslední body sérií (příznak "tail" pro JS graf).
 
-    Úsečky, značky a tabulky se posílají celé – po každém přepočtu se mohou
-    změnit i starší (nový signál, posun indexů) a je jich málo.
+    Úsečky, značky, tabulky a profily TPO se posílají celé – po každém
+    přepočtu se mohou změnit i starší (nový signál, protnutá úroveň, jiná
+    Auto výška řádků).
     """
     return {
         "tail": True,
@@ -595,4 +638,5 @@ def tail_payload(payload: dict, points: int = TAIL_POINTS) -> dict:
         "segments": payload["segments"],
         "markers": payload["markers"],
         "tables": payload["tables"],
+        "profiles": payload["profiles"],
     }
