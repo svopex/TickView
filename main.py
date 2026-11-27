@@ -13,6 +13,7 @@ from tickview.services.alerts import AlertEngine
 from tickview.services.reminders import ReminderService
 from tickview.services.scanner import ScannerService
 from tickview.ui import main_window
+from tickview.ui.welcome_dialog import WELCOME_PENDING_KEY
 
 
 def parse_args() -> argparse.Namespace:
@@ -42,6 +43,9 @@ def main() -> None:
         # Nejdřív databáze (schéma), pak služby, které z ní čtou; jazyk UI platí
         # od startu i pro texty služeb na pozadí (alerty, Telegram, scanner)
         await cache.init()
+        # Po instalaci (nová databáze) se při otevření stránky ukáže přehled zdrojů dat
+        if cache.created:
+            await cache.set_setting(WELCOME_PENDING_KEY, "1")
         await load_language(cache)
         await alert_engine.start()
         await scanner.start()

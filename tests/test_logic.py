@@ -856,6 +856,22 @@ class WatchlistsTest(unittest.IsolatedAsyncioTestCase):
                 await cache.close()
 
 
+class NewDatabaseTest(unittest.IsolatedAsyncioTestCase):
+    """Příznak nově založené databáze (první spuštění po instalaci → uvítací dialog)."""
+
+    async def test_created_only_for_new_database(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "test.db"
+            cache = KlineCache(path)
+            await cache.init()
+            self.assertTrue(cache.created)
+            await cache.close()
+            # Další spuštění nad existující databází (i po aktualizaci aplikace)
+            cache = KlineCache(path)
+            await cache.init()
+            self.assertFalse(cache.created)
+            await cache.close()
+
 class WatchlistSectionsLogicTest(unittest.TestCase):
     """Sekce watchlistu: skupiny, přesuny myší a odebrání sekce."""
 

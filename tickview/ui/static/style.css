@@ -40,7 +40,8 @@
   flex-wrap: nowrap;
   gap: 10px !important;
   align-items: center;
-  padding: 8px 16px;
+  /* Vlevo menší odsazení: logo zarovnané se středem ikon levé lišty nástrojů */
+  padding: 8px 16px 8px 8px;
   border-bottom: 1px solid rgba(128, 128, 128, 0.25);
 }
 
@@ -1482,7 +1483,8 @@
    (ČÁRY, KANÁLY…) – stejné písmo, liší se jen odsazením */
 .tv-settings-section,
 .tool-flyout-section,
-.menu-section {
+.menu-section,
+.welcome-row-label {
   font-size: 11px;
   letter-spacing: 1px;
   text-transform: uppercase;
@@ -3337,9 +3339,100 @@
 }
 
 .about-version,
-.about-description {
+.about-description,
+.welcome-intro,
+.welcome-hint {
   font-size: 13px;
   color: #808080;
+}
+
+/* ---------- Uvítací dialog při prvním spuštění (přehled zdrojů dat) ---------- */
+
+.welcome-dialog {
+  width: 920px;
+}
+
+/* Karty zdrojů v mřížce: kolik sloupců se vejde (v plné šířce 3) */
+.welcome-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.welcome-card {
+  gap: 8px !important;
+  padding: 12px 14px;
+  border: 1px solid rgba(128, 128, 128, 0.25);
+  border-radius: 10px;
+  background: rgba(128, 128, 128, 0.06);
+}
+
+.welcome-card-head {
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px !important;
+  margin-bottom: 2px;
+}
+
+.welcome-card-icon {
+  font-size: 22px;
+  color: #2962ff;
+}
+
+.welcome-card-name {
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Štítek dostupnosti: zelený = funguje hned, oranžový = potřebuje účet */
+.welcome-badge {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.welcome-badge-ready {
+  color: #089981;
+  background: rgba(8, 153, 129, 0.15);
+}
+
+.welcome-badge-setup {
+  color: #f57c00;
+  background: rgba(245, 124, 0, 0.15);
+}
+
+.welcome-row {
+  align-items: flex-start;
+  flex-wrap: nowrap;
+  gap: 8px !important;
+}
+
+.welcome-row-icon {
+  font-size: 16px;
+  margin-top: 2px;
+  color: #808080;
+}
+
+.welcome-row-text {
+  gap: 0 !important;
+}
+
+.welcome-row-value {
+  font-size: 13px;
+}
+
+.welcome-hide {
+  font-size: 13px;
+}
+
+/* Tlačítko Přehled zdrojů dat v Settings aplikace */
+.settings-welcome-btn {
+  align-self: flex-start;
+  color: #2962ff;
 }
 
 /* Odkazy na stránky s údaji v záložkách Settings aplikace („popisek: URL“) */

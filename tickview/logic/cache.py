@@ -187,6 +187,8 @@ class KlineCache:
         self._db_path = str(db_path)
         self._conn: Optional[sqlite3.Connection] = None
         self._lock = asyncio.Lock()
+        # True = init() databázi teprve založil (první spuštění po instalaci)
+        self.created = False
 
     async def init(self) -> None:
         """Otevře databázi a vytvoří schéma (volá se při startu aplikace)."""
@@ -195,6 +197,9 @@ class KlineCache:
             self._conn = await asyncio.to_thread(
                 sqlite3.connect, self._db_path, check_same_thread=False
             )
+            # Databáze bez tabulky settings je nová = první spuštění po instalaci
+            # (aktualizace aplikace složku data/ zachová)
+            self.created = not await asyncio.to_thread(self._table_exists_sync, "settings")
             await asyncio.to_thread(self._conn.executescript, _SCHEMA)
             await asyncio.to_thread(self._migrate_sync)
 
@@ -204,6 +209,11 @@ class KlineCache:
             if self._conn is not None:
                 await asyncio.to_thread(self._conn.close)
                 self._conn = None
+
+    def _table_exists_sync(self, name: str) -> bool:
+        """Zjistí, zda databáze obsahuje tabulku daného jména."""
+        cur = self._conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,))
+        return cur.fetchone() is not None
 
     def _migrate_sync(self) -> None:
         """Spustí migrace, které musí odolat už existujícímu schématu."""

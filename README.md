@@ -71,13 +71,15 @@ se upravit i v aplikaci přes ozubené kolečko → Settings.
 
 ## Zdroje dat
 
+Přehled zdrojů ukáže aplikace po instalaci a kdykoli v Settings → Přehled zdrojů dat.
+
 | Zdroj | Trhy | Živá data | Potřebuje |
 |---|---|---|---|
 | Binance | krypto | websocket | nic |
 | Yahoo Finance | akcie, ETF, indexy, forex, futures | polling | nic |
 | Alpaca | americké akcie (IEX) | websocket 1m, jinak polling | API klíče (Basic zdarma) |
 | Interactive Brokers | akcie, forex, kovy, CFD, futures | podle předplatného | běžící TWS / IB Gateway |
-| cTrader | forex, kovy, CFD s tick volume | WebSocket | aplikace Open API |
+| cTrader | forex, kovy, CFD s tick volume | WebSocket | registrace Open API |
 | CFTC | COT report (týdně) | – | nic (app token volitelně) |
 
 - **Alpaca** – klíče v Settings → Alpaca nebo v sekci `alpaca` v `config.yaml`,
@@ -87,8 +89,8 @@ se upravit i v aplikaci přes ozubené kolečko → Settings.
   kontinuální futures `ES1!`, `GC1!` nebo `KOŘEN1!@BURZA` (bez cenové úpravy,
   roll před expirací). Chybné knoty kotací MIDPOINT se zastřihují. Potřebná
   předplatná dat ukáže Settings → Interactive Brokers → „Jak na předplatné dat“.
-- **cTrader** – stačí demo účet u brokera (Pepperstone, IC Markets…).
-  Aplikaci založit na https://openapi.ctrader.com, Client ID, Secret, Access
+- **cTrader** – účet u brokera není potřeba, stačí registrace na
+  https://openapi.ctrader.com. Tam založit aplikaci, Client ID, Secret, Access
   a Refresh token vložit do Settings → cTrader; token se obnovuje sám. Dodává
   i objem pro forex, kovy a CFD z IBKR (ruční mapování `ctrader.symbols`).
 - **COT** – trh se odvodí ze symbolu (futures, forex, kovy, indexy, krypto),
@@ -143,8 +145,6 @@ E-mail je v `data-email` obrácený a v base64 (skládá ho `site/script.js`);
 
 ## Licence
 
-Copyright 2026 Svopex
-
-Projekt je licencovaný pod [Apache License 2.0](LICENSE). Vendored knihovna
-Lightweight Charts v `tickview/ui/static/` má vlastní licenci Apache-2.0
-(Copyright TradingView, Inc.).
+Copyright 2026 Svopex. Projekt je licencovaný pod [Apache License 2.0](LICENSE).
+Vendored knihovna Lightweight Charts v `tickview/ui/static/` má vlastní licenci
+Apache-2.0 (Copyright TradingView, Inc.).

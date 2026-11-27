@@ -170,6 +170,7 @@ from tickview.ui.templates import (
     store_named_template,
 )
 from tickview.ui.visibility_fields import VisibilityFields
+from tickview.ui.welcome_dialog import WELCOME_PENDING_KEY, build_welcome_dialog
 
 # Hledání symbolu: kolik výsledků jednoho zdroje a kolik celkem se zobrazí
 SEARCH_PER_PROVIDER = 15
@@ -4212,6 +4213,10 @@ async def _build_index(
         ui.label(
             tr("Ukládá se lokálně do config.yaml v kořenu projektu (necommituje se, komentáře zůstanou).")
         ).classes("settings-note")
+        # Přehled zdrojů dat (uvítací dialog) kdykoli i po zaškrtnutí „Již nezobrazovat“
+        ui.button(tr("Přehled zdrojů dat"), icon="dataset", color=None, on_click=lambda: open_welcome_dialog()).props(
+            "flat dense no-caps"
+        ).classes("settings-welcome-btn")
         with ui.tabs().props("dense no-caps align=left indicator-color=primary").classes("tv-tabs w-full") as settings_tabs:
             tab_telegram = ui.tab("Telegram")
             tab_ibkr = ui.tab("Interactive Brokers")
@@ -4273,8 +4278,8 @@ async def _build_index(
                     tr(
                         "Forex, kovy a CFD s tick volume (jako v TradingView) od brokera s platformou cTrader "
                         "(Pepperstone, IC Markets, Purple Trading…); zároveň dodá objem pro IBKR forex, kovy a CFD. "
-                        "Stačí demo účet u brokera. Na openapi.ctrader.com založte aplikaci (Applications → Add new "
-                        "app) a počkejte na schválení (status se změní ze Submitted na Active). Pak v Credentials zkopírujte "
+                        "Účet u brokera není potřeba – stačí registrace na openapi.ctrader.com. Tam založte aplikaci "
+                        "(Applications → Add new app) a počkejte na schválení (status se změní ze Submitted na Active). Pak v Credentials zkopírujte "
                         "Client ID a Secret a v Sandbox získejte Access a Refresh token (scope accounts). Token se "
                         "obnovuje sám. Zapnutí zdroje se projeví po restartu."
                     )
@@ -4308,6 +4313,28 @@ async def _build_index(
         with ui.row().classes("tv-settings-actions w-full"):
             ui.space()
             settings_buttons(settings_dialog, save_settings)
+
+    # Uvítání s přehledem zdrojů dat: po instalaci se ukazuje při každém otevření
+    # stránky, dokud uživatel nezaškrtne „Již nezobrazovat“; ze Settings kdykoli.
+    # Dialog se sestaví až při prvním otevření (většina načtení stránky ho nepotřebuje)
+    welcome_pending = await cache.get_setting(WELCOME_PENDING_KEY) == "1"
+    welcome_dialog: ui.dialog | None = None
+
+    def open_welcome_dialog() -> None:
+        nonlocal welcome_dialog
+        # Settings zavřeme, ať přehled není pod nimi
+        settings_dialog.close()
+        if welcome_dialog is None:
+            with page_root:
+                welcome_dialog = build_welcome_dialog(
+                    open_settings_dialog,
+                    lambda hidden: cache.set_setting(WELCOME_PENDING_KEY, "0" if hidden else "1"),
+                    hidden=not welcome_pending,
+                )
+        welcome_dialog.open()
+
+    if welcome_pending:
+        open_welcome_dialog()
 
     # Dialogy replaye (sessions, příkaz, úprava obchodu, skok, nastavení session)
     replay_ui.build_dialogs()

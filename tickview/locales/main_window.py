@@ -205,14 +205,14 @@ EN = {
     "cTrader: připojení selhalo – {error}": "cTrader: connection failed – {error}",
     "Forex, kovy a CFD s tick volume (jako v TradingView) od brokera s platformou cTrader "
     "(Pepperstone, IC Markets, Purple Trading…); zároveň dodá objem pro IBKR forex, kovy a CFD. "
-    "Stačí demo účet u brokera. Na openapi.ctrader.com založte aplikaci (Applications → Add new "
-    "app) a počkejte na schválení (status se změní ze Submitted na Active). Pak v Credentials zkopírujte "
+    "Účet u brokera není potřeba – stačí registrace na openapi.ctrader.com. Tam založte aplikaci "
+    "(Applications → Add new app) a počkejte na schválení (status se změní ze Submitted na Active). Pak v Credentials zkopírujte "
     "Client ID a Secret a v Sandbox získejte Access a Refresh token (scope accounts). Token se "
     "obnovuje sám. Zapnutí zdroje se projeví po restartu.": (
         "Forex, metals and CFDs with tick volume (as in TradingView) from a broker with the cTrader "
         "platform (Pepperstone, IC Markets, Purple Trading…); it also provides volume for IBKR forex, "
-        "metals and CFDs. A demo account at the broker is enough. Create an application at "
-        "openapi.ctrader.com (Applications → Add new app) and wait for approval (the status changes "
+        "metals and CFDs. No broker account is needed – a sign-up at openapi.ctrader.com is enough. "
+        "Create an application there (Applications → Add new app) and wait for approval (the status changes "
         "from Submitted to Active). Then copy the Client ID and Secret under Credentials and get an Access "
         "and Refresh token in the Sandbox (scope accounts). The token refreshes automatically. "
         "Enabling the source takes effect after a restart."
