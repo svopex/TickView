@@ -1,5 +1,6 @@
 // Skripty prezentačního webu TickView: mobilní menu, záložky instalace,
-// kopírování příkazů, tlačítko pro e-mail a ilustrační svíčkový graf s živou simulací.
+// kopírování příkazů, tlačítko pro e-mail, zvětšení snímků aplikace
+// a ilustrační svíčkový graf s živou simulací.
 
 "use strict";
 
@@ -18,6 +19,7 @@ const TEXTS = {
     chartLabel: "Ukázkový svíčkový graf s generovanými daty",
     alert: "Alert",
     percentSuffix: " %",
+    close: "Zavřít",
   },
   en: {
     copy: "Copy",
@@ -26,6 +28,7 @@ const TEXTS = {
     chartLabel: "Sample candlestick chart with generated data",
     alert: "Alert",
     percentSuffix: "%",
+    close: "Close",
   },
 };
 const T = IS_ENGLISH ? TEXTS.en : TEXTS.cs;
@@ -35,8 +38,50 @@ document.addEventListener("DOMContentLoaded", () => {
   initInstallTabs();
   initCopyButtons();
   initEmailButtons();
+  initLightbox();
   initHeroChart();
 });
+
+// Zvětšení snímku aplikace v překryvu stránky (místo otevření samotného
+// obrázku): křížek vpravo nahoře, Esc nebo klik mimo obrázek ho zavře.
+// Odkaz zůstává na obrázek – bez JS (nebo s Ctrl/⌘) se otevře jako dřív.
+function initLightbox() {
+  const links = document.querySelectorAll(".screenshot a");
+  if (!links.length) return;
+
+  // Jeden dialog pro všechny snímky; vzniká až tady, HTML stránky se nemění
+  const dialog = document.createElement("dialog");
+  dialog.className = "lightbox";
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "lightbox-close";
+  close.setAttribute("aria-label", T.close);
+  close.title = T.close;
+  close.textContent = "×";
+  const image = document.createElement("img");
+  image.className = "lightbox-image";
+  dialog.append(close, image);
+  document.body.appendChild(dialog);
+
+  close.addEventListener("click", () => dialog.close());
+  // Klik na pozadí (mimo obrázek a křížek) dialog zavře
+  dialog.addEventListener("click", (event) => {
+    if (event.target === dialog) dialog.close();
+  });
+  // Po zavření se obrázek uvolní, aby příště neproblikl předchozí snímek
+  dialog.addEventListener("close", () => image.removeAttribute("src"));
+
+  for (const link of links) {
+    link.addEventListener("click", (event) => {
+      // Otevření v nové záložce (Ctrl/⌘/Shift, prostřední tlačítko) nechá prohlížeči
+      if (event.ctrlKey || event.metaKey || event.shiftKey || event.button !== 0) return;
+      event.preventDefault();
+      image.src = link.href;
+      image.alt = link.querySelector("img")?.alt ?? "";
+      dialog.showModal();
+    });
+  }
+}
 
 // Tlačítka „Poslat e-mail“: adresa je v data-email obrácená a v base64, aby ji
 // nenašli roboti. Složí se až po kliknutí a otevře poštovního klienta; na stránce

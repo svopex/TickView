@@ -992,6 +992,50 @@ h3 {
   font-size: 0.9rem;
 }
 
+/* Zvětšený snímek v překryvu stránky (site/script.js initLightbox):
+   obrázek na střed do 95 % okna, křížek vpravo nahoře nad obrázkem */
+.lightbox {
+  max-width: none;
+  max-height: none;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.lightbox::backdrop {
+  background: rgba(0, 0, 0, 0.75);
+}
+
+.lightbox-image {
+  display: block;
+  max-width: 95vw;
+  max-height: 95vh;
+}
+
+.lightbox-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 40px;
+  height: 40px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 50%;
+  background: rgba(19, 23, 34, 0.75);
+  color: #ffffff;
+  font-size: 26px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.lightbox-close:hover,
+.lightbox-close:focus-visible {
+  background: var(--accent);
+}
+
 /* Srovnávací tabulka TickView vs. TradingView – na úzkém displeji se posouvá vodorovně */
 .table-wrap {
   overflow-x: auto;
