@@ -218,6 +218,7 @@ EN = {
         "Enabling the source takes effect after a restart."
     ),
     "Demo účet": "Demo account",
+    "Další zdroje v Settings…": "More sources in Settings…",
     "Stažení Telegramu": "Download Telegram",
     "Založení bota (@BotFather)": "Create a bot (@BotFather)",
     "Stažení TWS": "Download TWS",

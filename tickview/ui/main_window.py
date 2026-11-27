@@ -140,7 +140,7 @@ from tickview.logic.sessions import (
     SESSION_RTH,
     timezone_options,
 )
-from tickview.providers import PROVIDERS, get_provider, provider_symbol
+from tickview.providers import ALL_PROVIDER_IDS, PROVIDERS, get_provider, provider_symbol
 from tickview.providers.alpaca import DEFAULT_ENDPOINT as ALPACA_DEFAULT_ENDPOINT
 from tickview.providers.ctrader import CTraderProvider
 from tickview.providers.base import SymbolInfo, utc_now_ms
@@ -171,6 +171,9 @@ from tickview.ui.templates import (
 )
 from tickview.ui.visibility_fields import VisibilityFields
 from tickview.ui.welcome_dialog import WELCOME_PENDING_KEY, build_welcome_dialog
+
+# Hodnota položky „Další zdroje v Settings…“ ve výběru zdroje hledání
+SEARCH_MORE_SOURCES = "__settings__"
 
 # Hledání symbolu: kolik výsledků jednoho zdroje a kolik celkem se zobrazí
 SEARCH_PER_PROVIDER = 15
@@ -656,6 +659,16 @@ async def _build_index(
         return _handler
 
     async def set_search_source(event) -> None:
+        # Volba „Další zdroje v Settings…“: výběr vrátíme zpět a otevřeme
+        # Settings, kde se zapínají IBKR, Alpaca a cTrader
+        if event.value == SEARCH_MORE_SOURCES:
+            search_source_select.set_value(search_state["source"])
+            symbol_search_dialog.close()
+            open_settings_dialog()
+            return
+        # Návrat výběru na už zvolený zdroj (po volbě výše) nové hledání nespouští
+        if (event.value or "all") == search_state["source"]:
+            return
         # Výběr zdroje: hledá se znovu jen ve zvoleném zdroji
         search_state["source"] = event.value or "all"
         await run_symbol_search()
@@ -714,6 +727,9 @@ async def _build_index(
         ready = await asyncio.gather(*(provider.available() for provider in PROVIDERS))
         options = {"all": tr("Všechny zdroje")}
         options.update({provider.id: provider.name for provider, ok in zip(PROVIDERS, ready) if ok})
+        # Některý zdroj chybí (nenakonfigurovaný nebo nepřipojený) → odkaz do Settings
+        if len(options) - 1 < len(ALL_PROVIDER_IDS):
+            options[SEARCH_MORE_SOURCES] = tr("Další zdroje v Settings…")
         if search_state["source"] not in options:
             # Zvolený zdroj se odpojil – hledá se znovu ve všech (on_change výběru)
             search_state["source"] = "all"

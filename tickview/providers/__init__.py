@@ -16,6 +16,13 @@ from tickview.providers.ibkr import IbkrProvider
 from tickview.providers.yahoo import YahooProvider
 
 
+# Všechny zdroje, které aplikace umí (i nenakonfigurované) – podle nich hledání
+# pozná, že některý zdroj chybí, a nabídne jeho zapnutí v Settings
+ALL_PROVIDER_IDS: tuple[str, ...] = tuple(
+    cls.id for cls in (BinanceProvider, YahooProvider, IbkrProvider, AlpacaProvider, CTraderProvider)
+)
+
+
 def _build_providers() -> list[DataProvider]:
     """Sestaví seznam aktivních zdrojů v pořadí, v jakém se prohledávají."""
     # IBKR se připojuje lazy k TWS (127.0.0.1:7497, clientId 30); když TWS
