@@ -31,7 +31,7 @@ EN = {
     "Americké akcie a ETF": "US stocks and ETFs",
     "Websocket 1m (feed IEX), jinak polling": "Websocket 1m (IEX feed), otherwise polling",
     "Objem z burzy IEX": "IEX exchange volume",
-    "API klíče (účet Basic zdarma)": "API keys (free Basic account)",
+    "Zdarma – API klíče (účet Basic)": "Free – API keys (Basic account)",
     "Akcie, forex, kovy, CFD, futures": "Stocks, forex, metals, CFDs, futures",
     "Podle předplatného dat": "Depends on data subscriptions",
     "Akcie a futures; forex, kovy a CFD bez objemu": "Stocks and futures; no volume for forex, metals and CFDs",
@@ -39,5 +39,5 @@ EN = {
     "Forex, kovy, indexové CFD": "Forex, metals, index CFDs",
     "V reálném čase (WebSocket)": "Real time (WebSocket)",
     "Tick volume (i pro IBKR)": "Tick volume (also for IBKR)",
-    "Jen registrace na openapi.ctrader.com": "Just a sign-up at openapi.ctrader.com",
+    "Zdarma – jen registrace na openapi.ctrader.com": "Free – just a sign-up at openapi.ctrader.com",
 }

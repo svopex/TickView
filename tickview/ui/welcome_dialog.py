@@ -67,7 +67,7 @@ SOURCES: tuple[SourceCard, ...] = (
     SourceCard(
         "Alpaca", "show_chart", False,
         N_("Americké akcie a ETF"), N_("Websocket 1m (feed IEX), jinak polling"), N_("Objem z burzy IEX"),
-        N_("API klíče (účet Basic zdarma)"),
+        N_("Zdarma – API klíče (účet Basic)"),
     ),
     SourceCard(
         "Interactive Brokers", "account_balance", False,
@@ -77,7 +77,7 @@ SOURCES: tuple[SourceCard, ...] = (
     SourceCard(
         "cTrader", "currency_exchange", False,
         N_("Forex, kovy, indexové CFD"), N_("V reálném čase (WebSocket)"), N_("Tick volume (i pro IBKR)"),
-        N_("Jen registrace na openapi.ctrader.com"),
+        N_("Zdarma – jen registrace na openapi.ctrader.com"),
     ),
 )
 
