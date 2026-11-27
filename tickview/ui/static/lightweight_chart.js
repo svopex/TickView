@@ -139,11 +139,46 @@ window.TickViewChart = (function () {
 
   // Volby hlavní série podle typu grafu a stylu (barvy růstu / poklesu
   // ze Settings grafu se používají i u sloupců, barů a baseline); přesnost
-  // ceny podle instrumentu se přidá ke všem typům
+  // ceny podle instrumentu a čára se štítkem aktuální ceny se přidají ke všem typům
   function mainSeriesOptions(s) {
     const decimals = s.priceDecimals || 2;
     const priceFormat = { type: 'price', precision: decimals, minMove: Math.pow(10, -decimals) };
-    return Object.assign(typeSeriesOptions(s), { priceFormat });
+    const lastPrice = !!s.chartStyle.last_price;
+    // Použitá barva aktuální ceny (živé svíčky ji mění jen při změně směru)
+    s.priceLineColor = lastPriceColor(s);
+    return Object.assign(typeSeriesOptions(s), {
+      priceFormat,
+      priceLineVisible: lastPrice,
+      lastValueVisible: lastPrice,
+      priceLineColor: s.priceLineColor,
+    });
+  }
+
+  // Svíčka roste? Podle předchozího závěru (volba Settings), jinak open → close
+  function candleUp(style, candle, previous) {
+    return style.color_by_prev_close && previous ? candle.close >= previous.close : candle.close >= candle.open;
+  }
+
+  // Typy grafu jen s čárou (bez směru svíčky): aktuální cena má barvu série
+  const LINE_CHART_TYPES = ['line', 'line_markers', 'step', 'area', 'baseline'];
+
+  // Barva čáry a štítku aktuální ceny podle směru poslední svíčky – vlastní
+  // barvy ze Settings grafu (bez nich by je Lightweight Charts vzal z těla
+  // svíčky, které je při vypnutém těle průhledné). Směr jako u vykreslení:
+  // sloupce podle předchozího závěru, Heikin Ashi podle HA svíčky; čárové
+  // typy '' = barva série (výchozí chování Lightweight Charts)
+  function lastPriceColor(s) {
+    const style = s.chartStyle;
+    const count = s.candles.length;
+    if (!count || LINE_CHART_TYPES.includes(s.chartType)) return '';
+    const candle = s.candles[count - 1];
+    const previous = s.candles[count - 2];
+    const point = (s.mainPoints || [])[count - 1];
+    let up;
+    if (s.chartType === 'columns') up = !previous || candle.close >= previous.close;
+    else if (s.chartType === 'heikin' && point && point.time === candle.time) up = point.close >= point.open;
+    else up = candleUp(style, candle, previous);
+    return up ? style.last_price_up : style.last_price_down;
   }
 
   // Polovina cenového rozpětí načtených svíček (základna typu Baseline)
@@ -209,8 +244,7 @@ window.TickViewChart = (function () {
   // předchozí bod série (Heikin Ashi z něj počítá open)
   function mainPoint(s, candle, previous, previousPoint) {
     const style = s.chartStyle;
-    // Směr: podle předchozího závěru (volba Settings), jinak open → close
-    const up = style.color_by_prev_close && previous ? candle.close >= previous.close : candle.close >= candle.open;
+    const up = candleUp(style, candle, previous);
     switch (s.chartType) {
       case 'line':
       case 'line_markers':
@@ -3540,6 +3574,12 @@ window.TickViewChart = (function () {
     }
     s.byTime.set(candle.time, candle);
     s.lastCandle = candle;
+    // Aktuální cena mění barvu se směrem rozpracované svíčky
+    const priceLineColor = lastPriceColor(s);
+    if (priceLineColor !== s.priceLineColor) {
+      s.priceLineColor = priceLineColor;
+      s.candleSeries.applyOptions({ priceLineColor });
+    }
     if (!s.hovering) renderLegend(s, candle);
   }
 

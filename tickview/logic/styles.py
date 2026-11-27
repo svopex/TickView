@@ -23,8 +23,8 @@ _HEX_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
 MAX_NAME_LENGTH = 40
 
 # Výchozí styl svíček (dialog Settings grafu, „Apply defaults“): barvy těla,
-# okrajů a knotů pro růst / pokles a obarvení podle předchozího závěru
-# (objem je indikátor Volume)
+# okrajů a knotů pro růst / pokles, obarvení podle předchozího závěru a čára
+# se štítkem aktuální ceny na ose s vlastními barvami (objem je indikátor Volume)
 CHART_DEFAULTS: dict = {
     "color_by_prev_close": False,
     "body": True,
@@ -36,6 +36,9 @@ CHART_DEFAULTS: dict = {
     "wick": True,
     "wick_up": "#26a69a",
     "wick_down": "#ef5350",
+    "last_price": True,
+    "last_price_up": "#26a69a",
+    "last_price_down": "#ef5350",
 }
 
 # Tovární styl kreseb (nová kresba bez výchozí šablony, „Apply defaults“)
@@ -541,8 +544,6 @@ def normalize_chart_type(value) -> str:
 
 
 # Klíče stylu grafu, které nesou barvu (ostatní jsou přepínače)
-CHART_COLOR_KEYS = ("body_up", "body_down", "border_up", "border_down", "wick_up", "wick_down")
-
 
 def color_channels(value) -> tuple[int, int, int, float] | None:
     """Rozloží barvu #rrggbb nebo rgb()/rgba() na (r, g, b, průhlednost 0–1); neplatná = None."""
@@ -592,8 +593,9 @@ def normalize_chart_style(values) -> dict:
     style: dict = {}
     for key, default in CHART_DEFAULTS.items():
         raw = source.get(key, default)
-        if key in CHART_COLOR_KEYS:
-            # Neplatná barva (ruční zápis, starší formát) → výchozí barva
+        if isinstance(default, str):
+            # Barva (výchozí hodnota je řetězec, přepínače bool): neplatná
+            # (ruční zápis, starší formát) → výchozí barva
             style[key] = normalize_color(raw) or default
         else:
             style[key] = bool(raw)

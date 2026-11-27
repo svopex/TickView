@@ -4280,18 +4280,28 @@ async def _build_index(
         chart_fields: dict = {
             "color_by_prev_close": ui.checkbox(tr("Obarvit svíčky podle předchozího závěru")),
         }
+
+        def color_row(toggle_key: str, prefix: str, label: str, check_text: str | None = None) -> ui.checkbox:
+            # Řádek přepínače s barvami růstu a poklesu (klíče {prefix}_up / {prefix}_down);
+            # check_text = jiný text přepínače než název řádku (ten zůstane v tooltipu barev)
+            with ui.row().classes("tv-settings-row"):
+                chart_fields[toggle_key] = ui.checkbox(check_text or label).classes("tv-settings-check")
+                for suffix, part in (("up", tr("{part} – růst")), ("down", tr("{part} – pokles"))):
+                    key = f"{prefix}_{suffix}"
+                    chart_fields[key] = ColorButton(CHART_DEFAULTS[key], title=part.format(part=label))
+            return chart_fields[toggle_key]
+
         # Řádky Tělo / Okraje / Knoty: přepínač + barva růstu a poklesu
         for toggle_key, prefix, label in (
             ("body", "body", tr("Tělo")), ("borders", "border", tr("Okraje")), ("wick", "wick", tr("Knoty"))
         ):
-            with ui.row().classes("tv-settings-row"):
-                chart_fields[toggle_key] = ui.checkbox(label).classes("tv-settings-check")
-                chart_fields[f"{prefix}_up"] = ColorButton(
-                    CHART_DEFAULTS[f"{prefix}_up"], title=tr("{part} – růst").format(part=label)
-                )
-                chart_fields[f"{prefix}_down"] = ColorButton(
-                    CHART_DEFAULTS[f"{prefix}_down"], title=tr("{part} – pokles").format(part=label)
-                )
+            color_row(toggle_key, prefix, label)
+        # Aktuální cena trhu: čára a štítek na cenové ose s vlastními barvami
+        # podle směru poslední svíčky (nezávisle na těle svíček)
+        ui.label(tr("Aktuální cena")).classes("tv-settings-section")
+        color_row("last_price", "last_price", tr("Aktuální cena"), tr("Zobrazit")).tooltip(
+            tr("Čára a štítek aktuální ceny na cenové ose")
+        )
         with ui.row().classes("tv-settings-actions w-full"):
             chart_templates = TemplateMenu(
                 cache,

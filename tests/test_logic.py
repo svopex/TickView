@@ -1030,6 +1030,10 @@ class StylesTest(unittest.TestCase):
         self.assertNotIn("extra", style)
         self.assertEqual(load_chart_style("{nejson"), CHART_DEFAULTS)
         self.assertEqual(load_chart_style(None), CHART_DEFAULTS)
+        # Starší uložený styl bez aktuální ceny: čára a štítek zapnuté s výchozími barvami
+        legacy = normalize_chart_style({"body": False})
+        self.assertIs(legacy["last_price"], True)
+        self.assertEqual(legacy["last_price_down"], CHART_DEFAULTS["last_price_down"])
 
     def test_templates(self) -> None:
         templates = save_template({}, "Moje", {"a": 1})

@@ -157,6 +157,8 @@ EN = {
     "Knoty": "Wick",
     "{part} – růst": "{part} – up",
     "{part} – pokles": "{part} – down",
+    "Aktuální cena": "Last price",
+    "Čára a štítek aktuální ceny na cenové ose": "Last price line and label on the price scale",
     # Watchlist a seznamy symbolů
     "Ceny watchlistu ({source}) nedostupné: {error}": "Watchlist prices ({source}) unavailable: {error}",
     "Nový seznam…": "New list…",
